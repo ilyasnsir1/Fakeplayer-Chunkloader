@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "chunkloader",
+  "version": "${version}",
+  "name": "Chunkloader",
+  "description": "A Fabric mod that keeps chunks loaded with fake players while providing live HUDs and map controls for monitoring. Features dual-mode operation (Fakeplayer with mob spawning or Chunkplayer with chunk tickets), interactive terrain-rendered chunk map, visual markers, and robust per-world configuration with auto-backups.",
+  "authors": [
+    "Chunkloader Mod"
+  ],
+  "contact": {
+    "homepage": "",
+    "sources": ""
+  },
+  "license": "All Rights Reserved",
+  "icon": "assets/chunkloader/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "de.chunkloader.ChunkloaderMod"
+    ],
+    "client": [
+      "de.chunkloader.client.ChunkloaderClient"
+    ]
+  },
+  "mixins": [
+    "chunkloader.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "~${minecraft_version}"
+  },
+  "recommends": {
+    "fabric-api": "*"
+  }
+}
+
