@@ -499,11 +499,6 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                 .orElse(null);
             if (existing != null) {
                 int newRadius = existing.chunkRadius();
-                if (!allowMobSpawning && existing.allowMobSpawning()) {
-                    if (newRadius == 0) {
-                        newRadius = 3;
-                    }
-                }
                 
                 String newName = existing.name();
                 if (newName != null) {

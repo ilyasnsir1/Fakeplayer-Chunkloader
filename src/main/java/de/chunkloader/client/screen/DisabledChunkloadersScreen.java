@@ -167,6 +167,7 @@ public class DisabledChunkloadersScreen extends Screen {
                                 scrollOffset = 0;
                                 ChunkloaderNetworking.sendDeleteDisabledChunkloader(deleteChunkX, deleteChunkZ);
                                 ChunkloaderNetworking.requestDisabledChunkloadersList();
+                                this.client.setScreen(screen);
                             },
                             null
                         ));

@@ -56,7 +56,6 @@ public class ChunkloaderManager {
     private static final long TOGGLE_COOLDOWN_MS = 200;
     private static final int PENDING_ACTIVATION_INITIAL_DELAY_TICKS = 0;
     private static final int PENDING_ACTIVATION_RETRY_TICKS = 20;
-    private static final int FAKEPLAYER_SIMULATION_DISTANCE = 3;
     private int tickCounter = 0;
     private String storedWorldName = null;
     private static final ChunkTicketType CHUNK_TICKET = ChunkTicketType.FORCED;
@@ -768,7 +767,7 @@ public class ChunkloaderManager {
                     ServerWorld world = getWorldByDimension(entry.dimension());
                     if (world != null) {
                         ChunkPos chunkPos = new ChunkPos(entry.chunkX(), entry.chunkZ());
-                        int radius = entry.allowMobSpawning() ? FAKEPLAYER_SIMULATION_DISTANCE : entry.chunkRadius();
+                        int radius = entry.chunkRadius();
                         world.getChunkManager().removeTicket(CHUNK_TICKET, chunkPos, radius);
                     }
                 }
@@ -962,12 +961,12 @@ public class ChunkloaderManager {
                 ServerWorld oldWorld = getWorldByDimension(oldEntry.dimension());
                 if (oldWorld != null) {
                     ChunkPos oldChunkPos = new ChunkPos(oldEntry.chunkX(), oldEntry.chunkZ());
-                    int oldRadius = oldEntry.allowMobSpawning() ? FAKEPLAYER_SIMULATION_DISTANCE : oldEntry.chunkRadius();
+                    int oldRadius = oldEntry.chunkRadius();
                     oldWorld.getChunkManager().removeTicket(CHUNK_TICKET, oldChunkPos, oldRadius);
                 }
             }
             ChunkPos chunkPos = new ChunkPos(entry.chunkX(), entry.chunkZ());
-            int radius = entry.allowMobSpawning() ? FAKEPLAYER_SIMULATION_DISTANCE : entry.chunkRadius();
+            int radius = entry.chunkRadius();
             world.getChunkManager().addTicket(CHUNK_TICKET, chunkPos, radius);
             activeTargets.put(key, entry);
             
@@ -988,7 +987,7 @@ public class ChunkloaderManager {
         }
         
         ChunkPos chunkPos = new ChunkPos(entry.chunkX(), entry.chunkZ());
-        int radius = entry.allowMobSpawning() ? FAKEPLAYER_SIMULATION_DISTANCE : entry.chunkRadius();
+        int radius = entry.chunkRadius();
         
         try {
             world.getChunkManager().addTicket(CHUNK_TICKET, chunkPos, radius);
@@ -1764,14 +1763,14 @@ public class ChunkloaderManager {
         
         if (newEnabled) {
             ChunkPos chunkPos = new ChunkPos(updatedEntry.chunkX(), updatedEntry.chunkZ());
-            int radius = updatedEntry.allowMobSpawning() ? FAKEPLAYER_SIMULATION_DISTANCE : updatedEntry.chunkRadius();
+            int radius = updatedEntry.chunkRadius();
             
             if (activeTargets.containsKey(key)) {
                 ChunkloaderTarget oldEntry = activeTargets.get(key);
                 ServerWorld oldWorld = getWorldByDimension(oldEntry.dimension());
                 if (oldWorld != null) {
                     ChunkPos oldChunkPos = new ChunkPos(oldEntry.chunkX(), oldEntry.chunkZ());
-                    int oldRadius = oldEntry.allowMobSpawning() ? FAKEPLAYER_SIMULATION_DISTANCE : oldEntry.chunkRadius();
+                    int oldRadius = oldEntry.chunkRadius();
                     oldWorld.getChunkManager().removeTicket(CHUNK_TICKET, oldChunkPos, oldRadius);
                 }
             }
@@ -1957,7 +1956,7 @@ public class ChunkloaderManager {
                 enabled++;
                 int chunksPerLoader;
                 if (entry.allowMobSpawning()) {
-                    int simulationDistance = FAKEPLAYER_SIMULATION_DISTANCE;
+                    int simulationDistance = entry.chunkRadius();
                     chunksPerLoader = (simulationDistance * 2 + 1) * (simulationDistance * 2 + 1);
                 } else {
                     int radius = entry.chunkRadius();
@@ -1993,8 +1992,8 @@ public class ChunkloaderManager {
             if (world != null) {
                 ChunkPos chunkPos = new ChunkPos(entry.chunkX(), entry.chunkZ());
                 
-                int effectiveOldRadius = entry.allowMobSpawning() ? FAKEPLAYER_SIMULATION_DISTANCE : oldRadius;
-                int effectiveNewRadius = entry.allowMobSpawning() ? FAKEPLAYER_SIMULATION_DISTANCE : radius;
+                int effectiveOldRadius = oldRadius;
+                int effectiveNewRadius = radius;
                 
                 world.getChunkManager().removeTicket(CHUNK_TICKET, chunkPos, effectiveOldRadius);
                 
@@ -2090,7 +2089,7 @@ public class ChunkloaderManager {
             if (entry.enabled()) {
                 int chunksPerLoader;
                 if (entry.allowMobSpawning()) {
-                    int simulationDistance = FAKEPLAYER_SIMULATION_DISTANCE;
+                    int simulationDistance = entry.chunkRadius();
                     chunksPerLoader = (simulationDistance * 2 + 1) * (simulationDistance * 2 + 1);
                 } else {
                     int radius = entry.chunkRadius();

@@ -41,8 +41,9 @@ public class ChunkloaderConfirmationScreen extends Screen {
                 btn -> {
                     if (onConfirm != null) {
                         onConfirm.run();
+                    } else {
+                        this.client.setScreen(parent);
                     }
-                    this.client.setScreen(parent);
                 })
             .dimensions(buttonX, buttonY, buttonWidth, 20)
             .build()
