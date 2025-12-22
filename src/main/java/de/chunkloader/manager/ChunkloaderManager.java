@@ -99,9 +99,6 @@ public class ChunkloaderManager {
     private void scheduleChunkloaderInitialization(ChunkloaderTarget entry, int delayTicks) {
         ChunkKey key = new ChunkKey(entry.chunkX(), entry.chunkZ());
         pendingChunkloaderActivations.put(key, new PendingChunkloaderState(entry, delayTicks));
-        String displayName = entry.name() != null ? entry.name() : "unnamed";
-        ChunkloaderMod.LOGGER.info("Scheduled chunkloader '{}' at chunk ({}, {}) for delayed initialization in {} ticks",
-            displayName, key.x(), key.z(), delayTicks);
     }
 
     private void cancelPendingChunkloader(ChunkKey key) {
@@ -473,8 +470,6 @@ public class ChunkloaderManager {
                     }
                     
                 } catch (Exception e) {
-                    ChunkloaderMod.LOGGER.debug("Error performing random ticks for chunkplayer chunk ({}, {}): {}", 
-                        chunkKey.x(), chunkKey.z(), e.getMessage());
                 }
             }
         }
@@ -498,8 +493,6 @@ public class ChunkloaderManager {
             String displayName = entry.name() != null ? entry.name() : "unnamed";
             ServerWorld world = getWorldByDimension(entry.dimension());
             if (world == null) {
-                ChunkloaderMod.LOGGER.debug("World {} not loaded yet for chunkloader '{}', retrying in {} ticks",
-                    entry.dimension(), displayName, PENDING_ACTIVATION_RETRY_TICKS);
                 state.setTicksUntilNextAttempt(PENDING_ACTIVATION_RETRY_TICKS);
                 continue;
             }
@@ -508,8 +501,6 @@ public class ChunkloaderManager {
             try {
                 world.getChunk(chunkPos.x, chunkPos.z);
             } catch (Exception e) {
-                ChunkloaderMod.LOGGER.debug("Chunk ({}, {}) not ready for chunkloader '{}', retrying in {} ticks",
-                    chunkPos.x, chunkPos.z, displayName, PENDING_ACTIVATION_RETRY_TICKS);
                 state.setTicksUntilNextAttempt(PENDING_ACTIVATION_RETRY_TICKS);
                 continue;
             }
@@ -518,12 +509,8 @@ public class ChunkloaderManager {
                 if (entry.enabled()) {
                     activateChunkloader(entry, world);
                     initializedKeys.add(pendingEntry.getKey());
-                    ChunkloaderMod.LOGGER.info("Initialized chunkloader '{}' at chunk ({}, {}) after delayed activation",
-                        displayName, entry.chunkX(), entry.chunkZ());
                 } else {
                     initializedKeys.add(pendingEntry.getKey());
-                    ChunkloaderMod.LOGGER.debug("Skipped disabled chunkloader '{}' at chunk ({}, {}) - no marker spawned",
-                        displayName, entry.chunkX(), entry.chunkZ());
                 }
             } catch (Exception e) {
                 ChunkloaderMod.LOGGER.error("Failed to initialize chunkloader '{}' at chunk ({}, {}), retrying in {} ticks",
@@ -557,7 +544,6 @@ public class ChunkloaderManager {
                 } else {
                     ChunkloaderTarget activeEntry = activeTargets.get(key);
                     if (activeEntry != null && activeEntry.chunkRadius() != entry.chunkRadius()) {
-                        ChunkloaderMod.LOGGER.info("Chunk radius changed for chunk ({}, {}), reactivating", entry.chunkX(), entry.chunkZ());
                         deactivateChunkloader(key);
                         try {
                             activateChunkloader(entry, world);
@@ -582,7 +568,6 @@ public class ChunkloaderManager {
         
         for (ChunkKey key : new HashSet<>(activeTargets.keySet())) {
             if (!configuredKeys.contains(key)) {
-                ChunkloaderMod.LOGGER.info("Removing orphaned chunkloader at chunk ({}, {})", key.x(), key.z());
                 deactivateChunkloader(key);
             }
         }
@@ -656,8 +641,6 @@ public class ChunkloaderManager {
         
         for (ChunkloaderTarget entry : config.getChunkEntries()) {
             if (!loadedDimensions.contains(entry.dimension())) {
-                ChunkloaderMod.LOGGER.debug("Skipping chunkloader at ({}, {}) - dimension {} not currently loaded", 
-                    entry.chunkX(), entry.chunkZ(), entry.dimension());
                 continue;
             }
             
@@ -667,9 +650,6 @@ public class ChunkloaderManager {
                     entry.dimension(), entry.chunkX(), entry.chunkZ());
                 continue;
             }
-            
-            ChunkloaderMod.LOGGER.info("Scheduling chunkloader '{}' at chunk ({}, {}) in dimension {}", 
-                entry.name() != null ? entry.name() : "unnamed", entry.chunkX(), entry.chunkZ(), entry.dimension());
             
             scheduleChunkloaderInitialization(entry, PENDING_ACTIVATION_INITIAL_DELAY_TICKS);
                     dimensionCounts.put(entry.dimension(), dimensionCounts.getOrDefault(entry.dimension(), 0) + 1);
@@ -692,7 +672,6 @@ public class ChunkloaderManager {
         if (server != null && server.getPlayerManager() != null) {
             try {
                 List<ServerPlayerEntity> allPlayers = new ArrayList<>(server.getPlayerManager().getPlayerList());
-                ChunkloaderMod.LOGGER.debug("Found {} players in PlayerManager", allPlayers.size());
                 for (ServerPlayerEntity player : allPlayers) {
                     if (player instanceof ChunkloaderFakePlayer fakePlayer) {
                         try {
@@ -725,7 +704,6 @@ public class ChunkloaderManager {
                             if (playerName != null && playerName.matches("^(fakeplayer|chunkplayer)\\d+$")) {
                                 if (player.networkHandler == null) {
                                     fakePlayersToRemove.add(entity);
-                                    ChunkloaderMod.LOGGER.debug("Found potential fakeplayer by name pattern: {}", playerName);
                                 }
                             }
                         }
@@ -1051,8 +1029,16 @@ public class ChunkloaderManager {
                 } catch (Exception e) {
                     world.getChunkManager().removeTicket(CHUNK_TICKET, chunkPos, radius);
                     activeTargets.remove(key);
-                    ChunkloaderMod.LOGGER.error("Failed to spawn fake player: {}", e.getMessage(), e);
-                    throw new RuntimeException("Failed to spawn fake player", e);
+                    if (e.getMessage() != null && e.getMessage().contains("packettweaker")) {
+                        ChunkloaderMod.LOGGER.warn(
+                            "Failed to activate chunkloader at chunk ({}, {}) due to mod incompatibility (polymer-core/packet_tweaker). " +
+                            "The chunkloader will not be activated. Error: {}",
+                            key.x(), key.z(), e.getMessage()
+                        );
+                    } else {
+                        ChunkloaderMod.LOGGER.error("Failed to spawn fake player: {}", e.getMessage(), e);
+                    }
+                    return;
                 }
                 
                 activeFakePlayers.put(key, fakePlayer);
@@ -1385,7 +1371,6 @@ public class ChunkloaderManager {
                 });
             }
         } catch (Exception e) {
-            ChunkloaderMod.LOGGER.debug("Could not force entity sync: {}", e.getMessage());
             syncingFakePlayers.remove(fakePlayerUuid);
         }
     }
@@ -1502,7 +1487,6 @@ public class ChunkloaderManager {
             try {
                 existing.despawn();
             } catch (Exception e) {
-                ChunkloaderMod.LOGGER.debug("Failed to despawn marker during respawn: {}", e.getMessage());
             }
         }
         
@@ -1582,8 +1566,6 @@ public class ChunkloaderManager {
         }
         
         if (!entitiesToRemove.isEmpty()) {
-            ChunkloaderMod.LOGGER.debug("Removed {} marker(s) for chunkloader at ({}, {})", 
-                entitiesToRemove.size(), key.x(), key.z());
         }
     }
     
@@ -2156,6 +2138,7 @@ public class ChunkloaderManager {
         boolean nameVisible = entry.nameVisible();
         boolean visualizeActive = isVisualizationActive(key);
         boolean visualize3DActive = isVisualization3DActive(key);
+        boolean hideOtherDots = entry.hideOtherDots();
         
         boolean canIncreaseRadius = entry.chunkRadius() < 3;
         if (canIncreaseRadius) {
@@ -2218,7 +2201,8 @@ public class ChunkloaderManager {
             visualize3DActive,
             canIncreaseRadius,
             otherChunkloaders,
-            entry.ownerName()
+            entry.ownerName(),
+            hideOtherDots
         );
     }
 
@@ -2303,6 +2287,61 @@ public class ChunkloaderManager {
         return true;
     }
 
+    public boolean toggleChunkloaderHideOtherDots(int chunkX, int chunkZ) {
+        ChunkloaderTarget entry = config.getEntry(chunkX, chunkZ);
+        if (entry == null) {
+            return false;
+        }
+        boolean newHideOtherDots = !entry.hideOtherDots();
+        config.updateEntryHideOtherDots(chunkX, chunkZ, newHideOtherDots);
+        return true;
+    }
+
+    private boolean isValidName(String name) {
+        if (name == null || name.isEmpty()) {
+            return false;
+        }
+        return name.matches("^[a-zA-Z0-9]+$");
+    }
+    
+    public boolean renameChunkloader(int chunkX, int chunkZ, String newName) {
+        if (newName == null || newName.trim().isEmpty()) {
+            return false;
+        }
+        newName = newName.trim();
+        
+        if (!isValidName(newName)) {
+            return false;
+        }
+        
+        ChunkloaderTarget entry = config.getEntry(chunkX, chunkZ);
+        if (entry == null) {
+            return false;
+        }
+        
+        if (newName.equals(entry.name())) {
+            return false;
+        }
+        
+        boolean success = config.updateEntryName(chunkX, chunkZ, newName);
+        if (!success) {
+            return false;
+        }
+        
+        ChunkKey key = new ChunkKey(chunkX, chunkZ);
+        ChunkloaderTarget updatedEntry = config.getEntry(chunkX, chunkZ);
+        if (updatedEntry != null && activeTargets.containsKey(key)) {
+            net.minecraft.server.world.ServerWorld world = getWorldByDimension(updatedEntry.dimension());
+            if (world != null) {
+                ChunkloaderFakePlayer fakePlayer = activeFakePlayers.get(key);
+                if (fakePlayer != null) {
+                    applyFakePlayerMetadata(fakePlayer, updatedEntry, key);
+                }
+            }
+        }
+        return true;
+    }
+
     public boolean resetChunkloaderToDefaults(int chunkX, int chunkZ) {
         ChunkloaderTarget entry = config.getEntry(chunkX, chunkZ);
         if (entry == null || entry.name() == null) {
@@ -2312,6 +2351,7 @@ public class ChunkloaderManager {
         ChunkKey key = new ChunkKey(chunkX, chunkZ);
         
         config.updateEntryNameVisible(chunkX, chunkZ, true);
+        config.updateEntryHideOtherDots(chunkX, chunkZ, false);
         
         int defaultRadius = 0;
         if (entry.chunkRadius() != defaultRadius) {
@@ -2380,17 +2420,18 @@ public class ChunkloaderManager {
         String fakeplayerName,
         int chunkX,
         int chunkZ,
+        int simulationDistance,
         int distance
     ) {}
     
     public SimulationStatus getSimulationStatus(ServerPlayerEntity player) {
         if (player == null) {
-            return new SimulationStatus(false, null, 0, 0, 0);
+            return new SimulationStatus(false, null, 0, 0, 0, 0);
         }
         
         var world = (ServerWorld) player.getEntityWorld();
         if (world == null) {
-            return new SimulationStatus(false, null, 0, 0, 0);
+            return new SimulationStatus(false, null, 0, 0, 0, 0);
         }
         String dimension = getDimensionFromWorld(world);
         int playerChunkX = player.getChunkPos().x;
@@ -2400,6 +2441,7 @@ public class ChunkloaderManager {
         int closestDistance = Integer.MAX_VALUE;
         int closestChunkX = 0;
         int closestChunkZ = 0;
+        int closestSimulationDistance = 0;
         
         for (Map.Entry<ChunkKey, ChunkloaderTarget> activeEntry : activeTargets.entrySet()) {
             ChunkloaderTarget entry = activeEntry.getValue();
@@ -2421,6 +2463,7 @@ public class ChunkloaderManager {
                     String.format("Fakeplayer at (%d, %d)", entry.chunkX(), entry.chunkZ());
                 closestChunkX = entry.chunkX();
                 closestChunkZ = entry.chunkZ();
+                closestSimulationDistance = simulationDistance;
             }
         }
         
@@ -2429,6 +2472,7 @@ public class ChunkloaderManager {
             closestFakeplayerName,
             closestChunkX,
             closestChunkZ,
+            closestSimulationDistance,
             closestDistance != Integer.MAX_VALUE ? closestDistance : -1
         );
     }
@@ -2554,8 +2598,6 @@ public class ChunkloaderManager {
             int maxDistance = Math.max(distanceX, distanceZ);
             
             if (maxDistance <= otherRadius) {
-                ChunkloaderMod.LOGGER.debug("Position ({}, {}) is within the loaded area of chunkloader '{}' at ({}, {}) with radius {}", 
-                    chunkX, chunkZ, other.name(), other.chunkX(), other.chunkZ(), otherRadius);
                 return true;
             }
             
@@ -2574,8 +2616,6 @@ public class ChunkloaderManager {
                 boolean overlapsZ = Math.max(otherMinZ, newMinZ) <= Math.min(otherMaxZ, newMaxZ);
                 
                 if (overlapsX && overlapsZ) {
-                    ChunkloaderMod.LOGGER.debug("Position ({}, {}) with radius {} overlaps with chunkloader '{}' at ({}, {}) with radius {}", 
-                        chunkX, chunkZ, radius, other.name(), other.chunkX(), other.chunkZ(), otherRadius);
                     return true;
                 }
             }

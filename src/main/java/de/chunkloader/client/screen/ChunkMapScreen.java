@@ -1,6 +1,7 @@
 package de.chunkloader.client.screen;
 
 import com.google.common.collect.ImmutableList;
+import de.chunkloader.client.config.ClientConfig;
 import de.chunkloader.network.ChunkMapCell;
 import de.chunkloader.network.ChunkMapData;
 import de.chunkloader.network.payload.ChunkloaderActionPayload;
@@ -16,8 +17,11 @@ import net.minecraft.client.network.ClientPlayNetworkHandler;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
+import net.minecraft.text.TextColor;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
@@ -29,8 +33,16 @@ import java.util.Map;
 
 @Environment(EnvType.CLIENT)
 public class ChunkMapScreen extends Screen {
+    
+    private static ClientConfig clientConfig = null;
 
     private static final int CELL_SIZE = 18;
+    private static final int ACTION_ROW_GAP = 2;
+    private static final int ACTION_SEARCH_HEIGHT = 18;
+    private static final int ACTION_SEARCH_GAP = 0;
+    private static final int ACTION_SEARCH_Y_OFFSET = -4;
+    private static final int ACTION_SEARCH_LIST_GAP = 3;
+    private static final int ACTION_BUTTON_HEIGHT = 20;
     private static final Identifier GRID_OVERLAY = Identifier.of("chunkloader", "textures/gui/grid_overlay.png");
     private static final Identifier HOVER_OVERLAY = Identifier.of("chunkloader", "textures/gui/cell_overlay.png");
     private static final Identifier FALLBACK_SKIN = Identifier.of("minecraft", "textures/entity/player/wide/steve.png");
@@ -55,84 +67,358 @@ public class ChunkMapScreen extends Screen {
     private int topBoxHeight;
     private final List<ButtonWidget> topBoxButtons = new ArrayList<>();
     private final List<ButtonWidget> actionButtons = new ArrayList<>();
+    private final Map<ButtonWidget, Integer> actionButtonYOffset = new HashMap<>();
+    private final Map<ButtonWidget, Boolean> buttonOriginalActiveState = new HashMap<>();
+    private final List<ActionHeaderLayout> actionHeaderLayouts = new ArrayList<>();
+    private int actionContentHeight = 0;
+    private TextFieldWidget actionSearchField;
+    private String actionSearchQuery = "";
     private ButtonWidget resetButton;
     private ButtonWidget infoButton;
     private ButtonWidget closeButton;
+    private int footerRowY;
+    private int actionScrollOffset = 0;
+    private int actionViewportLeft;
+    private int actionViewportRight;
+    private int actionViewportTop;
+    private int actionViewportBottom;
+    private boolean buttonsNeedUpdate = true;
+    private int lastScrollOffset = -1;
+    private Boolean previousAllowMobSpawning = null;
+
+    private boolean actionScrollbarDragging = false;
+    private int actionScrollbarDragOffsetY = 0;
+
+    private static final int TOPBOX_BUTTON_WIDTH = 50;
+    private static final int TOPBOX_BUTTON_HEIGHT = 20;
+    private static final int TOPBOX_BUTTON_COUNT = 5;
+
+    private enum VerticalTopBoxPlacement {
+        NONE,
+        OUTER_LEFT,
+        OUTER_RIGHT
+    }
+
+    private enum ChunkMapLayoutPreset {
+        TOP,
+        LEFT,
+        RIGHT,
+        BOTTOM,
+        TOP_SWAP,
+        LEFT_SWAP,
+        RIGHT_SWAP,
+        BOTTOM_SWAP;
+
+        static ChunkMapLayoutPreset fromConfig(ClientConfig config) {
+            if (config == null) {
+                return TOP;
+            }
+            String raw = config.getChunkMapLayoutPreset();
+            if (raw == null) {
+                return TOP;
+            }
+            try {
+                return ChunkMapLayoutPreset.valueOf(raw.trim().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                return TOP;
+            }
+        }
+
+        ChunkMapLayoutPreset next() {
+            return switch (this) {
+                case TOP -> LEFT;
+                case LEFT -> RIGHT;
+                case RIGHT -> BOTTOM;
+                case BOTTOM -> TOP_SWAP;
+                case TOP_SWAP -> LEFT_SWAP;
+                case LEFT_SWAP -> RIGHT_SWAP;
+                case RIGHT_SWAP -> BOTTOM_SWAP;
+                case BOTTOM_SWAP -> TOP;
+            };
+        }
+
+        boolean isVerticalButtonBar() {
+            return switch (this) {
+                case LEFT, RIGHT, LEFT_SWAP, RIGHT_SWAP -> true;
+                default -> false;
+            };
+        }
+
+        boolean isTopBar() {
+            return this == TOP || this == TOP_SWAP;
+        }
+
+        boolean isBottomBar() {
+            return this == BOTTOM || this == BOTTOM_SWAP;
+        }
+
+        boolean isSwappedPanels() {
+            return this == TOP_SWAP || this == LEFT_SWAP || this == RIGHT_SWAP || this == BOTTOM_SWAP;
+        }
+
+        VerticalTopBoxPlacement getVerticalTopBoxPlacement() {
+            return switch (this) {
+                case LEFT, LEFT_SWAP -> VerticalTopBoxPlacement.OUTER_LEFT;
+                case RIGHT, RIGHT_SWAP -> VerticalTopBoxPlacement.OUTER_RIGHT;
+                default -> VerticalTopBoxPlacement.NONE;
+            };
+        }
+    }
+
+    private static final class ScrollbarMetrics {
+        private final int x;
+        private final int width;
+        private final int trackTop;
+        private final int trackHeight;
+        private final int thumbY;
+        private final int thumbHeight;
+        private final int maxScroll;
+
+        private ScrollbarMetrics(int x, int width, int trackTop, int trackHeight, int thumbY, int thumbHeight, int maxScroll) {
+            this.x = x;
+            this.width = width;
+            this.trackTop = trackTop;
+            this.trackHeight = trackHeight;
+            this.thumbY = thumbY;
+            this.thumbHeight = thumbHeight;
+            this.maxScroll = maxScroll;
+        }
+    }
+
+    private ScrollbarMetrics getActionScrollbarMetrics() {
+        int maxScroll = getMaxActionScroll();
+        if (maxScroll <= 0) {
+            return null;
+        }
+
+        int availableHeight = Math.max(0, (actionViewportBottom - actionViewportTop));
+        int totalHeight = getActionContentHeight();
+        if (availableHeight <= 0 || totalHeight <= 0) {
+            return null;
+        }
+
+        int scrollbarWidth = 3;
+        int scrollbarX = panelX + panelWidth - scrollbarWidth - 2;
+        int scrollbarHeight = (int) ((double) availableHeight / totalHeight * availableHeight);
+        scrollbarHeight = Math.max(8, Math.min(availableHeight, scrollbarHeight));
+        if (scrollbarHeight <= 0) {
+            return null;
+        }
+
+        int scrollbarTrackTop = actionViewportTop;
+        int scrollbarY = scrollbarTrackTop + (int) ((double) actionScrollOffset / maxScroll * (availableHeight - scrollbarHeight));
+        return new ScrollbarMetrics(scrollbarX, scrollbarWidth, scrollbarTrackTop, availableHeight, scrollbarY, scrollbarHeight, maxScroll);
+    }
 
     public ChunkMapScreen(ChunkMapData data) {
         super(Text.literal("Chunk Loader Map"));
         this.data = data;
+        this.previousAllowMobSpawning = data.allowMobSpawning();
     }
     
     public void updateData(ChunkMapData newData) {
+        boolean previousWasFakeplayer = this.data != null && this.data.allowMobSpawning();
+        boolean newIsFakeplayer = newData.allowMobSpawning();
+        
         this.data = newData;
+        
+        if (previousAllowMobSpawning != null && previousWasFakeplayer != newIsFakeplayer) {
+            if (previousWasFakeplayer && !newIsFakeplayer) {
+                de.chunkloader.client.hud.SimulationStatusHUD.setEnabled(false);
+            } else if (!previousWasFakeplayer && newIsFakeplayer) {
+                de.chunkloader.client.hud.ChunkplayerStatusHUD.setEnabled(false);
+            }
+        }
+        previousAllowMobSpawning = newIsFakeplayer;
         if (this.grid != null) {
             ClientWorld world = MinecraftClient.getInstance().world;
             this.grid.close();
             this.grid = new ChunkMapGrid(world, data, gridLeft, gridTop, CELL_SIZE);
         }
-        buildActionButtons();
-        updateButtonPositions();
+        if (panelWidth > 0) {
+            int savedScrollOffset = actionScrollOffset;
+            buildTopBoxButtons();
+            ensureActionSearchField();
+            buildActionButtons();
+            actionScrollOffset = clampActionScrollOffset(savedScrollOffset, getMaxActionScroll());
+            buttonsNeedUpdate = true;
+        }
     }
 
     @Override
     protected void init() {
         super.init();
+        
+        if (clientConfig == null) {
+            clientConfig = ClientConfig.load();
+        }
+        
+        ChunkMapLayoutPreset layoutPreset = ChunkMapLayoutPreset.fromConfig(clientConfig);
+
         this.gridWidth = data.mapWidth() * CELL_SIZE + 2;
         this.gridHeight = data.mapHeight() * CELL_SIZE + 2;
-        
+
         this.panelWidth = Math.min(160, 160);
         if (this.panelWidth < 120) {
             this.panelWidth = 120;
         }
-        
+
         this.leftPanelWidth = 100;
-        
-        int totalWidth = leftPanelWidth + 12 + gridWidth + 12 + panelWidth;
+
+        int verticalTopBoxPadding = 8;
+        int verticalTopBoxWidth = TOPBOX_BUTTON_WIDTH + verticalTopBoxPadding * 2;
+        int gap = 12;
+
+        boolean swappedPanels = layoutPreset.isSwappedPanels();
+        int leftSlotWidth = swappedPanels ? this.panelWidth : this.leftPanelWidth;
+        int rightSlotWidth = swappedPanels ? this.leftPanelWidth : this.panelWidth;
+        VerticalTopBoxPlacement verticalTopBoxPlacement = layoutPreset.getVerticalTopBoxPlacement();
+
+        int totalWidth = 0;
+        if (verticalTopBoxPlacement == VerticalTopBoxPlacement.OUTER_LEFT) {
+            totalWidth += verticalTopBoxWidth + gap;
+        }
+        totalWidth += leftSlotWidth + gap;
+        totalWidth += this.gridWidth + gap;
+        totalWidth += rightSlotWidth;
+        if (verticalTopBoxPlacement == VerticalTopBoxPlacement.OUTER_RIGHT) {
+            totalWidth += gap + verticalTopBoxWidth;
+        }
+
         int startX = (this.width - totalWidth) / 2;
-        
         if (startX < 16) {
             startX = 16;
         }
-        
-        this.leftPanelX = startX;
-        this.leftPanelY = (this.height - this.gridHeight) / 2;
-        if (this.leftPanelY < 32) {
-            this.leftPanelY = 32;
+
+        int framePadding = 6;
+        int mapFrameHeight = this.gridHeight + 2 * framePadding;
+        int leftPanelBorder = 2;
+
+        int frameTop;
+        if (layoutPreset.isBottomBar()) {
+            int requiredHeight = mapFrameHeight + 80;
+            frameTop = (this.height - requiredHeight) / 2;
+        } else {
+            frameTop = (this.height - mapFrameHeight) / 2;
         }
-        this.leftPanelHeight = this.gridHeight;
-        
-        this.gridLeft = this.leftPanelX + this.leftPanelWidth + 12;
-        this.gridTop = this.leftPanelY;
-        
-        this.panelX = this.gridLeft + this.gridWidth + 12;
-        this.panelY = this.gridTop;
-        this.panelHeight = this.gridHeight;
-        
-        int buttonWidth = 50;
-        int buttonSpacing = 12;
-        int padding = 16;
-        int numButtons = 4;
-        this.topBoxWidth = numButtons * buttonWidth + (numButtons - 1) * buttonSpacing + padding * 2 + 80;
-        this.topBoxHeight = 28;
-        this.topBoxX = (this.width - this.topBoxWidth) / 2;
-        this.topBoxY = 35;
+        if (frameTop < 32) {
+            frameTop = 32;
+        }
+
+        this.leftPanelY = frameTop + leftPanelBorder;
+        this.leftPanelHeight = mapFrameHeight - 2 * leftPanelBorder;
+
+        int cursorX = startX;
+        if (verticalTopBoxPlacement == VerticalTopBoxPlacement.OUTER_LEFT) {
+            this.topBoxX = cursorX;
+            cursorX += verticalTopBoxWidth + gap;
+        }
+
+        int leftSlotX = cursorX;
+        cursorX += leftSlotWidth + gap;
+
+        this.gridLeft = cursorX;
+        cursorX += this.gridWidth + gap;
+
+        int rightSlotX = cursorX;
+        cursorX += rightSlotWidth;
+
+        if (verticalTopBoxPlacement == VerticalTopBoxPlacement.OUTER_RIGHT) {
+            cursorX += gap;
+            this.topBoxX = cursorX;
+            cursorX += verticalTopBoxWidth;
+        }
+
+        if (!swappedPanels) {
+            this.leftPanelX = leftSlotX;
+            this.panelX = rightSlotX;
+        } else {
+            this.panelX = leftSlotX;
+            this.leftPanelX = rightSlotX;
+        }
+
+        this.gridTop = frameTop + framePadding;
+
+        this.panelY = this.leftPanelY;
+        this.panelHeight = this.leftPanelHeight;
+
+        int closeButtonWidth = 100;
+        int closeButtonHeight = 20;
+        int contentBottom = this.leftPanelY + this.leftPanelHeight;
+        int closeButtonY;
+
+        if (layoutPreset.isTopBar()) {
+            int buttonSpacing = 12;
+            int padding = 16;
+            int numButtons = TOPBOX_BUTTON_COUNT;
+            this.topBoxWidth = numButtons * TOPBOX_BUTTON_WIDTH + (numButtons - 1) * buttonSpacing + padding * 2 + 80;
+            this.topBoxHeight = 28;
+            this.topBoxX = (this.width - this.topBoxWidth) / 2;
+            this.topBoxY = 35;
+            closeButtonY = contentBottom + 10;
+            this.footerRowY = closeButtonY;
+        } else if (layoutPreset.isVerticalButtonBar()) {
+            this.topBoxWidth = verticalTopBoxWidth;
+            this.topBoxHeight = this.leftPanelHeight;
+            this.topBoxY = this.leftPanelY;
+            closeButtonY = contentBottom + 10;
+            this.footerRowY = closeButtonY;
+        } else {
+            int buttonSpacing = 12;
+            int padding = 16;
+            int numButtons = TOPBOX_BUTTON_COUNT;
+            this.topBoxWidth = numButtons * TOPBOX_BUTTON_WIDTH + (numButtons - 1) * buttonSpacing + padding * 2 + 80;
+            this.topBoxHeight = 28;
+            this.topBoxX = (this.width - this.topBoxWidth) / 2;
+
+            this.footerRowY = contentBottom + 10;
+            closeButtonY = this.footerRowY;
+
+            int desiredTopBoxY = this.footerRowY + closeButtonHeight + 18;
+            int maxTopBoxY = this.height - 8 - this.topBoxHeight;
+            this.topBoxY = Math.min(desiredTopBoxY, maxTopBoxY);
+        }
         
         ClientWorld world = MinecraftClient.getInstance().world;
         this.grid = new ChunkMapGrid(world, data, gridLeft, gridTop, CELL_SIZE);
         buildTopBoxButtons();
+
+        // Screen.init() rebuilds the drawable/child lists; recreate the widget so it's interactable after returning
+        // from other screens (e.g., list/menu/cancel flows).
+        this.actionSearchField = null;
+        ensureActionSearchField();
         buildActionButtons();
         
-        int closeButtonWidth = 100;
-        int closeButtonHeight = 20;
         int closeButtonX = this.gridLeft + (this.gridWidth - closeButtonWidth) / 2;
-        int closeButtonY = this.gridTop + this.gridHeight + 10;
         this.closeButton = this.addDrawableChild(ButtonWidget.builder(
                 Text.literal("Close"),
                 btn -> this.close())
             .dimensions(closeButtonX, closeButtonY, closeButtonWidth, closeButtonHeight)
             .build()
         );
+    }
+
+    private void cycleLayoutPreset() {
+        if (clientConfig == null) {
+            clientConfig = ClientConfig.load();
+        }
+
+        ChunkMapLayoutPreset current = ChunkMapLayoutPreset.fromConfig(clientConfig);
+        ChunkMapLayoutPreset next = current.next();
+        clientConfig.setChunkMapLayoutPreset(next.name());
+
+        actionScrollbarDragging = false;
+        actionScrollbarDragOffsetY = 0;
+
+        if (this.grid != null) {
+            this.grid.close();
+            this.grid = null;
+        }
+
+        buttonsNeedUpdate = true;
+        lastScrollOffset = -1;
+
+        MinecraftClient.getInstance().setScreen(new ChunkMapScreen(this.data));
     }
 
     @Override
@@ -165,6 +451,12 @@ public class ChunkMapScreen extends Screen {
 
         drawMapFrame(context);
 
+        if (buttonsNeedUpdate || lastScrollOffset != actionScrollOffset) {
+            updateButtonPositions();
+            buttonsNeedUpdate = false;
+            lastScrollOffset = actionScrollOffset;
+        }
+        
         if (this.grid != null) {
             context.enableScissor(gridLeft - 2, gridTop - 2, gridLeft + gridWidth + 2, gridTop + gridHeight + 2);
             grid.render(context, mouseX, mouseY);
@@ -175,25 +467,26 @@ public class ChunkMapScreen extends Screen {
         drawTopBox(context);
         drawLeftPanel(context);
         drawSidePanel(context);
-        
-        int padding = 8;
-        int innerTop = panelY + padding;
-        int innerBottom = panelY + panelHeight - padding;
-        int buttonAreaTop = innerTop;
-        int buttonAreaBottom = innerBottom;
-        int maxButtonHeight = 6 * 26;
-        if (buttonAreaBottom - buttonAreaTop < maxButtonHeight) {
-            buttonAreaTop = Math.max(panelY + 2, buttonAreaBottom - maxButtonHeight);
+
+        if (actionSearchField != null) {
+            actionSearchField.render(context, mouseX, mouseY, delta);
         }
-        
-        int hoverPadding = 2;
-        context.enableScissor(panelX, buttonAreaTop - hoverPadding, panelX + panelWidth, buttonAreaBottom + hoverPadding);
+
+        int scissorTop = actionViewportTop;
+        if (actionSearchField != null) {
+            scissorTop = actionSearchField.getY() + actionSearchField.getHeight() + ACTION_SEARCH_LIST_GAP;
+        }
+        scissorTop = Math.min(scissorTop, actionViewportBottom);
+        context.enableScissor(actionViewportLeft, scissorTop, actionViewportRight, actionViewportBottom);
+        drawActionHeaders(context);
         for (ButtonWidget button : actionButtons) {
             if (button != resetButton) {
                 button.render(context, mouseX, mouseY, delta);
             }
         }
         context.disableScissor();
+        
+        drawActionScrollbar(context);
         
         for (ButtonWidget button : topBoxButtons) {
             button.render(context, mouseX, mouseY, delta);
@@ -215,12 +508,164 @@ public class ChunkMapScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        if (isMouseOverActionViewport(mouseX, mouseY)) {
+            int maxScroll = getMaxActionScroll();
+            if (maxScroll > 0) {
+                int scrollStep = ACTION_BUTTON_HEIGHT + ACTION_ROW_GAP;
+                int next = actionScrollOffset - (int) (verticalAmount * scrollStep);
+                actionScrollOffset = clampActionScrollOffset(next, maxScroll);
+                buttonsNeedUpdate = true;
+                return true;
+            }
+        }
+
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+    }
+
+    private boolean isMouseOverActionViewport(double mouseX, double mouseY) {
+        return mouseX >= actionViewportLeft
+            && mouseX < actionViewportRight
+            && mouseY >= actionViewportTop
+            && mouseY < actionViewportBottom;
+    }
+
+    private int getMaxActionScroll() {
+        int viewportHeight = Math.max(0, actionViewportBottom - actionViewportTop);
+        int contentHeight = getActionContentHeight();
+        return Math.max(0, contentHeight - viewportHeight);
+    }
+
+    private int getActionContentHeight() {
+        return Math.max(0, actionContentHeight);
+    }
+
+    private int clampActionScrollOffset(int value, int maxScroll) {
+        return Math.max(0, Math.min(maxScroll, value));
+    }
+
+    private void drawActionScrollbar(DrawContext context) {
+        int maxScroll = getMaxActionScroll();
+        if (maxScroll <= 0) {
+            return;
+        }
+
+        int availableHeight = Math.max(0, (actionViewportBottom - actionViewportTop));
+        int totalHeight = getActionContentHeight();
+
+        int scrollbarWidth = 3;
+        int scrollbarX = panelX + panelWidth - scrollbarWidth - 2;
+        int scrollbarHeight = (int) ((double) availableHeight / totalHeight * availableHeight);
+        scrollbarHeight = Math.max(8, Math.min(availableHeight, scrollbarHeight));
+
+        int scrollbarTrackTop = actionViewportTop;
+        int scrollbarY = scrollbarTrackTop + (int) ((double) actionScrollOffset / maxScroll * (availableHeight - scrollbarHeight));
+
+        int scrollbarTrackColor = clientConfig != null ? clientConfig.getScrollbarTrackColor() : 0x33000000;
+        int scrollbarThumbColor = clientConfig != null ? clientConfig.getScrollbarThumbColor() : 0xFFAAAAAA;
+        context.fill(scrollbarX, scrollbarTrackTop, scrollbarX + scrollbarWidth, scrollbarTrackTop + availableHeight, scrollbarTrackColor);
+        context.fill(scrollbarX, scrollbarY, scrollbarX + scrollbarWidth, scrollbarY + scrollbarHeight, scrollbarThumbColor);
+    }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.gui.Click click, boolean doubleClick) {
+        if (click.button() == 0) {
+            double mouseX = click.x();
+            double mouseY = click.y();
+
+            if (actionSearchField != null && !actionSearchField.isMouseOver(mouseX, mouseY)) {
+                if (this.getFocused() == actionSearchField) {
+                    this.setFocused(null);
+                }
+                actionSearchField.setFocused(false);
+            }
+
+            ScrollbarMetrics metrics = getActionScrollbarMetrics();
+            if (metrics != null
+                && mouseX >= metrics.x && mouseX < metrics.x + metrics.width
+                && mouseY >= metrics.thumbY && mouseY < metrics.thumbY + metrics.thumbHeight) {
+                actionScrollbarDragging = true;
+                actionScrollbarDragOffsetY = (int) (mouseY - metrics.thumbY);
+                return true;
+            }
+        }
+
+        return super.mouseClicked(click, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.gui.Click click, double deltaX, double deltaY) {
+        if (actionScrollbarDragging) {
+            double mouseY = click.y();
+            ScrollbarMetrics metrics = getActionScrollbarMetrics();
+            if (metrics == null) {
+                actionScrollbarDragging = false;
+                return false;
+            }
+
+            int trackRange = metrics.trackHeight - metrics.thumbHeight;
+            if (trackRange <= 0) {
+                return true;
+            }
+
+            int newThumbY = (int) mouseY - actionScrollbarDragOffsetY;
+            newThumbY = Math.max(metrics.trackTop, Math.min(metrics.trackTop + trackRange, newThumbY));
+
+            int newScroll = (int) Math.round(((double) (newThumbY - metrics.trackTop) / trackRange) * metrics.maxScroll);
+            actionScrollOffset = clampActionScrollOffset(newScroll, metrics.maxScroll);
+            buttonsNeedUpdate = true;
+            return true;
+        }
+
+        return super.mouseDragged(click, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.gui.Click click) {
+        if (actionScrollbarDragging) {
+            actionScrollbarDragging = false;
+            return true;
+        }
+
+        return super.mouseReleased(click);
+    }
+
+    private void drawActionHeaders(DrawContext context) {
+        if (actionHeaderLayouts.isEmpty()) {
+            return;
+        }
+
+        int contentTop = actionViewportTop;
+        int buttonX = panelX + 8;
+        int buttonWidth = panelWidth - 16;
+
+        int textColor = clientConfig != null ? clientConfig.getLeftPanelTextColor() : 0xCC808080;
+        for (ActionHeaderLayout headerLayout : actionHeaderLayouts) {
+            int rowY = contentTop + headerLayout.yOffset - actionScrollOffset;
+            int textY = rowY + (headerLayout.height - this.textRenderer.fontHeight) / 2 + 1;
+            if (textY + this.textRenderer.fontHeight < actionViewportTop || textY > actionViewportBottom) {
+                continue;
+            }
+
+            int headerWidth = this.textRenderer.getWidth(headerLayout.text);
+            int x = buttonX + Math.max(0, (buttonWidth - headerWidth) / 2);
+            context.drawText(this.textRenderer, headerLayout.text, x, textY, textColor, false);
+        }
+    }
+
+    private static final class ActionHeaderLayout {
+        private final int yOffset;
+        private final int height;
+        private final Text text;
+
+        private ActionHeaderLayout(int yOffset, int height, Text text) {
+            this.yOffset = yOffset;
+            this.height = height;
+            this.text = text;
+        }
     }
     
     private void drawMapFrame(DrawContext context) {
         int framePadding = 6;
-        int accentThickness = 2;
         int borderThickness = 4;
         
         int innerLeft = gridLeft;
@@ -233,75 +678,156 @@ public class ChunkMapScreen extends Screen {
         int frameRight = innerRight + framePadding;
         int frameBottom = innerBottom + framePadding;
         
-        context.fill(frameLeft, frameTop, frameRight, frameBottom, 0xFF111417);
-        context.fill(innerLeft - borderThickness, innerTop - borderThickness, innerRight + borderThickness, innerBottom + borderThickness, 0xFF2B2F36);
-        context.fill(frameLeft, frameBottom - accentThickness, frameRight, frameBottom, 0xFF0C0D10);
-        context.fill(frameRight - accentThickness, frameTop, frameRight, frameBottom, 0xFF0C0D10);
+        int frameColor = clientConfig != null ? clientConfig.getFrameColor() : 0xFF111417;
+        int panelColor = clientConfig != null ? clientConfig.getPanelColor() : 0xFF2B2F36;
+        context.fill(frameLeft, frameTop, frameRight, frameBottom, frameColor);
+        context.fill(innerLeft - borderThickness, innerTop - borderThickness, innerRight + borderThickness, innerBottom + borderThickness, panelColor);
     }
     
 
     private void updateButtonPositions() {
-        int padding = 8;
-        int innerTop = panelY + padding;
-        int innerBottom = panelY + panelHeight - padding;
-        int buttonSpacing = 26;
-        int totalButtons = 6;
-        int totalButtonHeight = totalButtons * buttonSpacing;
-        int baseButtonY = innerBottom - totalButtonHeight;
-        if (baseButtonY < innerTop) {
-            baseButtonY = innerTop;
+        if (panelWidth <= 0 || panelHeight <= 0) {
+            return;
         }
-        
-        int scrollableIndex = 0;
-        for (int i = 0; i < actionButtons.size(); i++) {
-            ButtonWidget button = actionButtons.get(i);
-            if (button != resetButton) {
-                int logicalIndex;
-                if (scrollableIndex < 2) {
-                    logicalIndex = scrollableIndex;
-                } else if (scrollableIndex == 2 || scrollableIndex == 3) {
-                    logicalIndex = 2;
-                } else {
-                    logicalIndex = scrollableIndex - 1;
-                }
-                
-                int buttonY = baseButtonY + (logicalIndex * buttonSpacing);
-                button.setY(buttonY);
-                scrollableIndex++;
+
+        int padding = 8;
+        int innerTop = panelY + padding + ACTION_SEARCH_Y_OFFSET + ACTION_SEARCH_HEIGHT + ACTION_SEARCH_GAP + ACTION_SEARCH_LIST_GAP;
+        int innerBottom = panelY + panelHeight - padding;
+        int viewportTop = innerTop;
+        int viewportBottom = Math.max(viewportTop, innerBottom);
+
+        this.actionViewportLeft = panelX;
+        this.actionViewportRight = panelX + panelWidth;
+        this.actionViewportTop = viewportTop;
+        this.actionViewportBottom = viewportBottom;
+
+        int contentHeight = getActionContentHeight();
+        int actualViewportHeight = Math.max(0, viewportBottom - viewportTop);
+        int maxScroll = Math.max(0, contentHeight - actualViewportHeight);
+        actionScrollOffset = clampActionScrollOffset(actionScrollOffset, maxScroll);
+
+        int contentTop = viewportTop;
+
+        for (ButtonWidget button : actionButtons) {
+            if (button == resetButton) {
+                continue;
             }
+            Integer yOffset = actionButtonYOffset.get(button);
+            if (yOffset == null) {
+                continue;
+            }
+            int buttonY = contentTop + yOffset - actionScrollOffset;
+            button.setY(buttonY);
+
+            int buttonBottom = buttonY + ACTION_BUTTON_HEIGHT;
+            boolean isVisible = buttonBottom > actionViewportTop && buttonY < actionViewportBottom;
+
+            Boolean originalActive = buttonOriginalActiveState.get(button);
+            if (originalActive == null) {
+                originalActive = button.active;
+                buttonOriginalActiveState.put(button, originalActive);
+            }
+
+            button.active = isVisible && originalActive;
+        }
+
+        if (actionSearchField != null) {
+            actionSearchField.setX(panelX + 8);
+            actionSearchField.setY(panelY + padding + ACTION_SEARCH_Y_OFFSET);
+            actionSearchField.setWidth(panelWidth - 16);
+            actionSearchField.setHeight(ACTION_SEARCH_HEIGHT);
         }
     }
 
+    private void ensureActionSearchField() {
+        int padding = 8;
+        int x = panelX + 8;
+        int y = panelY + padding + ACTION_SEARCH_Y_OFFSET;
+        int width = panelWidth - 16;
+
+        if (actionSearchField == null) {
+            actionSearchField = new TextFieldWidget(this.textRenderer, x, y, width, ACTION_SEARCH_HEIGHT, Text.literal("Search"));
+            actionSearchField.setMaxLength(64);
+            actionSearchField.setText(actionSearchQuery);
+            actionSearchField.setDrawsBackground(true);
+            actionSearchField.setChangedListener(text -> {
+                actionSearchQuery = text;
+                buildActionButtons();
+                actionScrollOffset = clampActionScrollOffset(actionScrollOffset, getMaxActionScroll());
+                buttonsNeedUpdate = true;
+            });
+            applyActionSearchFieldStyle();
+            this.addDrawableChild(actionSearchField);
+        } else {
+            actionSearchField.setX(x);
+            actionSearchField.setY(y);
+            actionSearchField.setWidth(width);
+            actionSearchField.setHeight(ACTION_SEARCH_HEIGHT);
+            actionSearchField.setText(actionSearchQuery);
+            actionSearchField.setDrawsBackground(true);
+            applyActionSearchFieldStyle();
+        }
+    }
+
+    private void applyActionSearchFieldStyle() {
+        if (actionSearchField == null) {
+            return;
+        }
+        if (clientConfig == null) {
+            return;
+        }
+
+        actionSearchField.setEditableColor(clientConfig.getActionSearchTextColor());
+
+        int placeholderRgb = clientConfig.getActionSearchPlaceholderColor() & 0x00FFFFFF;
+        actionSearchField.setPlaceholder(Text.literal("Search...").styled(style -> style.withColor(TextColor.fromRgb(placeholderRgb))));
+    }
+
+    private boolean actionSearchMatches(String label) {
+        String query = actionSearchQuery == null ? "" : actionSearchQuery.trim();
+        if (query.isEmpty()) {
+            return true;
+        }
+        if (label == null) {
+            return false;
+        }
+        return label.toLowerCase().contains(query.toLowerCase());
+    }
+
     private void drawTopBox(DrawContext context) {
-        context.fill(topBoxX - 2, topBoxY - 2, topBoxX + topBoxWidth + 2, topBoxY + topBoxHeight + 2, 0xFF2B2F36);
-        
-        int borderColor = 0xFF4A4A4A;
+        int panelColor = clientConfig != null ? clientConfig.getPanelColor() : 0xFF2B2F36;
+        int borderColor = clientConfig != null ? clientConfig.getBorderColor() : 0xFF4A4A4A;
+        context.fill(topBoxX - 2, topBoxY - 2, topBoxX + topBoxWidth + 2, topBoxY + topBoxHeight + 2, panelColor);
         context.fill(topBoxX - 2, topBoxY - 2, topBoxX + topBoxWidth + 2, topBoxY - 1, borderColor);
         context.fill(topBoxX - 2, topBoxY + topBoxHeight + 1, topBoxX + topBoxWidth + 2, topBoxY + topBoxHeight + 2, borderColor);
         context.fill(topBoxX - 2, topBoxY - 2, topBoxX - 1, topBoxY + topBoxHeight + 2, borderColor);
         context.fill(topBoxX + topBoxWidth + 1, topBoxY - 2, topBoxX + topBoxWidth + 2, topBoxY + topBoxHeight + 2, borderColor);
-        
-        if (topBoxButtons.size() >= 4) {
-            int buttonWidth = 50;
-            int numButtons = 4;
-            int totalButtonsWidth = numButtons * buttonWidth;
-            int availableSpace = topBoxWidth - totalButtonsWidth;
-            int spacing = availableSpace / (numButtons + 1);
-            int startX = topBoxX + spacing;
-            int lineY = topBoxY + 4;
-            int lineHeight = topBoxHeight - 8;
-            
-            for (int i = 1; i < 4; i++) {
-                int lineX = startX + buttonWidth * i + spacing * (i - 1) + spacing / 2;
-                context.fill(lineX, lineY, lineX + 1, lineY + lineHeight, 0x33FFFFFF);
-            }
+
+        if (topBoxButtons.size() < TOPBOX_BUTTON_COUNT) {
+            return;
+        }
+
+        int dividerColor = clientConfig != null ? clientConfig.getDividerColor() : 0x33FFFFFF;
+        ChunkMapLayoutPreset layoutPreset = ChunkMapLayoutPreset.fromConfig(clientConfig);
+        if (layoutPreset.isVerticalButtonBar()) {
+            int separatorGap = 12;
+            int totalButtonsHeight = TOPBOX_BUTTON_COUNT * TOPBOX_BUTTON_HEIGHT + separatorGap;
+            int startY = topBoxY + (topBoxHeight - totalButtonsHeight) / 2;
+            int dividerY = startY + 4 * TOPBOX_BUTTON_HEIGHT + separatorGap / 2;
+            context.fill(topBoxX + 4, dividerY, topBoxX + topBoxWidth - 4, dividerY + 1, dividerColor);
+        } else {
+            int buttonSpacing = 12;
+            int padding = 16;
+            int startX = topBoxX + padding;
+            int dividerX = startX + 4 * TOPBOX_BUTTON_WIDTH + 3 * buttonSpacing + 12;
+            context.fill(dividerX, topBoxY + 4, dividerX + 1, topBoxY + topBoxHeight - 4, dividerColor);
         }
     }
     
     private void drawLeftPanel(DrawContext context) {
-        context.fill(leftPanelX - 2, leftPanelY - 2, leftPanelX + leftPanelWidth + 2, leftPanelY + leftPanelHeight + 2, 0xFF2B2F36);
-        
-        int borderColor = 0xFF4A4A4A;
+        int panelColor = clientConfig != null ? clientConfig.getPanelColor() : 0xFF2B2F36;
+        int borderColor = clientConfig != null ? clientConfig.getBorderColor() : 0xFF4A4A4A;
+        context.fill(leftPanelX - 2, leftPanelY - 2, leftPanelX + leftPanelWidth + 2, leftPanelY + leftPanelHeight + 2, panelColor);
         context.fill(leftPanelX - 2, leftPanelY - 2, leftPanelX + leftPanelWidth + 2, leftPanelY - 1, borderColor);
         context.fill(leftPanelX - 2, leftPanelY + leftPanelHeight + 1, leftPanelX + leftPanelWidth + 2, leftPanelY + leftPanelHeight + 2, borderColor);
         context.fill(leftPanelX - 2, leftPanelY - 2, leftPanelX - 1, leftPanelY + leftPanelHeight + 2, borderColor);
@@ -314,6 +840,8 @@ public class ChunkMapScreen extends Screen {
         
         String ownerName = data != null && data.ownerName() != null ? data.ownerName() : null;
 
+        int leftPanelNameColor = clientConfig != null ? clientConfig.getLeftPanelNameColor() : 0xFFFFFFFF;
+        
         if (ownerName != null && !ownerName.isEmpty()) {
             int headX = leftPanelX + (leftPanelWidth - headSize) / 2;
             drawPlayerHead(context, headX, headY, headSize, ownerName);
@@ -322,7 +850,7 @@ public class ChunkMapScreen extends Screen {
                 int nameWidth = this.textRenderer.getWidth(nameText);
                 int nameX = leftPanelX + (leftPanelWidth - nameWidth) / 2;
                 nameY = headY + headSize + 4;
-                context.drawText(this.textRenderer, nameText, nameX, nameY, 0xFFFFFFFF, false);
+                context.drawText(this.textRenderer, nameText, nameX, nameY, leftPanelNameColor, false);
             } else {
             nameY = 0;
         }
@@ -333,10 +861,14 @@ public class ChunkMapScreen extends Screen {
 
         int infoY = nameY > 0 ? nameY + this.textRenderer.fontHeight + 8 : headY + headSize + 8;
 
-        context.fill(leftPanelX + padding, infoY - 4, leftPanelX + leftPanelWidth - padding, infoY - 3, 0x33FFFFFF);
-        infoY += 8;
+        int dividerColor = clientConfig != null ? clientConfig.getDividerColor() : 0x33FFFFFF;
+        context.fill(leftPanelX + padding, infoY - 4, leftPanelX + leftPanelWidth - padding, infoY - 3, dividerColor);
+        infoY += 2;
 
-        context.drawText(this.textRenderer, Text.literal("Status:"), leftPanelX + padding, infoY, 0xFFFFFFFF, false);
+        int leftPanelTextColor = clientConfig != null ? clientConfig.getLeftPanelTextColor() : 0xCC808080;
+        int leftPanelValueColor = clientConfig != null ? clientConfig.getLeftPanelValueColor() : 0xFFFFFFFF;
+        
+        context.drawText(this.textRenderer, Text.literal("Status:"), leftPanelX + padding, infoY, leftPanelTextColor, false);
         String statusText = data.enabled() ? "active" : "inactive";
         int statusColor = data.enabled() ? (data.allowMobSpawning() ? 0x55FF55 : 0x5555FF) : 0xFF5555;
         int statusTextWidth = this.textRenderer.getWidth(statusText);
@@ -344,8 +876,8 @@ public class ChunkMapScreen extends Screen {
             leftPanelX + leftPanelWidth - padding - statusTextWidth, infoY, statusColor | 0xFF000000, false);
         infoY += 12;
 
-        context.drawText(this.textRenderer, Text.literal("Dim:").formatted(net.minecraft.util.Formatting.GRAY), 
-            leftPanelX + padding, infoY, 0xFFFFFFFF, false);
+        context.drawText(this.textRenderer, Text.literal("Dim:"), 
+            leftPanelX + padding, infoY, leftPanelTextColor, false);
         String dimName = data.dimensionKey().toLowerCase();
         String dimText;
         int dimColor;
@@ -367,43 +899,65 @@ public class ChunkMapScreen extends Screen {
             leftPanelX + leftPanelWidth - padding - dimTextWidth, infoY, dimColor | 0xFF000000, false);
         infoY += 12;
 
-        context.fill(leftPanelX + padding, infoY, leftPanelX + leftPanelWidth - padding, infoY + 1, 0x33FFFFFF);
-        infoY += 8;
-
-        String chunkPos = data.centerChunkX() + "," + data.centerChunkZ();
-        context.drawText(this.textRenderer, Text.literal("Chunk:").formatted(net.minecraft.util.Formatting.GRAY), 
-            leftPanelX + padding, infoY, 0xFFFFFFFF, false);
-        int chunkPosWidth = this.textRenderer.getWidth(chunkPos);
-        context.drawText(this.textRenderer, Text.literal(chunkPos), 
-            leftPanelX + leftPanelWidth - padding - chunkPosWidth, infoY, 0xFFFFFFFF, false);
+        context.fill(leftPanelX + padding, infoY, leftPanelX + leftPanelWidth - padding, infoY + 1, dividerColor);
         infoY += 12;
+
+        Text chunkLabel = Text.literal("Chunk:");
+        Text blockLabel = Text.literal("Block:");
+        int chunkLabelWidth = this.textRenderer.getWidth(chunkLabel);
+        int blockLabelWidth = this.textRenderer.getWidth(blockLabel);
+        int maxLabelWidth = Math.max(chunkLabelWidth, blockLabelWidth);
+        int coordStartX = leftPanelX + padding + maxLabelWidth + 4;
+        
+        int chunkBlockY = infoY - 3;
+        context.drawText(this.textRenderer, chunkLabel, leftPanelX + padding, chunkBlockY, leftPanelTextColor, false);
+        
+        String chunkXStr = "X:" + data.centerChunkX();
+        String chunkZStr = "Z:" + data.centerChunkZ();
+        
+        context.drawText(this.textRenderer, Text.literal(chunkXStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
+        chunkBlockY += 12;
+        context.drawText(this.textRenderer, Text.literal(chunkZStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
+        chunkBlockY += 12;
 
         BlockPos blockPos = new BlockPos(data.centerChunkX() << 4, data.blockY(), data.centerChunkZ() << 4);
-        String blockPosStr = blockPos.getX() + "," + data.blockY() + "," + blockPos.getZ();
-        context.drawText(this.textRenderer, Text.literal("Block:").formatted(net.minecraft.util.Formatting.GRAY), 
-            leftPanelX + padding, infoY, 0xFFFFFFFF, false);
-        int blockPosWidth = this.textRenderer.getWidth(blockPosStr);
-        context.drawText(this.textRenderer, Text.literal(blockPosStr), 
-            leftPanelX + leftPanelWidth - padding - blockPosWidth, infoY, 0xFFFFFFFF, false);
-        infoY += 12;
-
-            context.fill(leftPanelX + padding, infoY, leftPanelX + leftPanelWidth - padding, infoY + 1, 0x33FFFFFF);
-            infoY += 8;
         
-            String radiusStr = data.chunkRadius() + "/3";
-        String radiusLabel = data.allowMobSpawning() ? "SD:" : "Radius:";
-        context.drawText(this.textRenderer, Text.literal(radiusLabel).formatted(net.minecraft.util.Formatting.GRAY),
-                leftPanelX + padding, infoY, 0xFFFFFFFF, false);
-            int radiusWidth = this.textRenderer.getWidth(radiusStr);
-            context.drawText(this.textRenderer, Text.literal(radiusStr), 
-                leftPanelX + leftPanelWidth - padding - radiusWidth, infoY, 0xFFFFFFFF, false);
+        context.drawText(this.textRenderer, blockLabel, leftPanelX + padding, chunkBlockY, leftPanelTextColor, false);
+        
+        String xStr = "X:" + blockPos.getX();
+        String yStr = "Y:" + data.blockY();
+        String zStr = "Z:" + blockPos.getZ();
+        
+        context.drawText(this.textRenderer, Text.literal(xStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
+        chunkBlockY += 12;
+        context.drawText(this.textRenderer, Text.literal(yStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
+        chunkBlockY += 12;
+        context.drawText(this.textRenderer, Text.literal(zStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
+        int originalInfoY = chunkBlockY + 12 + 3;
+        infoY = originalInfoY;
+
+            context.fill(leftPanelX + padding, infoY, leftPanelX + leftPanelWidth - padding, infoY + 1, dividerColor);
+            int sdDividerY = infoY;
             infoY += 12;
+        
+            String radiusValue = String.valueOf(data.chunkRadius());
+            String radiusSeparator = "/3";
+        String radiusLabel = data.allowMobSpawning() ? "SD:" : "Radius:";
+        int sdY = sdDividerY + 8;
+        context.drawText(this.textRenderer, Text.literal(radiusLabel),
+                leftPanelX + padding, sdY, leftPanelTextColor, false);
+            context.drawText(this.textRenderer, Text.literal(radiusValue), 
+                coordStartX, sdY, leftPanelValueColor, false);
+            int radiusValueWidth = this.textRenderer.getWidth(radiusValue);
+            context.drawText(this.textRenderer, Text.literal(radiusSeparator), 
+                coordStartX + radiusValueWidth, sdY, leftPanelValueColor, false);
+            infoY = sdY + 12;
     }
 
     private void drawSidePanel(DrawContext context) {
-        context.fill(panelX - 2, panelY - 2, panelX + panelWidth + 2, panelY + panelHeight + 2, 0xFF2B2F36);
-        
-        int borderColor = 0xFF4A4A4A;
+        int panelColor = clientConfig != null ? clientConfig.getPanelColor() : 0xFF2B2F36;
+        int borderColor = clientConfig != null ? clientConfig.getBorderColor() : 0xFF4A4A4A;
+        context.fill(panelX - 2, panelY - 2, panelX + panelWidth + 2, panelY + panelHeight + 2, panelColor);
         context.fill(panelX - 2, panelY - 2, panelX + panelWidth + 2, panelY - 1, borderColor);
         context.fill(panelX - 2, panelY + panelHeight + 1, panelX + panelWidth + 2, panelY + panelHeight + 2, borderColor);
         context.fill(panelX - 2, panelY - 2, panelX - 1, panelY + panelHeight + 2, borderColor);
@@ -663,6 +1217,10 @@ public class ChunkMapScreen extends Screen {
             return;
         }
         
+        if (data.hideOtherDots()) {
+            return;
+        }
+        
         for (de.chunkloader.network.ChunkloaderPosition pos : data.otherChunkloaders()) {
             int offsetX = pos.chunkX() - data.centerChunkX();
             int offsetZ = pos.chunkZ() - data.centerChunkZ();
@@ -799,8 +1357,16 @@ public class ChunkMapScreen extends Screen {
             context.fill(left, top, left + BORDER, top + height, COLOR_BORDER);
             context.fill(left + width - BORDER, top, left + width, top + height, COLOR_BORDER);
 
+            int scissorLeft = Math.max(left, gridInnerLeft);
+            int scissorTop = Math.max(top, gridInnerTop);
+            int scissorRight = Math.min(left + width, gridInnerRight);
+            int scissorBottom = Math.min(top + height, gridInnerBottom);
+            
             for (Cell cell : cells) {
-                cell.render(context, mouseX, mouseY);
+                if (cell.left + cell.size >= scissorLeft && cell.left <= scissorRight &&
+                    cell.top + cell.size >= scissorTop && cell.top <= scissorBottom) {
+                    cell.render(context, mouseX, mouseY);
+                }
             }
         }
 
@@ -828,11 +1394,11 @@ public class ChunkMapScreen extends Screen {
         static class Cell implements AutoCloseable {
 
             private static final int COLOR_OCCUPIED = 0x88404040;
-            private static final int COLOR_LOADED_OVERLAY = 0x6687FF59;
+            private static final int COLOR_LOADED_OVERLAY = 0x2687FF59;
             private static final int COLOR_LOADED_OVERLAY_CHUNKPLAYER = 0x665555FF;
-            private static final int COLOR_SIMULATION_DISTANCE = 0x6687FF59;
-            private static final int COLOR_RANGE_OVERLAY = 0x4D3D7FFF;
-            private static final int COLOR_RANGE_OVERLAY_DISABLED = 0x66FF5555;
+            private static final int COLOR_SIMULATION_DISTANCE = 0x2687FF59;
+            private static final int COLOR_RANGE_OVERLAY = 0x1A3D7FFF;
+            private static final int COLOR_RANGE_OVERLAY_DISABLED = 0x26FF5555;
             private final ChunkPos chunkPos;
             private final ChunkMapCell state;
             private final int left;
@@ -877,7 +1443,14 @@ public class ChunkMapScreen extends Screen {
                     context.fill(innerLeft, innerTop, innerRight, innerBottom, 0x33000000);
                 }
 
-                Identifier textureId = tileImage != null ? tileImage.getTextureId() : null;
+                Identifier textureId = null;
+                if (tileImage != null && innerRight > innerLeft && innerBottom > innerTop) {
+                    try {
+                        textureId = tileImage.getTextureId();
+                    } catch (Exception e) {
+                        textureId = null;
+                    }
+                }
                 int textureWidth = innerRight - innerLeft;
                 int textureHeight = innerBottom - innerTop;
 
@@ -1013,52 +1586,108 @@ public class ChunkMapScreen extends Screen {
     private void buildTopBoxButtons() {
         topBoxButtons.forEach(this::remove);
         topBoxButtons.clear();
+
+        if (clientConfig == null) {
+            clientConfig = ClientConfig.load();
+        }
+
+        ChunkMapLayoutPreset layoutPreset = ChunkMapLayoutPreset.fromConfig(clientConfig);
+        boolean vertical = layoutPreset.isVerticalButtonBar();
         
-        int buttonWidth = 50;
-        int buttonHeight = 20;
-        int numButtons = 4;
-        int totalButtonsWidth = numButtons * buttonWidth;
-        int availableSpace = topBoxWidth - totalButtonsWidth;
-        int spacing = availableSpace / (numButtons + 1);
-        int startX = topBoxX + spacing;
-        int startY = topBoxY + (topBoxHeight - buttonHeight) / 2;
+        int buttonWidth = TOPBOX_BUTTON_WIDTH;
+        int buttonHeight = TOPBOX_BUTTON_HEIGHT;
+        int buttonSpacing = 12;
+        int padding = 16;
+
+        int infoX;
+        int listX;
+        int helpX;
+        int uiX;
+        int deleteX;
+        int infoY;
+        int listY;
+        int helpY;
+        int uiY;
+        int deleteY;
+
+        if (vertical) {
+            int separatorGap = 12;
+            int totalButtonsHeight = TOPBOX_BUTTON_COUNT * buttonHeight + separatorGap;
+            int startX = topBoxX + (topBoxWidth - buttonWidth) / 2;
+            int startY = topBoxY + (topBoxHeight - totalButtonsHeight) / 2;
+
+            infoX = startX;
+            listX = startX;
+            helpX = startX;
+            uiX = startX;
+            deleteX = startX;
+
+            infoY = startY;
+            helpY = startY + buttonHeight;
+            listY = startY + 2 * buttonHeight;
+            uiY = startY + 3 * buttonHeight;
+            deleteY = startY + 4 * buttonHeight + separatorGap;
+        } else {
+            int startX = topBoxX + padding;
+            int startY = topBoxY + (topBoxHeight - buttonHeight) / 2;
+
+            infoX = startX;
+            helpX = startX + (buttonWidth + buttonSpacing);
+            listX = startX + 2 * (buttonWidth + buttonSpacing);
+            uiX = startX + 3 * (buttonWidth + buttonSpacing);
+            deleteX = startX + 4 * buttonWidth + 3 * buttonSpacing + 24;
+
+            infoY = startY;
+            listY = startY;
+            helpY = startY;
+            uiY = startY;
+            deleteY = startY;
+        }
         
         infoButton = ButtonWidget.builder(
             Text.literal("Info"),
             btn -> {
                 MinecraftClient.getInstance().setScreen(new ChunkloaderMenuScreen(this));
             })
-            .dimensions(startX, startY, buttonWidth, buttonHeight)
+            .dimensions(infoX, infoY, buttonWidth, buttonHeight)
             .build();
         infoButton.setMessage(Text.literal("Info").formatted(net.minecraft.util.Formatting.WHITE));
         topBoxButtons.add(infoButton);
         this.addDrawableChild(infoButton);
         
-        int listButtonX = startX + buttonWidth + spacing;
-        ButtonWidget listButton = ButtonWidget.builder(
-            Text.literal("List"),
-            btn -> {
-                ChunkloaderNetworking.requestDisabledChunkloadersList();
-            })
-            .dimensions(listButtonX, startY, buttonWidth, buttonHeight)
-            .build();
-        listButton.setMessage(Text.literal("List").formatted(net.minecraft.util.Formatting.WHITE));
-        topBoxButtons.add(listButton);
-        this.addDrawableChild(listButton);
-        
-        int helpButtonX = startX + (buttonWidth + spacing) * 2;
         ButtonWidget helpButton = ButtonWidget.builder(
             Text.literal("Help"),
             btn -> {
                 MinecraftClient.getInstance().setScreen(new ChunkMapHelpScreen(this));
             })
-            .dimensions(helpButtonX, startY, buttonWidth, buttonHeight)
+            .dimensions(helpX, helpY, buttonWidth, buttonHeight)
             .build();
         helpButton.setMessage(Text.literal("Help").formatted(net.minecraft.util.Formatting.WHITE));
         topBoxButtons.add(helpButton);
         this.addDrawableChild(helpButton);
+
+        ButtonWidget listButton = ButtonWidget.builder(
+            Text.literal("List"),
+            btn -> {
+                ChunkloaderNetworking.requestDisabledChunkloadersList();
+            })
+            .dimensions(listX, listY, buttonWidth, buttonHeight)
+            .build();
+        listButton.setMessage(Text.literal("List").formatted(net.minecraft.util.Formatting.WHITE));
+        topBoxButtons.add(listButton);
+        this.addDrawableChild(listButton);
+
+        int uiNumber = layoutPreset.ordinal() + 1;
+        String uiLabel = uiNumber == 1 ? "UI" : "UI " + uiNumber;
+        ButtonWidget uiButton = ButtonWidget.builder(
+            Text.literal(uiLabel),
+            btn -> cycleLayoutPreset())
+            .dimensions(uiX, uiY, buttonWidth, buttonHeight)
+            .build();
+        uiButton.setMessage(Text.literal(uiLabel).formatted(net.minecraft.util.Formatting.WHITE));
+        topBoxButtons.add(uiButton);
+        this.addDrawableChild(uiButton);
         
-        int deleteButtonX = startX + (buttonWidth + spacing) * 3;
         ButtonWidget deleteButton = ButtonWidget.builder(
             Text.literal("Delete"),
             btn -> {
@@ -1078,7 +1707,7 @@ public class ChunkMapScreen extends Screen {
                     null
                 ));
             })
-            .dimensions(deleteButtonX, startY, buttonWidth, buttonHeight)
+            .dimensions(deleteX, deleteY, buttonWidth, buttonHeight)
             .build();
         deleteButton.setMessage(Text.literal("Delete").formatted(net.minecraft.util.Formatting.RED));
         topBoxButtons.add(deleteButton);
@@ -1088,28 +1717,30 @@ public class ChunkMapScreen extends Screen {
     private void buildActionButtons() {
         actionButtons.forEach(this::remove);
         actionButtons.clear();
+        actionButtonYOffset.clear();
+        buttonOriginalActiveState.clear();
+        actionHeaderLayouts.clear();
+        actionContentHeight = 0;
         if (panelWidth <= 0) {
             return;
         }
         int buttonWidth = panelWidth - 16;
         int buttonX = panelX + 8;
-        int padding = 8;
-        int innerTop = panelY + padding;
-        int innerBottom = panelY + panelHeight - padding;
-        int buttonSpacing = 26;
-        
-        int totalButtons = 6;
-        int totalButtonHeight = totalButtons * buttonSpacing;
-        int baseButtonY = innerBottom - totalButtonHeight;
-        
-        if (baseButtonY < innerTop) {
-            baseButtonY = innerTop;
-        }
 
+        int cursorY = 0;
+        int gap = ACTION_ROW_GAP;
+        int headerHeight = this.textRenderer.fontHeight + 4;
+
+        boolean generalHeaderMatches = actionSearchMatches("General");
+        String enableLabelRaw = data.enabled()
+            ? (data.allowMobSpawning() ? "Disable Fakeplayer" : "Disable Chunkplayer")
+            : (data.allowMobSpawning() ? "Enable Fakeplayer" : "Enable Chunkplayer");
+        boolean enableButtonMatches = actionSearchMatches(enableLabelRaw);
+        boolean showEnableButton = generalHeaderMatches || enableButtonMatches;
+
+        if (showEnableButton) {
         ButtonWidget enableButton = ButtonWidget.builder(
-            data.enabled()
-                ? (data.allowMobSpawning() ? Text.literal("Disable Fakeplayer") : Text.literal("Disable Chunkplayer"))
-                : (data.allowMobSpawning() ? Text.literal("Enable Fakeplayer") : Text.literal("Enable Chunkplayer")),
+            Text.literal(enableLabelRaw),
             btn -> {
                 ChunkloaderNetworking.sendAction(
                 ChunkloaderActionPayload.Action.TOGGLE_ENABLED,
@@ -1121,7 +1752,7 @@ public class ChunkMapScreen extends Screen {
                     MinecraftClient.getInstance().setScreen(null);
                 }
             })
-            .dimensions(buttonX, baseButtonY + buttonSpacing * 0, buttonWidth, 20)
+            .dimensions(buttonX, 0, buttonWidth, 20)
             .build();
         if (data.enabled()) {
             enableButton.setMessage((data.allowMobSpawning() ? Text.literal("Disable Fakeplayer") : Text.literal("Disable Chunkplayer")).formatted(net.minecraft.util.Formatting.RED));
@@ -1129,19 +1760,46 @@ public class ChunkMapScreen extends Screen {
             enableButton.setMessage((data.allowMobSpawning() ? Text.literal("Enable Fakeplayer") : Text.literal("Enable Chunkplayer")).formatted(net.minecraft.util.Formatting.GREEN));
         }
         actionButtons.add(enableButton);
+        actionButtonYOffset.put(enableButton, cursorY);
         this.addDrawableChild(enableButton);
 
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        boolean modeHeaderMatches = actionSearchMatches("Mode");
+        String mobLabelRaw = data.allowMobSpawning() ? "Disable mob spawning" : "Enable mob spawning";
+        boolean mobButtonMatches = actionSearchMatches(mobLabelRaw);
+
+        int radiusY = 0;
+        int halfWidth = (buttonWidth - 4) / 2;
+        boolean isFakePlayer = data.allowMobSpawning();
+        boolean canDecrease = data.chunkRadius() > 0;
+        boolean canIncrease = data.canIncreaseRadius();
+
+        String radiusHeaderRaw = isFakePlayer ? "Simulation distance" : "Radius";
+        boolean radiusHeaderMatches = actionSearchMatches(radiusHeaderRaw);
+        String radiusDownLabel = isFakePlayer ? "SD -1" : "Radius -1";
+        String radiusUpLabel = isFakePlayer ? "SD +1" : "Radius +1";
+        boolean radiusDownMatches = actionSearchMatches(radiusDownLabel);
+        boolean radiusUpMatches = actionSearchMatches(radiusUpLabel);
+        boolean showRadiusSection = radiusHeaderMatches || radiusDownMatches || radiusUpMatches;
+
+        boolean showModeHeader = modeHeaderMatches || mobButtonMatches || showRadiusSection;
+        if (showModeHeader) {
+            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Text.literal("Mode").formatted(Formatting.GRAY)));
+            cursorY += headerHeight + gap;
+        }
+
+        if (modeHeaderMatches || mobButtonMatches) {
         ButtonWidget mobButton = ButtonWidget.builder(
-            data.allowMobSpawning()
-                ? Text.literal("Disable mob spawning")
-                : Text.literal("Enable mob spawning"),
+            Text.literal(mobLabelRaw),
             btn -> ChunkloaderNetworking.sendAction(
                 ChunkloaderActionPayload.Action.TOGGLE_MOB_SPAWNING,
                 data.fakeplayerChunkX(),
                 data.fakeplayerChunkZ(),
                 0
             ))
-            .dimensions(buttonX, baseButtonY + buttonSpacing * 1, buttonWidth, 20)
+            .dimensions(buttonX, 0, buttonWidth, 20)
             .build();
         if (data.allowMobSpawning()) {
             mobButton.setMessage(Text.literal("Disable mob spawning").formatted(net.minecraft.util.Formatting.BLUE));
@@ -1149,15 +1807,14 @@ public class ChunkMapScreen extends Screen {
             mobButton.setMessage(Text.literal("Enable mob spawning").formatted(net.minecraft.util.Formatting.GREEN));
         }
         actionButtons.add(mobButton);
+        actionButtonYOffset.put(mobButton, cursorY);
         this.addDrawableChild(mobButton);
 
-        int radiusY = baseButtonY + buttonSpacing * 2;
-        int halfWidth = (buttonWidth - 4) / 2;
-        boolean isFakePlayer = data.allowMobSpawning();
-        boolean canDecrease = data.chunkRadius() > 0;
-        boolean canIncrease = data.canIncreaseRadius();
-        
-        String radiusDownLabel = isFakePlayer ? "SD -1" : "Radius -1";
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        boolean showRadiusButtons = modeHeaderMatches || showRadiusSection;
+        if (showRadiusButtons) {
         ButtonWidget radiusDown = ButtonWidget.builder(
             Text.literal(radiusDownLabel),
             btn -> {
@@ -1177,9 +1834,9 @@ public class ChunkMapScreen extends Screen {
             radiusDown.setMessage(Text.literal(radiusDownLabel).formatted(net.minecraft.util.Formatting.DARK_GRAY));
         }
         actionButtons.add(radiusDown);
+        actionButtonYOffset.put(radiusDown, cursorY);
         this.addDrawableChild(radiusDown);
 
-        String radiusUpLabel = isFakePlayer ? "SD +1" : "Radius +1";
         ButtonWidget radiusUp = ButtonWidget.builder(
             Text.literal(radiusUpLabel),
             btn -> {
@@ -1199,13 +1856,30 @@ public class ChunkMapScreen extends Screen {
             radiusUp.setMessage(Text.literal(radiusUpLabel).formatted(net.minecraft.util.Formatting.DARK_GRAY));
         }
         actionButtons.add(radiusUp);
+        actionButtonYOffset.put(radiusUp, cursorY);
         this.addDrawableChild(radiusUp);
 
-        int nameVisibleY = baseButtonY + buttonSpacing * 3;
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        boolean renameButtonMatches = actionSearchMatches("Rename");
+
+        boolean hideHeaderMatches = actionSearchMatches("Hide options");
+        String hideNameLabelRaw = data.nameVisible() ? "Hide name" : "Show name";
+        String hideDotsLabelRaw = data.hideOtherDots() ? "Show other dots" : "Hide other dots";
+        boolean hideNameMatches = actionSearchMatches(hideNameLabelRaw);
+        boolean hideDotsMatches = actionSearchMatches(hideDotsLabelRaw);
+        boolean showHideSection = hideHeaderMatches || hideNameMatches || hideDotsMatches;
+
+        if (showHideSection) {
+            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Text.literal("Hide options").formatted(Formatting.GRAY)));
+            cursorY += headerHeight + gap;
+        }
+
+        int nameVisibleY = 0;
+        if (showHideSection) {
         ButtonWidget nameVisibleButton = ButtonWidget.builder(
-            data.nameVisible()
-                ? Text.literal("Hide name")
-                : Text.literal("Show name"),
+            Text.literal(hideNameLabelRaw),
             btn -> ChunkloaderNetworking.sendAction(
                 ChunkloaderActionPayload.Action.TOGGLE_NAME_VISIBLE,
                 data.fakeplayerChunkX(),
@@ -1220,13 +1894,50 @@ public class ChunkMapScreen extends Screen {
             nameVisibleButton.setMessage(Text.literal("Show name").formatted(net.minecraft.util.Formatting.WHITE));
         }
         actionButtons.add(nameVisibleButton);
+        actionButtonYOffset.put(nameVisibleButton, cursorY);
         this.addDrawableChild(nameVisibleButton);
 
-        int visualizeY = baseButtonY + buttonSpacing * 4;
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+
+        int hideOtherDotsY = 0;
+        ButtonWidget hideOtherDotsButton = ButtonWidget.builder(
+            Text.literal(hideDotsLabelRaw),
+            btn -> ChunkloaderNetworking.sendAction(
+                ChunkloaderActionPayload.Action.TOGGLE_HIDE_OTHER_DOTS,
+                data.fakeplayerChunkX(),
+                data.fakeplayerChunkZ(),
+                0
+            ))
+            .dimensions(buttonX, hideOtherDotsY, buttonWidth, 20)
+            .build();
+        if (data.hideOtherDots()) {
+            hideOtherDotsButton.setMessage(Text.literal("Show other dots").formatted(net.minecraft.util.Formatting.WHITE));
+        } else {
+            hideOtherDotsButton.setMessage(Text.literal("Hide other dots").formatted(net.minecraft.util.Formatting.WHITE));
+        }
+        actionButtons.add(hideOtherDotsButton);
+        actionButtonYOffset.put(hideOtherDotsButton, cursorY);
+        this.addDrawableChild(hideOtherDotsButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        boolean visHeaderMatches = actionSearchMatches("Visualization");
+        String visLabelRaw = data.visualizeActive() ? "Disable visualization" : "Enable visualization";
+        String vis3DLabelRaw = data.visualize3DActive() ? "Disable 3D visualization" : "Enable 3D visualization";
+        boolean visButtonMatches = actionSearchMatches(visLabelRaw);
+        boolean vis3DButtonMatches = actionSearchMatches(vis3DLabelRaw);
+        boolean showVisSection = visHeaderMatches || visButtonMatches || vis3DButtonMatches;
+
+        if (showVisSection) {
+            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Text.literal("Visualization").formatted(Formatting.GRAY)));
+            cursorY += headerHeight + gap;
+        }
+
+        int visualizeY = 0;
+        if (showVisSection) {
         ButtonWidget visualizeButton = ButtonWidget.builder(
-            data.visualizeActive()
-                ? Text.literal("Disable visualization")
-                : Text.literal("Enable visualization"),
+            Text.literal(visLabelRaw),
             btn -> ChunkloaderNetworking.sendAction(
                 ChunkloaderActionPayload.Action.TOGGLE_VISUALIZE,
                 data.fakeplayerChunkX(),
@@ -1241,13 +1952,14 @@ public class ChunkMapScreen extends Screen {
             visualizeButton.setMessage(Text.literal("Enable visualization").formatted(net.minecraft.util.Formatting.WHITE));
         }
         actionButtons.add(visualizeButton);
+        actionButtonYOffset.put(visualizeButton, cursorY);
         this.addDrawableChild(visualizeButton);
 
-        int visualize3DY = baseButtonY + buttonSpacing * 5;
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+
+        int visualize3DY = 0;
         ButtonWidget visualize3DButton = ButtonWidget.builder(
-            data.visualize3DActive()
-                ? Text.literal("Disable 3D visualization")
-                : Text.literal("Enable 3D visualization"),
+            Text.literal(vis3DLabelRaw),
             btn -> ChunkloaderNetworking.sendAction(
                 ChunkloaderActionPayload.Action.TOGGLE_VISUALIZE3D,
                 data.fakeplayerChunkX(),
@@ -1262,9 +1974,78 @@ public class ChunkMapScreen extends Screen {
             visualize3DButton.setMessage(Text.literal("Enable 3D visualization").formatted(net.minecraft.util.Formatting.WHITE));
         }
         actionButtons.add(visualize3DButton);
+        actionButtonYOffset.put(visualize3DButton, cursorY);
         this.addDrawableChild(visualize3DButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        boolean settingsHeaderMatches = actionSearchMatches("Settings");
+        boolean panelColorMatches = actionSearchMatches("Panel color");
+        boolean keybindMatches = actionSearchMatches("Keybinds");
+        boolean showSettingsSection = settingsHeaderMatches || panelColorMatches || keybindMatches || renameButtonMatches;
+
+        if (showSettingsSection) {
+            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Text.literal("Settings").formatted(Formatting.GRAY)));
+            cursorY += headerHeight + gap;
+        }
+
+        int renameY = 0;
+        if (showSettingsSection) {
+        ButtonWidget renameButton = ButtonWidget.builder(
+            Text.literal("Rename"),
+            btn -> {
+                this.client.setScreen(new RenameChunkloaderScreen(
+                    this,
+                    data.fakeplayerChunkX(),
+                    data.fakeplayerChunkZ(),
+                    data.displayName()
+                ));
+            })
+            .dimensions(buttonX, renameY, buttonWidth, 20)
+            .build();
+        renameButton.setMessage(Text.literal("Rename").formatted(net.minecraft.util.Formatting.WHITE));
+        actionButtons.add(renameButton);
+        actionButtonYOffset.put(renameButton, cursorY);
+        this.addDrawableChild(renameButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+
+        int panelColorY = 0;
+        ButtonWidget panelColorButton = ButtonWidget.builder(
+            Text.literal("Panel color"),
+            btn -> {
+                if (clientConfig == null) {
+                    clientConfig = ClientConfig.load();
+                }
+                this.client.setScreen(new PanelColorScreen(this, clientConfig));
+            })
+            .dimensions(buttonX, panelColorY, buttonWidth, 20)
+            .build();
+        panelColorButton.setMessage(Text.literal("Panel color").formatted(net.minecraft.util.Formatting.WHITE));
+        actionButtons.add(panelColorButton);
+        actionButtonYOffset.put(panelColorButton, cursorY);
+        this.addDrawableChild(panelColorButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
         
-        int resetY = panelY + panelHeight + 8;
+        int keybindY = 0;
+        ButtonWidget keybindButton = ButtonWidget.builder(
+            Text.literal("Keybinds"),
+            btn -> {
+                this.client.setScreen(new KeybindConfigScreen(this));
+            })
+            .dimensions(buttonX, keybindY, buttonWidth, 20)
+            .build();
+        keybindButton.setMessage(Text.literal("Keybinds").formatted(net.minecraft.util.Formatting.WHITE));
+        actionButtons.add(keybindButton);
+        actionButtonYOffset.put(keybindButton, cursorY);
+        this.addDrawableChild(keybindButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+        
+        int resetY = footerRowY;
         resetButton = ButtonWidget.builder(
             Text.literal("Reset to defaults"),
             btn -> {
@@ -1279,6 +2060,9 @@ public class ChunkMapScreen extends Screen {
                 data.fakeplayerChunkZ(),
                             0
                         );
+                        if (clientConfig != null) {
+                            clientConfig.resetToDefaults();
+                        }
                     },
                     null
                 ));
@@ -1287,6 +2071,10 @@ public class ChunkMapScreen extends Screen {
             .build();
         resetButton.setMessage(Text.literal("Reset to defaults").formatted(net.minecraft.util.Formatting.WHITE));
         this.addDrawableChild(resetButton);
+
+        actionContentHeight = Math.max(0, cursorY - gap);
+
+        buttonsNeedUpdate = true;
     }
     
     @Override

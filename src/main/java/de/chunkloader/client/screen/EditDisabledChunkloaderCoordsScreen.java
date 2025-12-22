@@ -59,25 +59,45 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
         int labelX = centerX - totalWidth / 2;
         int fieldX = labelX + labelWidth + 10;
         
-        blockXField = new TextFieldWidget(renderer, fieldX, startY, fieldWidth, fieldHeight, Text.literal("Block X"));
-        blockXField.setMaxLength(10);
+        blockXField = new TextFieldWidget(renderer, fieldX, startY, fieldWidth, fieldHeight, Text.literal("X coordinate"));
+        blockXField.setMaxLength(11);
         blockXField.setText("");
+        blockXField.setPlaceholder(Text.literal("X coordinate").formatted(Formatting.GRAY));
         blockXField.setChangedListener(text -> {
+            if (!text.matches("^-?\\d*$")) {
+                String filtered = text.replaceAll("[^-\\d]", "");
+                blockXField.setText(filtered);
+                return;
+            }
             updateChunkDisplay();
             updateSaveButtonState();
         });
         this.addSelectableChild(blockXField);
         
-        blockYField = new TextFieldWidget(renderer, fieldX, startY + spacing, fieldWidth, fieldHeight, Text.literal("Block Y"));
-        blockYField.setMaxLength(10);
+        blockYField = new TextFieldWidget(renderer, fieldX, startY + spacing, fieldWidth, fieldHeight, Text.literal("Y coordinate"));
+        blockYField.setMaxLength(11);
         blockYField.setText("");
-        blockYField.setChangedListener(text -> updateSaveButtonState());
+        blockYField.setPlaceholder(Text.literal("Y coordinate").formatted(Formatting.GRAY));
+        blockYField.setChangedListener(text -> {
+            if (!text.matches("^-?\\d*$")) {
+                String filtered = text.replaceAll("[^-\\d]", "");
+                blockYField.setText(filtered);
+                return;
+            }
+            updateSaveButtonState();
+        });
         this.addSelectableChild(blockYField);
         
-        blockZField = new TextFieldWidget(renderer, fieldX, startY + spacing * 2, fieldWidth, fieldHeight, Text.literal("Block Z"));
-        blockZField.setMaxLength(10);
+        blockZField = new TextFieldWidget(renderer, fieldX, startY + spacing * 2, fieldWidth, fieldHeight, Text.literal("Z coordinate"));
+        blockZField.setMaxLength(11);
         blockZField.setText("");
+        blockZField.setPlaceholder(Text.literal("Z coordinate").formatted(Formatting.GRAY));
         blockZField.setChangedListener(text -> {
+            if (!text.matches("^-?\\d*$")) {
+                String filtered = text.replaceAll("[^-\\d]", "");
+                blockZField.setText(filtered);
+                return;
+            }
             updateChunkDisplay();
             updateSaveButtonState();
         });
@@ -104,7 +124,6 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             .build()
         );
         
-        setInitialFocus(blockXField);
     }
     
     private void updateChunkDisplay() {
@@ -219,7 +238,7 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             processPendingResponse();
         }
         
-        drawDimBackground(context);
+        context.fill(0, 0, this.width, this.height, 0xC0101010);
         
         TextRenderer renderer = this.textRenderer;
         int centerX = this.width / 2;
@@ -262,7 +281,6 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
         
         int chunkX = 0;
         int chunkZ = 0;
-        boolean isCalculated = false;
         try {
             String blockXText = blockXField.getText().trim();
             String blockZText = blockZField.getText().trim();
@@ -271,7 +289,6 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
                 int blockZ = Integer.parseInt(blockZText);
                 chunkX = blockX >> 4;
                 chunkZ = blockZ >> 4;
-                isCalculated = true;
             } else {
                 chunkX = entry.blockX() >> 4;
                 chunkZ = entry.blockZ() >> 4;
@@ -281,22 +298,13 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             chunkZ = entry.blockZ() >> 4;
         }
         
-        Text chunkInfo;
-        int colorValue;
-        if (isCalculated) {
-            chunkInfo = Text.literal("Chunk: " + chunkX + ", " + chunkZ + " ").formatted(Formatting.AQUA)
-                .append(Text.literal("(auto-calculated)").formatted(Formatting.GRAY, Formatting.ITALIC));
-            colorValue = 0xFF55FFFF;
-        } else {
-            chunkInfo = Text.literal("Chunk: " + chunkX + ", " + chunkZ).formatted(Formatting.GRAY);
-            colorValue = 0xFFCCCCCC;
-        }
+        Text chunkInfo = Text.literal("Chunk: " + chunkX + ", " + chunkZ).formatted(Formatting.GRAY);
         int chunkInfoWidth = renderer.getWidth(chunkInfo);
-        context.drawText(renderer, chunkInfo, centerX - chunkInfoWidth / 2, startY - 15, colorValue, false);
+        context.drawText(renderer, chunkInfo, centerX - chunkInfoWidth / 2, startY - 15, 0xFFCCCCCC, false);
         
-        context.drawText(renderer, Text.literal("Block X:"), labelX, labelY, 0xFFFFFFFF, false);
-        context.drawText(renderer, Text.literal("Block Y:"), labelX, labelY + spacing, 0xFFFFFFFF, false);
-        context.drawText(renderer, Text.literal("Block Z:"), labelX, labelY + spacing * 2, 0xFFFFFFFF, false);
+        context.drawText(renderer, Text.literal("Block X:"), labelX, labelY, 0xFFCCCCCC, false);
+        context.drawText(renderer, Text.literal("Block Y:"), labelX, labelY + spacing, 0xFFCCCCCC, false);
+        context.drawText(renderer, Text.literal("Block Z:"), labelX, labelY + spacing * 2, 0xFFCCCCCC, false);
         
         blockXField.render(context, mouseX, mouseY, delta);
         blockYField.render(context, mouseX, mouseY, delta);
@@ -312,53 +320,43 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
         super.render(context, mouseX, mouseY, delta);
     }
     
-    private void drawDimBackground(DrawContext context) {
-        context.fill(0, 0, this.width, this.height, 0xC0101010);
-    }
-    
-    @Override
-    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
-    }
     
     public Screen getParent() {
         return parent;
+    }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.gui.Click click, boolean doubleClick) {
+        if (click.button() == 0) {
+            double mouseX = click.x();
+            double mouseY = click.y();
+
+            boolean clickedOnField = (blockXField != null && blockXField.isMouseOver(mouseX, mouseY))
+                || (blockYField != null && blockYField.isMouseOver(mouseX, mouseY))
+                || (blockZField != null && blockZField.isMouseOver(mouseX, mouseY));
+
+            if (!clickedOnField) {
+                if (this.getFocused() == blockXField || this.getFocused() == blockYField || this.getFocused() == blockZField) {
+                    this.setFocused(null);
+                }
+                if (blockXField != null) {
+                    blockXField.setFocused(false);
+                }
+                if (blockYField != null) {
+                    blockYField.setFocused(false);
+                }
+                if (blockZField != null) {
+                    blockZField.setFocused(false);
+                }
+            }
+        }
+
+        return super.mouseClicked(click, doubleClick);
     }
     
     @Override
     public boolean shouldPause() {
         return false;
     }
-    
-    private boolean wasLeftClicked = false;
-    
-    @Override
-    public void tick() {
-        super.tick();
-        if (this.client != null && this.client.mouse != null) {
-            boolean leftClicked = this.client.mouse.wasLeftButtonClicked();
-            if (leftClicked && !wasLeftClicked) {
-                double mouseX = this.client.mouse.getX() * (double)this.width / (double)this.client.getWindow().getScaledWidth();
-                double mouseY = this.client.mouse.getY() * (double)this.height / (double)this.client.getWindow().getScaledHeight();
-                
-                boolean clickedOnField = blockXField.isMouseOver(mouseX, mouseY) || 
-                                         blockYField.isMouseOver(mouseX, mouseY) ||
-                                         blockZField.isMouseOver(mouseX, mouseY);
-                
-                boolean clickedOnButton = false;
-                for (var child : this.children()) {
-                    if (child instanceof ButtonWidget && ((ButtonWidget)child).isMouseOver(mouseX, mouseY)) {
-                        clickedOnButton = true;
-                        break;
-                    }
-                }
-                
-                if (!clickedOnField && !clickedOnButton && this.getFocused() != null) {
-                    this.setFocused(null);
-                }
-            }
-            wasLeftClicked = leftClicked;
-        }
-    }
-    
 }
 

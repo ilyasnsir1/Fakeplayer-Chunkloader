@@ -17,11 +17,11 @@ import net.minecraft.client.option.KeyBinding.Category;
 import net.minecraft.client.util.InputUtil;
 import org.lwjgl.glfw.GLFW;
 
-public class ChunkloaderClient implements ClientModInitializer {
+public class ChunkloaderClientCommon implements ClientModInitializer {
     
-    public static KeyBinding simulationStatusHUDToggleKey;
-    public static KeyBinding chunkplayerStatusHUDToggleKey;
-    public static KeyBinding disabledChunkloadersKey;
+    private static KeyBinding simulationStatusHUDToggleKey;
+    private static KeyBinding chunkplayerStatusHUDToggleKey;
+    private static KeyBinding disabledChunkloadersKey;
     
     private static int lastChunkX = Integer.MIN_VALUE;
     private static int lastChunkZ = Integer.MIN_VALUE;

@@ -1,6 +1,0 @@
-accessWidener v2 named
-
-# Zugriff auf CommandManager.getDispatcher() für Command-Registrierung
-# Falls nötig, können hier weitere Access-Widener hinzugefügt werden
-
-

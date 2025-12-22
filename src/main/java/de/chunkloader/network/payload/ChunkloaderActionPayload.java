@@ -37,6 +37,7 @@ public record ChunkloaderActionPayload(int chunkX, int chunkZ, Action action, in
         TOGGLE_NAME_VISIBLE,
         TOGGLE_VISUALIZE,
         TOGGLE_VISUALIZE3D,
+        TOGGLE_HIDE_OTHER_DOTS,
         RESET_TO_DEFAULTS,
         DELETE
     }

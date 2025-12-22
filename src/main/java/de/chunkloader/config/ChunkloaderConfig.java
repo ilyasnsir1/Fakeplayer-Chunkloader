@@ -82,8 +82,6 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                                 
                                 if (mostRecentWorldDir != null) {
                                     path = mostRecentWorldDir.resolve(CONFIG_FILE);
-                                    ChunkloaderMod.LOGGER.debug("Using most recently modified world directory: {} (modified: {})", 
-                                        mostRecentWorldDir.getFileName(), new java.util.Date(mostRecentTime));
                                 } else {
                                     String levelName = server.getSaveProperties().getLevelName();
                                     if (levelName != null && !levelName.isEmpty()) {
@@ -146,6 +144,7 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                             boolean allowMobSpawning = chunkObj.has("allowMobSpawning") ? chunkObj.get("allowMobSpawning").getAsBoolean() : true;
                             String dimension = chunkObj.has("dimension") ? chunkObj.get("dimension").getAsString() : "minecraft:overworld";
                             String ownerName = chunkObj.has("ownerName") ? chunkObj.get("ownerName").getAsString() : null;
+                            boolean hideOtherDots = chunkObj.has("hideOtherDots") ? chunkObj.get("hideOtherDots").getAsBoolean() : false;
                             
                             chunkRadius = Math.max(ChunkloaderConstants.MIN_RADIUS, Math.min(ChunkloaderConstants.MAX_RADIUS, chunkRadius));
                             blockY = Math.max(ChunkloaderConstants.MIN_BLOCK_Y, Math.min(ChunkloaderConstants.MAX_BLOCK_Y, blockY));
@@ -155,7 +154,7 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                                 continue;
                             }
                             
-                            config.chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name, enabled, nameVisible, chunkRadius, allowMobSpawning, dimension, ownerName));
+                            config.chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name, enabled, nameVisible, chunkRadius, allowMobSpawning, dimension, ownerName, hideOtherDots));
                         } catch (Exception e) {
                             ChunkloaderMod.LOGGER.warn("Failed to load chunkloader entry, skipping", e);
                         }
@@ -208,6 +207,7 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                 if (entry.ownerName() != null) {
                     chunkObj.addProperty("ownerName", entry.ownerName());
                 }
+                chunkObj.addProperty("hideOtherDots", entry.hideOtherDots());
                 chunkloaders.add(chunkObj);
             }
             
@@ -243,7 +243,6 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
             Path backupPath = backupDir.resolve(BACKUP_PREFIX + timestamp + ".json");
             Files.copy(configPath, backupPath, StandardCopyOption.REPLACE_EXISTING);
             updateLatestBackup(backupDir, backupPath);
-            ChunkloaderMod.LOGGER.debug("Created backup: {}", backupPath.getFileName());
         } catch (IOException e) {
             ChunkloaderMod.LOGGER.warn("Failed to create backup", e);
         }
@@ -267,7 +266,6 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
             for (int i = MAX_BACKUPS; i < backups.size(); i++) {
                 try {
                     Files.delete(backups.get(i));
-                    ChunkloaderMod.LOGGER.debug("Deleted old backup: {}", backups.get(i).getFileName());
                 } catch (IOException e) {
                     ChunkloaderMod.LOGGER.warn("Failed to delete old backup: {}", backups.get(i).getFileName(), e);
                 }
@@ -346,7 +344,7 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
         if (name == null) return false;
         lock.readLock().lock();
         try {
-            return chunkEntries.stream().anyMatch(entry -> name.equals(entry.name()));
+            return chunkEntries.stream().anyMatch(entry -> entry.name() != null && name.equalsIgnoreCase(entry.name()));
         } finally {
             lock.readLock().unlock();
         }
@@ -395,7 +393,9 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
             
             if (name != null && !entryExists) {
                 boolean nameExists = chunkEntries.stream()
-                    .anyMatch(entry -> name.equals(entry.name()) && (excludeEntry == null || entry != excludeEntry));
+                    .anyMatch(entry -> entry.name() != null
+                        && name.equalsIgnoreCase(entry.name())
+                        && (excludeEntry == null || entry != excludeEntry));
                 if (nameExists) {
                     ChunkloaderMod.LOGGER.warn("Name '{}' already exists", name);
                     return false;
@@ -420,10 +420,11 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
             boolean allowMobSpawning = existing != null ? existing.allowMobSpawning() : true;
             int chunkRadius = existing != null ? existing.chunkRadius() : 0;
             String finalOwnerName = ownerName != null ? ownerName : (existing != null ? existing.ownerName() : null);
+            boolean hideOtherDots = existing != null ? existing.hideOtherDots() : false;
             if (existing != null) {
                 chunkEntries.remove(existing);
             }
-            chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name, enabled, nameVisible, chunkRadius, allowMobSpawning, dimension, finalOwnerName));
+            chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name, enabled, nameVisible, chunkRadius, allowMobSpawning, dimension, finalOwnerName, hideOtherDots));
             save();
             return true;
         } finally {
@@ -442,7 +443,7 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                 chunkEntries.remove(existing);
                 chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), 
                     existing.blockX(), existing.blockY(), existing.blockZ(), 
-                    existing.name(), enabled, existing.nameVisible(), existing.chunkRadius(), existing.allowMobSpawning(), existing.dimension(), existing.ownerName()));
+                    existing.name(), enabled, existing.nameVisible(), existing.chunkRadius(), existing.allowMobSpawning(), existing.dimension(), existing.ownerName(), existing.hideOtherDots()));
                 save();
             }
         } finally {
@@ -461,9 +462,75 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                 chunkEntries.remove(existing);
                 chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), 
                     existing.blockX(), existing.blockY(), existing.blockZ(), 
-                    existing.name(), existing.enabled(), nameVisible, existing.chunkRadius(), existing.allowMobSpawning(), existing.dimension(), existing.ownerName()));
+                    existing.name(), existing.enabled(), nameVisible, existing.chunkRadius(), existing.allowMobSpawning(), existing.dimension(), existing.ownerName(), existing.hideOtherDots()));
                 save();
             }
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+    
+    public void updateEntryHideOtherDots(int chunkX, int chunkZ, boolean hideOtherDots) {
+        lock.writeLock().lock();
+        try {
+            ChunkloaderTarget existing = chunkEntries.stream()
+                .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ)
+                .findFirst()
+                .orElse(null);
+            if (existing != null) {
+                chunkEntries.remove(existing);
+                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), 
+                    existing.blockX(), existing.blockY(), existing.blockZ(), 
+                    existing.name(), existing.enabled(), existing.nameVisible(), existing.chunkRadius(), existing.allowMobSpawning(), existing.dimension(), existing.ownerName(), hideOtherDots));
+                save();
+            }
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+    
+    private boolean isValidName(String name) {
+        if (name == null || name.isEmpty()) {
+            return false;
+        }
+        return name.matches("^[a-zA-Z0-9]+$");
+    }
+    
+    public boolean updateEntryName(int chunkX, int chunkZ, String newName) {
+        if (newName == null || newName.trim().isEmpty()) {
+            return false;
+        }
+        newName = newName.trim();
+        
+        if (!isValidName(newName)) {
+            return false;
+        }
+        
+        lock.writeLock().lock();
+        try {
+            ChunkloaderTarget existing = chunkEntries.stream()
+                .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ)
+                .findFirst()
+                .orElse(null);
+            if (existing == null) {
+                return false;
+            }
+            
+            if (newName.equals(existing.name())) {
+                return false;
+            }
+            
+            ChunkloaderTarget existingWithName = getEntryByName(newName);
+            if (existingWithName != null && existingWithName != existing) {
+                return false;
+            }
+            
+            chunkEntries.remove(existing);
+            chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), 
+                existing.blockX(), existing.blockY(), existing.blockZ(), 
+                newName, existing.enabled(), existing.nameVisible(), existing.chunkRadius(), existing.allowMobSpawning(), existing.dimension(), existing.ownerName(), existing.hideOtherDots()));
+            save();
+            return true;
         } finally {
             lock.writeLock().unlock();
         }
@@ -482,7 +549,7 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                 chunkEntries.remove(existing);
                 chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), 
                     existing.blockX(), existing.blockY(), existing.blockZ(), 
-                    existing.name(), existing.enabled(), existing.nameVisible(), chunkRadius, existing.allowMobSpawning(), existing.dimension(), existing.ownerName()));
+                    existing.name(), existing.enabled(), existing.nameVisible(), chunkRadius, existing.allowMobSpawning(), existing.dimension(), existing.ownerName(), existing.hideOtherDots()));
                 save();
             }
         } finally {
@@ -510,7 +577,7 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                         if (numStr.matches("^\\d+$")) {
                             String candidateName = newPrefix + numStr;
                             boolean nameExists = chunkEntries.stream()
-                                .anyMatch(entry -> entry != existing && candidateName.equals(entry.name()));
+                                .anyMatch(entry -> entry != existing && entry.name() != null && candidateName.equalsIgnoreCase(entry.name()));
                             if (nameExists) {
                                 newName = generateNextNameForPrefix(newPrefix, existing);
                             } else {
@@ -541,7 +608,7 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                             if (numStr.matches("^\\d+$")) {
                                 String candidateName = newPrefix + numStr;
                                 boolean nameExists = chunkEntries.stream()
-                                    .anyMatch(entry -> entry != existing && candidateName.equals(entry.name()));
+                                    .anyMatch(entry -> entry != existing && entry.name() != null && candidateName.equalsIgnoreCase(entry.name()));
                                 if (nameExists) {
                                     newName = generateNextNameForPrefix(newPrefix, existing);
                                 } else {
@@ -571,7 +638,7 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                 chunkEntries.remove(existing);
                 chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), 
                     existing.blockX(), existing.blockY(), existing.blockZ(), 
-                    newName, existing.enabled(), existing.nameVisible(), newRadius, allowMobSpawning, existing.dimension(), existing.ownerName()));
+                    newName, existing.enabled(), existing.nameVisible(), newRadius, allowMobSpawning, existing.dimension(), existing.ownerName(), existing.hideOtherDots()));
                 save();
             }
         } finally {
@@ -622,9 +689,10 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
             if (entry == excludeEntry) {
                 continue;
             }
-            if (entry.name() != null && entry.name().startsWith(prefix)) {
+            String entryName = entry.name();
+            if (entryName != null && entryName.length() >= prefix.length() && entryName.regionMatches(true, 0, prefix, 0, prefix.length())) {
                 try {
-                    String numStr = entry.name().substring(prefix.length());
+                    String numStr = entryName.substring(prefix.length());
                     if (numStr.matches("^\\d+$")) {
                         int num = Integer.parseInt(numStr);
                         usedNumbers.add(num);
@@ -650,13 +718,99 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
         try {
             ChunkloaderTarget existing = getEntry(chunkX, chunkZ);
             if (existing != null) {
+                String deletedName = existing.name();
                 chunkEntries.remove(existing);
+                
+                if (deletedName != null) {
+                    renumberNamesAfterDeletion(deletedName);
+                }
+                
                 save();
                 return true;
             }
             return false;
         } finally {
             lock.writeLock().unlock();
+        }
+    }
+    
+    private void renumberNamesAfterDeletion(String deletedName) {
+        final String prefix;
+        int deletedNumber = -1;
+        
+        if (deletedName.startsWith("Fakeplayer")) {
+            prefix = "Fakeplayer";
+            try {
+                String numStr = deletedName.substring("Fakeplayer".length());
+                if (numStr.matches("^\\d+$")) {
+                    deletedNumber = Integer.parseInt(numStr);
+                } else {
+                    return;
+                }
+            } catch (NumberFormatException e) {
+                return;
+            }
+        } else if (deletedName.startsWith("Chunkplayer")) {
+            prefix = "Chunkplayer";
+            try {
+                String numStr = deletedName.substring("Chunkplayer".length());
+                if (numStr.matches("^\\d+$")) {
+                    deletedNumber = Integer.parseInt(numStr);
+                } else {
+                    return;
+                }
+            } catch (NumberFormatException e) {
+                return;
+            }
+        } else {
+            return;
+        }
+        
+        final int finalDeletedNumber = deletedNumber;
+        List<ChunkloaderTarget> entriesToRename = new ArrayList<>();
+        for (ChunkloaderTarget entry : chunkEntries) {
+            if (entry.name() != null && entry.name().startsWith(prefix)) {
+                try {
+                    String numStr = entry.name().substring(prefix.length());
+                    if (numStr.matches("^\\d+$")) {
+                        int num = Integer.parseInt(numStr);
+                        if (num > finalDeletedNumber) {
+                            entriesToRename.add(entry);
+                        }
+                    }
+                } catch (NumberFormatException e) {
+                }
+            }
+        }
+        
+        entriesToRename.sort((a, b) -> {
+            try {
+                int numA = Integer.parseInt(a.name().substring(prefix.length()));
+                int numB = Integer.parseInt(b.name().substring(prefix.length()));
+                return Integer.compare(numA, numB);
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        });
+        
+        for (ChunkloaderTarget entry : entriesToRename) {
+            try {
+                String currentName = entry.name();
+                int currentNum = Integer.parseInt(currentName.substring(prefix.length()));
+                String newName = prefix + (currentNum - 1);
+                
+                ChunkloaderTarget updated = new ChunkloaderTarget(
+                    entry.chunkX(), entry.chunkZ(),
+                    entry.blockX(), entry.blockY(), entry.blockZ(),
+                    newName,
+                    entry.enabled(), entry.nameVisible(),
+                    entry.chunkRadius(), entry.allowMobSpawning(),
+                    entry.dimension(), entry.ownerName(), entry.hideOtherDots()
+                );
+                chunkEntries.remove(entry);
+                chunkEntries.add(updated);
+            } catch (NumberFormatException e) {
+            }
         }
     }
     

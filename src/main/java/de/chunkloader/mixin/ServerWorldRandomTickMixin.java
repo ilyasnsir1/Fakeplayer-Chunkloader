@@ -60,8 +60,6 @@ public class ServerWorldRandomTickMixin {
                     }
                 }
             } catch (Exception e) {
-                ChunkloaderMod.LOGGER.debug("Error performing random ticks for chunkplayer chunk ({}, {}): {}", 
-                    chunkPos.x, chunkPos.z, e.getMessage());
             }
         }
     }

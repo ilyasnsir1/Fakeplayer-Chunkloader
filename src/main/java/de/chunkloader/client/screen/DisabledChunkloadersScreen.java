@@ -8,6 +8,7 @@ import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import java.util.ArrayList;
@@ -17,11 +18,59 @@ import java.util.List;
 public class DisabledChunkloadersScreen extends Screen {
     
     private List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> disabledChunkloaders = new ArrayList<>();
+    private TextFieldWidget searchField;
+    private String searchQuery = "";
+    private boolean ignoreSearchChange = false;
     private int scrollOffset = 0;
     private static final int ITEM_HEIGHT = 40;
+    private static final int SEARCH_HEIGHT = 18;
     private int contentTop;
     private int contentBottom;
     private final Screen parentScreen;
+
+    private boolean scrollbarDragging = false;
+    private int scrollbarDragOffsetY = 0;
+
+    private static final class ScrollbarMetrics {
+        private final int x;
+        private final int width;
+        private final int trackTop;
+        private final int trackHeight;
+        private final int thumbY;
+        private final int thumbHeight;
+        private final int maxScroll;
+
+        private ScrollbarMetrics(int x, int width, int trackTop, int trackHeight, int thumbY, int thumbHeight, int maxScroll) {
+            this.x = x;
+            this.width = width;
+            this.trackTop = trackTop;
+            this.trackHeight = trackHeight;
+            this.thumbY = thumbY;
+            this.thumbHeight = thumbHeight;
+            this.maxScroll = maxScroll;
+        }
+    }
+
+    private ScrollbarMetrics getScrollbarMetrics() {
+        int availableHeight = contentBottom - contentTop;
+        int itemsVisible = availableHeight / ITEM_HEIGHT;
+        int total = getFilteredEntries().size();
+        int maxItems = Math.max(0, total - itemsVisible);
+
+        if (maxItems <= 0 || availableHeight <= 0 || total <= 0) {
+            return null;
+        }
+
+        int scrollbarWidth = 3;
+        int scrollbarX = this.width - scrollbarWidth - 2;
+        int scrollbarHeight = (int) ((double) itemsVisible / total * availableHeight);
+        if (scrollbarHeight <= 0) {
+            return null;
+        }
+
+        int thumbY = contentTop + (int) ((double) scrollOffset / maxItems * (availableHeight - scrollbarHeight));
+        return new ScrollbarMetrics(scrollbarX, scrollbarWidth, contentTop, availableHeight, thumbY, scrollbarHeight, maxItems);
+    }
     
     public DisabledChunkloadersScreen(List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> disabledChunkloaders) {
         this(disabledChunkloaders, null);
@@ -45,13 +94,66 @@ public class DisabledChunkloadersScreen extends Screen {
         this.clearChildren();
         this.init();
     }
+
+    private List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> getFilteredEntries() {
+        String query = searchQuery == null ? "" : searchQuery.trim().toLowerCase();
+        if (query.isEmpty()) {
+            return disabledChunkloaders;
+        }
+
+        List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> filtered = new ArrayList<>();
+        for (DisabledChunkloadersListPayload.DisabledChunkloaderEntry entry : disabledChunkloaders) {
+            if (entry == null) {
+                continue;
+            }
+            String name = entry.name();
+            if (name != null && name.toLowerCase().contains(query)) {
+                filtered.add(entry);
+            }
+        }
+        return filtered;
+    }
     
     @Override
     protected void init() {
         super.init();
-        
-        contentTop = 50;
+
+        int searchX = 20;
+        int searchWidth = Math.max(80, this.width - 40);
+        int searchY = 35;
+
+        if (searchField == null) {
+            searchField = new TextFieldWidget(this.textRenderer, searchX, searchY, searchWidth, SEARCH_HEIGHT, Text.literal("Search"));
+            searchField.setMaxLength(64);
+            ignoreSearchChange = true;
+            searchField.setText(searchQuery);
+            ignoreSearchChange = false;
+            searchField.setChangedListener(text -> {
+                if (ignoreSearchChange) {
+                    return;
+                }
+                searchQuery = text;
+                scrollOffset = 0;
+                this.clearChildren();
+                this.init();
+            });
+            searchField.setPlaceholder(Text.literal("Search player...").formatted(Formatting.GRAY));
+            this.addDrawableChild(searchField);
+        } else {
+            searchField.setX(searchX);
+            searchField.setY(searchY);
+            searchField.setWidth(searchWidth);
+            searchField.setHeight(SEARCH_HEIGHT);
+            ignoreSearchChange = true;
+            searchField.setText(searchQuery);
+            ignoreSearchChange = false;
+            this.addDrawableChild(searchField);
+        }
+
+        contentTop = searchY + SEARCH_HEIGHT + 12;
         contentBottom = this.height - 60;
+
+        List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> visibleEntries = getFilteredEntries();
         
         int buttonWidth = 100;
         int buttonSpacing = 10;
@@ -78,39 +180,39 @@ public class DisabledChunkloadersScreen extends Screen {
         
         int availableHeight = contentBottom - contentTop;
         int itemsThatFitFully = availableHeight / ITEM_HEIGHT;
-        
-        int maxScroll = Math.max(0, disabledChunkloaders.size() - itemsThatFitFully);
+
+        int maxScroll = Math.max(0, visibleEntries.size() - itemsThatFitFully);
         if (scrollOffset > maxScroll) {
             scrollOffset = maxScroll;
         }
-        
-        for (int i = 0; i < itemsThatFitFully && (scrollOffset + i) < disabledChunkloaders.size(); i++) {
+
+        TextRenderer textRenderer = this.textRenderer;
+        int maxTextWidth = 0;
+        for (var e : visibleEntries) {
+            String eName = e.name() != null ? e.name() : "Unnamed";
+            String ePosText = String.format("Chunk: %d, %d | Block: %d, %d, %d",
+                e.chunkX(), e.chunkZ(), e.blockX(), e.blockY(), e.blockZ());
+            String eDimText = "Dimension: " + e.dimension().replace("minecraft:", "");
+            int textWidth = Math.max(
+                textRenderer.getWidth(eName),
+                Math.max(
+                    textRenderer.getWidth(ePosText),
+                    textRenderer.getWidth(eDimText)
+                )
+            );
+            maxTextWidth = Math.max(maxTextWidth, textWidth);
+        }
+
+        for (int i = 0; i < itemsThatFitFully && (scrollOffset + i) < visibleEntries.size(); i++) {
             int index = scrollOffset + i;
-            if (index < 0 || index >= disabledChunkloaders.size()) {
+            if (index < 0 || index >= visibleEntries.size()) {
                 continue;
             }
-            DisabledChunkloadersListPayload.DisabledChunkloaderEntry entry = disabledChunkloaders.get(index);
+            DisabledChunkloadersListPayload.DisabledChunkloaderEntry entry = visibleEntries.get(index);
             int itemY = contentTop + i * ITEM_HEIGHT;
             
             if (itemY < contentTop || itemY + ITEM_HEIGHT > contentBottom) {
                 continue;
-            }
-            
-            TextRenderer textRenderer = this.textRenderer;
-            int maxTextWidth = 0;
-            for (var e : disabledChunkloaders) {
-                String eName = e.name() != null ? e.name() : "Unnamed";
-                String ePosText = String.format("Chunk: %d, %d | Block: %d, %d, %d", 
-                    e.chunkX(), e.chunkZ(), e.blockX(), e.blockY(), e.blockZ());
-                String eDimText = "Dimension: " + e.dimension().replace("minecraft:", "");
-                int textWidth = Math.max(
-                    textRenderer.getWidth(eName),
-                    Math.max(
-                        textRenderer.getWidth(ePosText),
-                        textRenderer.getWidth(eDimText)
-                    )
-                );
-                maxTextWidth = Math.max(maxTextWidth, textWidth);
             }
             
             int infoStartX = 20;
@@ -188,7 +290,9 @@ public class DisabledChunkloadersScreen extends Screen {
         int titleWidth = renderer.getWidth(title);
         context.drawText(renderer, title, (this.width - titleWidth) / 2, 20, 0xFFFF5555, false);
         
-        if (disabledChunkloaders.isEmpty()) {
+        List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> visibleEntries = getFilteredEntries();
+
+        if (visibleEntries.isEmpty()) {
             Text emptyText = Text.literal("No disabled fakeplayers/chunkplayers").formatted(Formatting.GRAY);
             int emptyWidth = renderer.getWidth(emptyText);
             context.drawText(renderer, emptyText, (this.width - emptyWidth) / 2, this.height / 2, 0xFFCCCCCC, false);
@@ -199,19 +303,19 @@ public class DisabledChunkloadersScreen extends Screen {
         int availableHeight = contentBottom - contentTop;
         int itemsThatFitFully = availableHeight / ITEM_HEIGHT;
         
-        int maxScroll = Math.max(0, disabledChunkloaders.size() - itemsThatFitFully);
+        int maxScroll = Math.max(0, visibleEntries.size() - itemsThatFitFully);
         if (scrollOffset > maxScroll) {
             scrollOffset = maxScroll;
         }
         
         context.enableScissor(0, contentTop, this.width, contentBottom);
         
-        for (int i = 0; i < itemsThatFitFully && (scrollOffset + i) < disabledChunkloaders.size(); i++) {
+        for (int i = 0; i < itemsThatFitFully && (scrollOffset + i) < visibleEntries.size(); i++) {
             int index = scrollOffset + i;
-            if (index < 0 || index >= disabledChunkloaders.size()) {
+            if (index < 0 || index >= visibleEntries.size()) {
                 continue;
             }
-            DisabledChunkloadersListPayload.DisabledChunkloaderEntry entry = disabledChunkloaders.get(index);
+            DisabledChunkloadersListPayload.DisabledChunkloaderEntry entry = visibleEntries.get(index);
             int itemY = contentTop + i * ITEM_HEIGHT;
             
             if (itemY < contentTop || itemY + ITEM_HEIGHT > contentBottom) {
@@ -255,7 +359,7 @@ public class DisabledChunkloadersScreen extends Screen {
                 .append(Text.literal(dimText).formatted(dimColor));
             context.drawText(renderer, dimensionText, 20, itemY + 29, 0xFFFFFFFF, false);
             
-            if (i < itemsThatFitFully - 1 && (scrollOffset + i + 1) < disabledChunkloaders.size()) {
+            if (i < itemsThatFitFully - 1 && (scrollOffset + i + 1) < visibleEntries.size()) {
                 int lineY = itemY + ITEM_HEIGHT - 1;
                 int lineLeft = 10;
                 int lineRight = this.width - 10;
@@ -273,7 +377,8 @@ public class DisabledChunkloadersScreen extends Screen {
     private void drawScrollbar(DrawContext context) {
         int availableHeight = contentBottom - contentTop;
         int itemsVisible = availableHeight / ITEM_HEIGHT;
-        int maxItems = Math.max(0, disabledChunkloaders.size() - itemsVisible);
+        int total = getFilteredEntries().size();
+        int maxItems = Math.max(0, total - itemsVisible);
         
         if (maxItems <= 0) {
             return;
@@ -281,7 +386,7 @@ public class DisabledChunkloadersScreen extends Screen {
         
         int scrollbarWidth = 3;
         int scrollbarX = this.width - scrollbarWidth - 2;
-        int scrollbarHeight = (int)((double)itemsVisible / disabledChunkloaders.size() * availableHeight);
+        int scrollbarHeight = total <= 0 ? 0 : (int)((double)itemsVisible / total * availableHeight);
         if (maxItems > 0) {
             int scrollbarY = contentTop + (int)((double)scrollOffset / maxItems * (availableHeight - scrollbarHeight));
             
@@ -297,7 +402,7 @@ public class DisabledChunkloadersScreen extends Screen {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
         int availableHeight = contentBottom - contentTop;
-        int maxItems = Math.max(0, disabledChunkloaders.size() - (availableHeight / ITEM_HEIGHT));
+        int maxItems = Math.max(0, getFilteredEntries().size() - (availableHeight / ITEM_HEIGHT));
         
         int scrollDelta = (int)(verticalAmount * 3);
         scrollOffset = Math.max(0, Math.min(maxItems, scrollOffset - scrollDelta));
@@ -305,6 +410,74 @@ public class DisabledChunkloadersScreen extends Screen {
         this.clearChildren();
         this.init();
         return true;
+    }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.gui.Click click, boolean doubleClick) {
+        if (click.button() == 0) {
+            double mouseX = click.x();
+            double mouseY = click.y();
+
+            if (searchField != null && !searchField.isMouseOver(mouseX, mouseY)) {
+                if (this.getFocused() == searchField) {
+                    this.setFocused(null);
+                }
+                searchField.setFocused(false);
+            }
+
+            ScrollbarMetrics metrics = getScrollbarMetrics();
+            if (metrics != null
+                && mouseX >= metrics.x && mouseX < metrics.x + metrics.width
+                && mouseY >= metrics.thumbY && mouseY < metrics.thumbY + metrics.thumbHeight) {
+                scrollbarDragging = true;
+                scrollbarDragOffsetY = (int) (mouseY - metrics.thumbY);
+                return true;
+            }
+        }
+
+        return super.mouseClicked(click, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.gui.Click click, double deltaX, double deltaY) {
+        if (scrollbarDragging) {
+            double mouseY = click.y();
+            ScrollbarMetrics metrics = getScrollbarMetrics();
+            if (metrics == null) {
+                scrollbarDragging = false;
+                return false;
+            }
+
+            int trackRange = metrics.trackHeight - metrics.thumbHeight;
+            if (trackRange <= 0) {
+                return true;
+            }
+
+            int newThumbY = (int) mouseY - scrollbarDragOffsetY;
+            newThumbY = Math.max(metrics.trackTop, Math.min(metrics.trackTop + trackRange, newThumbY));
+
+            int newScroll = (int) Math.round(((double) (newThumbY - metrics.trackTop) / trackRange) * metrics.maxScroll);
+            newScroll = Math.max(0, Math.min(metrics.maxScroll, newScroll));
+
+            if (newScroll != scrollOffset) {
+                scrollOffset = newScroll;
+                this.clearChildren();
+                this.init();
+            }
+            return true;
+        }
+
+        return super.mouseDragged(click, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.gui.Click click) {
+        if (scrollbarDragging) {
+            scrollbarDragging = false;
+            return true;
+        }
+
+        return super.mouseReleased(click);
     }
     
     @Override

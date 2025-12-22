@@ -62,9 +62,6 @@ public final class EntitySyncUtil {
                                         serializedEntries.add(serialized);
                                     }
                                 } catch (Exception e) {
-                                    de.chunkloader.ChunkloaderMod.LOGGER.debug(
-                                        "Could not serialize entry: {}", e.getMessage()
-                                    );
                                 }
                             }
                             
@@ -73,18 +70,10 @@ public final class EntitySyncUtil {
                             }
                         }
                     } catch (Exception e) {
-                        de.chunkloader.ChunkloaderMod.LOGGER.debug(
-                            "Could not serialize metadata via reflection: {}", e.getMessage()
-                        );
                     }
                 }
                 
                 if (changedEntries.isEmpty()) {
-                    de.chunkloader.ChunkloaderMod.LOGGER.debug(
-                        "No changed metadata entries for entity {}, skipping sync. " +
-                        "This might happen if setCustomName() was called but metadata was already synced.", 
-                        entity.getUuid()
-                    );
                     return;
                 }
             }
@@ -116,10 +105,6 @@ public final class EntitySyncUtil {
                     return;
                 }
             } catch (Exception e) {
-                de.chunkloader.ChunkloaderMod.LOGGER.debug(
-                    "Could not access EntityTracker via reflection, using fallback: {}", 
-                    e.getMessage()
-                );
             }
             
             double maxDistance = 64.0;

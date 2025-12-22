@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version '1.11-SNAPSHOT'
+    id 'fabric-loom' version '1.13.6'
     id 'maven-publish'
 }
 
@@ -7,11 +7,10 @@ version = project.mod_version
 group = project.maven_group
 
 base {
-    archivesName = project.archives_base_name
+    archivesName = "fakeplayerchunkloader${project.minecraft_version}-fabric"
 }
 
 repositories {
-    // Fabric Maven
     maven {
         name = "Fabric"
         url = "https://maven.fabricmc.net/"
@@ -24,30 +23,25 @@ loom {
 }
 
 dependencies {
-    // Minecraft
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    
-    // Mappings
     mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
-    
-    // Fabric Loader
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
-    
-    // Fabric API - Version für Minecraft 1.21.10
-    modImplementation "net.fabricmc.fabric-api:fabric-api:0.138.0+1.21.10"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 }
 
 processResources {
     inputs.property "version", project.version
     inputs.property "minecraft_version", project.minecraft_version
     inputs.property "loader_version", project.loader_version
+    inputs.property "fabric_api_version", project.fabric_api_version
     
     filteringCharset "UTF-8"
 
     filesMatching("fabric.mod.json") {
         expand "version": project.version,
                 "minecraft_version": project.minecraft_version,
-                "loader_version": project.loader_version
+                "loader_version": project.loader_version,
+                "fabric_api_version": project.fabric_api_version
     }
 }
 
@@ -66,7 +60,7 @@ java {
     if (JavaVersion.current() < javaVersion) {
         toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
     }
-    archivesBaseName = project.archives_base_name
+    archivesBaseName = "fakeplayerchunkloader${project.minecraft_version}-fabric"
     withSourcesJar()
 }
 

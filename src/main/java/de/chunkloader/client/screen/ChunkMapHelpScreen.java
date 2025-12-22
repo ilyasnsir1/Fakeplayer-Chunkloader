@@ -22,50 +22,130 @@ public class ChunkMapHelpScreen extends Screen {
     private int contentBottom;
     private int totalContentHeight;
 
+    private boolean scrollbarDragging = false;
+    private int scrollbarDragOffsetY = 0;
+
+    private static final class ScrollbarMetrics {
+        private final int x;
+        private final int width;
+        private final int trackTop;
+        private final int trackHeight;
+        private final int thumbY;
+        private final int thumbHeight;
+        private final int maxScroll;
+
+        private ScrollbarMetrics(int x, int width, int trackTop, int trackHeight, int thumbY, int thumbHeight, int maxScroll) {
+            this.x = x;
+            this.width = width;
+            this.trackTop = trackTop;
+            this.trackHeight = trackHeight;
+            this.thumbY = thumbY;
+            this.thumbHeight = thumbHeight;
+            this.maxScroll = maxScroll;
+        }
+    }
+
+    private ScrollbarMetrics getScrollbarMetrics() {
+        int availableHeight = contentBottom - contentTop;
+        int totalHeightWithPadding = totalContentHeight + 40;
+        if (availableHeight <= 0 || totalHeightWithPadding <= availableHeight) {
+            return null;
+        }
+
+        int scrollbarWidth = 3;
+        int scrollbarX = this.width - scrollbarWidth - 2;
+        int scrollbarHeight = (int) ((double) availableHeight / totalHeightWithPadding * availableHeight);
+        int maxScroll = totalHeightWithPadding - availableHeight;
+        if (scrollbarHeight <= 0 || maxScroll <= 0) {
+            return null;
+        }
+
+        int scrollbarY = contentTop + (int) ((double) scrollOffset / maxScroll * (availableHeight - scrollbarHeight));
+        return new ScrollbarMetrics(scrollbarX, scrollbarWidth, contentTop, availableHeight, scrollbarY, scrollbarHeight, maxScroll);
+    }
+
     public ChunkMapHelpScreen(Screen parent) {
         super(Text.literal("Chunk Map Help"));
         this.parent = parent;
         
         helpLines.add(Text.literal("Chunk Map Help").formatted(Formatting.BOLD));
         helpLines.add(Text.empty());
-        helpLines.add(Text.literal("Overview:").formatted(Formatting.BOLD));
-        helpLines.add(Text.literal("This screen shows the area loaded by your chunkloader."));
-        helpLines.add(Text.literal("Fakeplayer: Loads chunks AND simulates player presence"));
-        helpLines.add(Text.literal("Chunkplayer: Only loads chunks (no mob spawning)"));
+        helpLines.add(Text.literal("Overview:").formatted(Formatting.BOLD, Formatting.YELLOW));
+        helpLines.add(Text.literal("This screen shows what your chunkloader is keeping loaded."));
+        helpLines.add(Text.literal("Fakeplayer:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Keeps chunks loaded and acts like a player is there.").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Chunkplayer:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Keeps chunks loaded only (no player simulation).").formatted(Formatting.WHITE)));
         helpLines.add(Text.empty());
-        helpLines.add(Text.literal("Left Panel:").formatted(Formatting.BOLD));
+        helpLines.add(Text.literal("UI Layout Presets:").formatted(Formatting.BOLD, Formatting.YELLOW));
+        helpLines.add(Text.literal("Press the UI button (UI..UI 8) until you like the layout."));
+        helpLines.add(Text.literal("Layouts can move the header buttons and swap the panels."));
+        helpLines.add(Text.empty());
+        helpLines.add(Text.literal("Info Panel:").formatted(Formatting.BOLD, Formatting.YELLOW));
+        helpLines.add(Text.literal("Quick info about your chunkloader and where it is."));
         helpLines.add(Text.literal("Your player head and name"));
-        helpLines.add(Text.literal("Status: active/inactive"));
-        helpLines.add(Text.literal("Dimension: O (Overworld), N (Nether), E (End)"));
+        helpLines.add(Text.literal("Status:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" active/inactive").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Dimension:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" O (Overworld), N (Nether), E (End)").formatted(Formatting.WHITE)));
         helpLines.add(Text.literal("Chunk and block coordinates"));
-        helpLines.add(Text.literal("SD (Simulation Distance) for Fakeplayer: 0-3"));
-        helpLines.add(Text.literal("Radius for Chunkplayer: 0-3"));
+        helpLines.add(Text.literal("SD (Fakeplayer):").formatted(Formatting.YELLOW)
+            .append(Text.literal(" how far simulation runs (0-3)").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Radius (Chunkplayer):").formatted(Formatting.YELLOW)
+            .append(Text.literal(" how many chunks stay loaded (0-3)").formatted(Formatting.WHITE)));
         helpLines.add(Text.empty());
-        helpLines.add(Text.literal("Chunk Map Colors:").formatted(Formatting.BOLD));
-        helpLines.add(Text.literal("Green overlay: Loaded chunks (Fakeplayer)"));
-        helpLines.add(Text.literal("Blue overlay: Loaded chunks (Chunkplayer)"));
-        helpLines.add(Text.literal("Dark gray: Occupied by another chunkloader"));
-        helpLines.add(Text.literal("Red dot: This chunkloader position"));
-        helpLines.add(Text.literal("Green dot: Other Fakeplayer"));
-        helpLines.add(Text.literal("Blue dot: Other Chunkplayer"));
+        helpLines.add(Text.literal("Chunk Map Colors:").formatted(Formatting.BOLD, Formatting.YELLOW));
+        helpLines.add(Text.literal("Green overlay:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Loaded chunks (Fakeplayer)").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Blue overlay:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Loaded chunks (Chunkplayer)").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Dark gray:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Occupied by another chunkloader").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Red dot:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" This chunkloader position").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Green dot:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Other Fakeplayer").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Blue dot:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Other Chunkplayer").formatted(Formatting.WHITE)));
         helpLines.add(Text.empty());
-        helpLines.add(Text.literal("Right Panel:").formatted(Formatting.BOLD));
-        helpLines.add(Text.literal("Chunkloader name and type"));
-        helpLines.add(Text.literal("Dimension and coordinates"));
-        helpLines.add(Text.literal("SD/Radius controls (SD +1 / SD -1)"));
-        helpLines.add(Text.literal("Enable/Disable toggle"));
-        helpLines.add(Text.literal("Toggle Mob Spawning (Fakeplayer/Chunkplayer)"));
-        helpLines.add(Text.literal("Visualize/3D Visualize buttons"));
-        helpLines.add(Text.literal("Legend (Chunkplayer only)"));
+        helpLines.add(Text.literal("Actions Panel:").formatted(Formatting.BOLD, Formatting.YELLOW));
+        helpLines.add(Text.literal("Search:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Type here to quickly find actions").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Enable/Disable:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Turns it on/off (loads chunks or stops)").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Mob spawning:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Toggle whether mobs can spawn or not through your chunkloader").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("SD/Radius -1 / +1:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Change your SD/radius (0-3)").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Rename:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Change the display name (letters/numbers only)").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Show name / Hide name:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Toggle the name of your chunkloader").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Show other dots / Hide other dots:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Show/hide other chunkloaders on the map").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Visualization / 3D:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Turn visualization on/off").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Panel color:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Pick your UI colors").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Keybinds:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Change your F6/F7/F8 keys").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Reset to defaults:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Puts everything back to default (asks first)").formatted(Formatting.WHITE)));
         helpLines.add(Text.empty());
-        helpLines.add(Text.literal("Top Buttons:").formatted(Formatting.BOLD));
-        helpLines.add(Text.literal("Info: Opens detailed info screen"));
-        helpLines.add(Text.literal("List: Opens disabled chunkloaders list"));
-        helpLines.add(Text.literal("Help: Shows this help screen"));
-        helpLines.add(Text.literal("Delete: Deletes this chunkloader"));
+        helpLines.add(Text.literal("Header Buttons:").formatted(Formatting.BOLD, Formatting.YELLOW));
+        helpLines.add(Text.literal("Info:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Opens detailed info screen").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Help:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Shows this help screen").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("List:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Opens disabled chunkloaders list").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("UI:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Cycles the screen layout preset (UI..UI 8)").formatted(Formatting.WHITE)));
+        helpLines.add(Text.literal("Delete:").formatted(Formatting.YELLOW)
+            .append(Text.literal(" Deletes this chunkloader").formatted(Formatting.WHITE)));
         helpLines.add(Text.empty());
-        helpLines.add(Text.literal("Tooltips:").formatted(Formatting.BOLD));
-        helpLines.add(Text.literal("Hover over chunks to see:"));
+        helpLines.add(Text.literal("Tooltips:").formatted(Formatting.BOLD, Formatting.YELLOW));
+        helpLines.add(Text.literal("Hover over chunks to see what they mean."));
         helpLines.add(Text.literal("Loaded by this chunkloader"));
         helpLines.add(Text.literal("Outside of this chunkloader"));
         helpLines.add(Text.literal("Inside radius/SD (enable to load)"));
@@ -191,6 +271,57 @@ public class ChunkMapHelpScreen extends Screen {
         scrollOffset = (int) Math.max(0, Math.min(maxScroll, 
             scrollOffset - (int)(verticalAmount * 20)));
         return true;
+    }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.gui.Click click, boolean doubleClick) {
+        if (click.button() == 0) {
+            double mouseX = click.x();
+            double mouseY = click.y();
+            ScrollbarMetrics metrics = getScrollbarMetrics();
+            if (metrics != null
+                && mouseX >= metrics.x && mouseX < metrics.x + metrics.width
+                && mouseY >= metrics.thumbY && mouseY < metrics.thumbY + metrics.thumbHeight) {
+                scrollbarDragging = true;
+                scrollbarDragOffsetY = (int) (mouseY - metrics.thumbY);
+                return true;
+            }
+        }
+        return super.mouseClicked(click, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.gui.Click click, double deltaX, double deltaY) {
+        if (scrollbarDragging) {
+            double mouseY = click.y();
+            ScrollbarMetrics metrics = getScrollbarMetrics();
+            if (metrics == null) {
+                scrollbarDragging = false;
+                return false;
+            }
+
+            int trackRange = metrics.trackHeight - metrics.thumbHeight;
+            if (trackRange <= 0) {
+                return true;
+            }
+
+            int newThumbY = (int) mouseY - scrollbarDragOffsetY;
+            newThumbY = Math.max(metrics.trackTop, Math.min(metrics.trackTop + trackRange, newThumbY));
+
+            int newScroll = (int) Math.round(((double) (newThumbY - metrics.trackTop) / trackRange) * metrics.maxScroll);
+            scrollOffset = (int) Math.max(0, Math.min(metrics.maxScroll, newScroll));
+            return true;
+        }
+        return super.mouseDragged(click, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.gui.Click click) {
+        if (scrollbarDragging) {
+            scrollbarDragging = false;
+            return true;
+        }
+        return super.mouseReleased(click);
     }
     
     private void drawSeparator(DrawContext context, int x, int y, int width) {

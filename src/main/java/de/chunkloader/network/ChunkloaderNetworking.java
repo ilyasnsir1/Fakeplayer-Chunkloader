@@ -54,6 +54,8 @@ public final class ChunkloaderNetworking {
         PayloadTypeRegistry.playC2S().register(RestoreDisabledChunkloaderPayload.ID, RestoreDisabledChunkloaderPayload.CODEC);
         PayloadTypeRegistry.playC2S().register(UpdateDisabledChunkloaderCoordsPayload.ID, UpdateDisabledChunkloaderCoordsPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(UpdateDisabledChunkloaderCoordsResponsePayload.ID, UpdateDisabledChunkloaderCoordsResponsePayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(RenameChunkloaderResponsePayload.ID, RenameChunkloaderResponsePayload.CODEC);
+        PayloadTypeRegistry.playC2S().register(RenameChunkloaderPayload.ID, RenameChunkloaderPayload.CODEC);
 
         ServerPlayNetworking.registerGlobalReceiver(ChunkloaderActionPayload.ID, (payload, context) -> {
             ServerPlayerEntity player = context.player();
@@ -88,6 +90,20 @@ public final class ChunkloaderNetworking {
         ServerPlayNetworking.registerGlobalReceiver(UpdateDisabledChunkloaderCoordsPayload.ID, (payload, context) -> {
             ServerPlayerEntity player = context.player();
             player.getEntityWorld().getServer().execute(() -> handleUpdateDisabledChunkloaderCoords(player, payload));
+        });
+        
+        ServerPlayNetworking.registerGlobalReceiver(RenameChunkloaderPayload.ID, (payload, context) -> {
+            ServerPlayerEntity player = context.player();
+            player.getEntityWorld().getServer().execute(() -> handleRenameChunkloader(player, payload));
+        });
+        
+        ClientPlayNetworking.registerGlobalReceiver(RenameChunkloaderResponsePayload.ID, (payload, context) -> {
+            context.client().execute(() -> {
+                net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
+                if (client.player != null && client.currentScreen instanceof de.chunkloader.client.screen.RenameChunkloaderScreen renameScreen) {
+                    renameScreen.handleRenameResponse(payload);
+                }
+            });
         });
     }
 
@@ -146,6 +162,7 @@ public final class ChunkloaderNetworking {
             case TOGGLE_NAME_VISIBLE -> manager.toggleChunkloaderNameVisible(payload.chunkX(), payload.chunkZ());
             case TOGGLE_VISUALIZE -> manager.toggleChunkloaderVisualize(payload.chunkX(), payload.chunkZ());
             case TOGGLE_VISUALIZE3D -> manager.toggleChunkloaderVisualize3D(payload.chunkX(), payload.chunkZ());
+            case TOGGLE_HIDE_OTHER_DOTS -> manager.toggleChunkloaderHideOtherDots(payload.chunkX(), payload.chunkZ());
             case RESET_TO_DEFAULTS -> manager.resetChunkloaderToDefaults(payload.chunkX(), payload.chunkZ());
             case DELETE -> {
                 manager.removeChunkloader(payload.chunkX(), payload.chunkZ());
@@ -187,6 +204,7 @@ public final class ChunkloaderNetworking {
                 status.fakeplayerName(),
                 status.chunkX(),
                 status.chunkZ(),
+                status.simulationDistance(),
                 status.distance()
             );
             
@@ -328,6 +346,38 @@ public final class ChunkloaderNetworking {
     @Environment(EnvType.CLIENT)
     public static void sendUpdateDisabledChunkloaderCoords(int oldChunkX, int oldChunkZ, int newChunkX, int newChunkZ, int newBlockX, int newBlockY, int newBlockZ) {
         ClientPlayNetworking.send(new UpdateDisabledChunkloaderCoordsPayload(oldChunkX, oldChunkZ, newChunkX, newChunkZ, newBlockX, newBlockY, newBlockZ));
+    }
+    
+    @Environment(EnvType.CLIENT)
+    public static void sendRenameChunkloader(int chunkX, int chunkZ, String newName) {
+        ClientPlayNetworking.send(new RenameChunkloaderPayload(chunkX, chunkZ, newName));
+    }
+    
+    private static void handleRenameChunkloader(ServerPlayerEntity player, RenameChunkloaderPayload payload) {
+        if (!PermissionManager.canUse(player)) {
+            player.sendMessage(Text.literal("You don't have permission to rename chunkloaders."), false);
+            return;
+        }
+        
+        var manager = ChunkloaderMod.getChunkloaderManager();
+        if (manager == null) {
+            return;
+        }
+        
+        String newName = payload.newName();
+        if (newName == null || newName.trim().isEmpty() || !newName.matches("^[a-zA-Z0-9]+$")) {
+            String errorMessage = "Name can only contain letters and numbers.";
+            ServerPlayNetworking.send(player, new RenameChunkloaderResponsePayload(false, errorMessage));
+            return;
+        }
+        
+        boolean success = manager.renameChunkloader(payload.chunkX(), payload.chunkZ(), newName);
+        if (success) {
+            ServerPlayNetworking.send(player, new RenameChunkloaderResponsePayload(true, null));
+        } else {
+            String errorMessage = "This name is already in use or invalid.";
+            ServerPlayNetworking.send(player, new RenameChunkloaderResponsePayload(false, errorMessage));
+        }
     }
     
     private static void handleDisabledChunkloadersListRequest(ServerPlayerEntity player) {

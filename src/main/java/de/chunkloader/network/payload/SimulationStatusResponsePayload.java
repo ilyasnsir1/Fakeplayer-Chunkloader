@@ -11,6 +11,7 @@ public record SimulationStatusResponsePayload(
     String fakeplayerName,
     int chunkX,
     int chunkZ,
+    int simulationDistance,
     int distance
 ) implements CustomPayload {
 
@@ -24,6 +25,7 @@ public record SimulationStatusResponsePayload(
         buf.writeString(payload.fakeplayerName() != null ? payload.fakeplayerName() : "");
         buf.writeInt(payload.chunkX());
         buf.writeInt(payload.chunkZ());
+        buf.writeInt(payload.simulationDistance());
         buf.writeInt(payload.distance());
     }
 
@@ -32,8 +34,9 @@ public record SimulationStatusResponsePayload(
         String fakeplayerName = buf.readString();
         int chunkX = buf.readInt();
         int chunkZ = buf.readInt();
+        int simulationDistance = buf.readInt();
         int distance = buf.readInt();
-        return new SimulationStatusResponsePayload(inSimulatedChunk, fakeplayerName, chunkX, chunkZ, distance);
+        return new SimulationStatusResponsePayload(inSimulatedChunk, fakeplayerName, chunkX, chunkZ, simulationDistance, distance);
     }
 
     @Override

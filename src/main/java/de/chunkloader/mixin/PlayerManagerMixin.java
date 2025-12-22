@@ -36,7 +36,6 @@ public class PlayerManagerMixin {
                 if (player instanceof ChunkloaderFakePlayer) {
                     String playerName = player.getName().getString();
                     if (playerName == null || playerName.isEmpty() || messageString.contains("null")) {
-                        ChunkloaderMod.LOGGER.debug("Suppressed join/leave message for FakePlayer with null name");
                         ci.cancel();
                         return;
                     }
@@ -49,7 +48,6 @@ public class PlayerManagerMixin {
             if (player instanceof ChunkloaderFakePlayer) {
                 String playerName = player.getName().getString();
                 if (playerName != null && !playerName.isEmpty() && messageString.contains(playerName)) {
-                    ChunkloaderMod.LOGGER.debug("Suppressed join/leave message for FakePlayer: {}", playerName);
                     ci.cancel();
                     return;
                 }
@@ -63,7 +61,6 @@ public class PlayerManagerMixin {
                 String fakePlayerName = entry.name() != null ? entry.name() : 
                     (prefix + entry.chunkX() + "_" + entry.chunkZ());
                 if (messageString.contains(fakePlayerName)) {
-                    ChunkloaderMod.LOGGER.debug("Suppressed join/leave message for FakePlayer name: {}", fakePlayerName);
                     ci.cancel();
                     return;
                 }

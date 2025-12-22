@@ -27,7 +27,6 @@ public class ChunkloaderCommand {
     
     public static void register() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
-            ChunkloaderMod.LOGGER.info("Registering fakeplayer commands...");
             registerCommands(dispatcher);
         });
     }
@@ -64,6 +63,10 @@ public class ChunkloaderCommand {
                 .then(CommandManager.argument("name", StringArgumentType.string())
                     .then(CommandManager.argument("allow", BoolArgumentType.bool())
                         .executes(ChunkloaderCommand::setMobSpawning))))
+            .then(CommandManager.literal("rename")
+                .then(CommandManager.argument("name", StringArgumentType.string())
+                    .then(CommandManager.argument("newName", StringArgumentType.string())
+                        .executes(ChunkloaderCommand::renameChunkloader))))
             .then(CommandManager.literal("enableall")
                 .executes(ChunkloaderCommand::enableAllFakePlayers))
             .then(CommandManager.literal("disableall")
@@ -123,6 +126,10 @@ public class ChunkloaderCommand {
                 .then(CommandManager.argument("name", StringArgumentType.string())
                     .then(CommandManager.argument("allow", BoolArgumentType.bool())
                         .executes(ChunkloaderCommand::setMobSpawning))))
+            .then(CommandManager.literal("rename")
+                .then(CommandManager.argument("name", StringArgumentType.string())
+                    .then(CommandManager.argument("newName", StringArgumentType.string())
+                        .executes(ChunkloaderCommand::renameChunkloader))))
             .then(CommandManager.literal("enableall")
                 .executes(ChunkloaderCommand::enableAllFakePlayers))
             .then(CommandManager.literal("disableall")
@@ -545,6 +552,47 @@ public class ChunkloaderCommand {
             return 1;
         } else {
             context.getSource().sendError(Text.literal("Error setting mob spawning status").formatted(Formatting.RED));
+            return 0;
+        }
+    }
+    
+    private static int renameChunkloader(CommandContext<ServerCommandSource> context) {
+        String name = StringArgumentType.getString(context, "name");
+        final String newName = StringArgumentType.getString(context, "newName");
+
+        if (ChunkloaderMod.getChunkloaderManager() == null) {
+            context.getSource().sendError(Text.literal("Fakeplayer Manager is not initialized"));
+            return 0;
+        }
+
+        ChunkloaderTarget entry = ChunkloaderMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
+            .filter(e -> name.equals(e.name()))
+            .findFirst()
+            .orElse(null);
+
+        if (entry == null) {
+            var config = ChunkloaderMod.getConfig();
+            List<String> similar = config != null ? config.findSimilarNames(name, 3) : List.of();
+
+            Text errorText;
+            if (!similar.isEmpty()) {
+                errorText = Text.literal("Fakeplayer '" + name + "' not found. Did you mean: " + String.join(", ", similar))
+                    .formatted(Formatting.RED);
+            } else {
+                errorText = Text.literal("Fakeplayer '" + name + "' not found").formatted(Formatting.RED);
+            }
+            context.getSource().sendError(errorText);
+            return 0;
+        }
+
+        boolean success = ChunkloaderMod.getChunkloaderManager().renameChunkloader(entry.chunkX(), entry.chunkZ(), newName);
+
+        if (success) {
+            context.getSource().sendFeedback(() -> Text.literal("Renamed '" + name + "' to '" + newName + "'")
+                .formatted(Formatting.GREEN), true);
+            return 1;
+        } else {
+            context.getSource().sendError(Text.literal("Failed to rename chunkloader. Name may already be in use or invalid.").formatted(Formatting.RED));
             return 0;
         }
     }

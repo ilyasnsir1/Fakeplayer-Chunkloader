@@ -18,6 +18,48 @@ public class ChunkloaderCommandsScreen extends Screen {
     private int contentBottom;
     private int totalContentHeight;
 
+    private boolean scrollbarDragging = false;
+    private int scrollbarDragOffsetY = 0;
+
+    private static final class ScrollbarMetrics {
+        private final int x;
+        private final int width;
+        private final int trackTop;
+        private final int trackHeight;
+        private final int thumbY;
+        private final int thumbHeight;
+        private final int maxScroll;
+
+        private ScrollbarMetrics(int x, int width, int trackTop, int trackHeight, int thumbY, int thumbHeight, int maxScroll) {
+            this.x = x;
+            this.width = width;
+            this.trackTop = trackTop;
+            this.trackHeight = trackHeight;
+            this.thumbY = thumbY;
+            this.thumbHeight = thumbHeight;
+            this.maxScroll = maxScroll;
+        }
+    }
+
+    private ScrollbarMetrics getScrollbarMetrics() {
+        int availableHeight = contentBottom - contentTop;
+        int totalHeightWithPadding = totalContentHeight + 40;
+        if (availableHeight <= 0 || totalHeightWithPadding <= availableHeight) {
+            return null;
+        }
+
+        int scrollbarWidth = 3;
+        int scrollbarX = this.width - scrollbarWidth - 2;
+        int scrollbarHeight = (int) ((double) availableHeight / totalHeightWithPadding * availableHeight);
+        int maxScroll = totalHeightWithPadding - availableHeight;
+        if (scrollbarHeight <= 0 || maxScroll <= 0) {
+            return null;
+        }
+
+        int scrollbarY = contentTop + (int) ((double) scrollOffset / maxScroll * (availableHeight - scrollbarHeight));
+        return new ScrollbarMetrics(scrollbarX, scrollbarWidth, contentTop, availableHeight, scrollbarY, scrollbarHeight, maxScroll);
+    }
+
     public ChunkloaderCommandsScreen(Screen parent) {
         super(Text.literal("Commands"));
         this.parent = parent;
@@ -65,6 +107,57 @@ public class ChunkloaderCommandsScreen extends Screen {
             scrollOffset - (int)(verticalAmount * 20)));
         return true;
     }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.gui.Click click, boolean doubleClick) {
+        if (click.button() == 0) {
+            double mouseX = click.x();
+            double mouseY = click.y();
+            ScrollbarMetrics metrics = getScrollbarMetrics();
+            if (metrics != null
+                && mouseX >= metrics.x && mouseX < metrics.x + metrics.width
+                && mouseY >= metrics.thumbY && mouseY < metrics.thumbY + metrics.thumbHeight) {
+                scrollbarDragging = true;
+                scrollbarDragOffsetY = (int) (mouseY - metrics.thumbY);
+                return true;
+            }
+        }
+        return super.mouseClicked(click, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.gui.Click click, double deltaX, double deltaY) {
+        if (scrollbarDragging) {
+            double mouseY = click.y();
+            ScrollbarMetrics metrics = getScrollbarMetrics();
+            if (metrics == null) {
+                scrollbarDragging = false;
+                return false;
+            }
+
+            int trackRange = metrics.trackHeight - metrics.thumbHeight;
+            if (trackRange <= 0) {
+                return true;
+            }
+
+            int newThumbY = (int) mouseY - scrollbarDragOffsetY;
+            newThumbY = Math.max(metrics.trackTop, Math.min(metrics.trackTop + trackRange, newThumbY));
+
+            int newScroll = (int) Math.round(((double) (newThumbY - metrics.trackTop) / trackRange) * metrics.maxScroll);
+            scrollOffset = (int) Math.max(0, Math.min(metrics.maxScroll, newScroll));
+            return true;
+        }
+        return super.mouseDragged(click, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.gui.Click click) {
+        if (scrollbarDragging) {
+            scrollbarDragging = false;
+            return true;
+        }
+        return super.mouseReleased(click);
+    }
     
     private void drawScrollbar(DrawContext context) {
         int availableHeight = contentBottom - contentTop;
@@ -111,6 +204,7 @@ public class ChunkloaderCommandsScreen extends Screen {
             {{"/fakeplayer removeall disabled", "Removes all disabled fake players", "Example: /fakeplayer removeall disabled"}},
             {{"", ""}},
             {{"Configuration Commands", ""}},
+            {{"/fakeplayer rename <name> <newName>", "Renames a chunkloader (alphanumeric only)", "Example: /fakeplayer rename Fakeplayer1 MyChunkloader"}},
             {{"/fakeplayer setradius <name> <0-3>", "Sets chunk loading radius (0=1x1, 1=3x3, 2=5x5, 3=7x7)", "Example: /fakeplayer setradius Fakeplayer1 2"}},
             {{"/fakeplayer setmobspawning <name> <true/false>", "Controls mob spawning (true=FakePlayer, false=Chunkplayer)", "Example: /fakeplayer setmobspawning Fakeplayer1 false"}},
             {{"/fakeplayer namevisible <name> <true/false>", "Shows/hides the fake player name", "Example: /fakeplayer namevisible Fakeplayer1 false"}},
@@ -134,7 +228,7 @@ public class ChunkloaderCommandsScreen extends Screen {
             {{"F6", "Toggle Simulation Status HUD", "Shows live status if you're within simulation distance of a fakeplayer"}},
             {{"F7", "Toggle Chunkplayer Status HUD", "Shows live status if you're in a chunk loaded by a chunkplayer"}},
             {{"F8", "Open Disabled Chunkloaders List", "Shows all disabled chunkloaders for management"}},
-            {{"Note:", "Keybinds can be changed in Controls settings (Chunkloader category)", "HUDs update automatically every 2 seconds"}}
+            {{"Note:", "Keybinds can be changed in Controls settings or via the Keybinds button in the chunk map", "HUDs update automatically every 2 seconds"}}
         };
         
         boolean isFirstSection = true;

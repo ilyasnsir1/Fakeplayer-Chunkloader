@@ -30,8 +30,31 @@ public class ChunkloaderFakePlayer extends ServerPlayerEntity {
         this.server = server;
         this.connection = DummyClientConnection.create();
         this.clientData = ConnectedClientData.createDefault(profile, false);
+        
+        try {
+            this.networkHandler = new ServerPlayNetworkHandler(server, connection, this, clientData);
+            this.connection.setInitialPacketListener(this.networkHandler);
+        } catch (Exception e) {
+            ChunkloaderMod.LOGGER.warn(
+                "Error during networkHandler initialization for fake player {}: {}. " +
+                "This may be caused by incompatible mods (e.g. polymer-core, connectiblechains). " +
+                "The chunkloader will continue to work, but some networking features may be limited.",
+                profile.name(), e.getMessage()
+            );
+            if (this.networkHandler == null) {
+                try {
         this.networkHandler = new ServerPlayNetworkHandler(server, connection, this, clientData);
         this.connection.setInitialPacketListener(this.networkHandler);
+                } catch (Exception e2) {
+                    ChunkloaderMod.LOGGER.error(
+                        "Failed to create networkHandler for fake player {} after retry: {}",
+                        profile.name(), e2.getMessage(), e2
+                    );
+                }
+            }
+        }
+        
+        try {
         this.interactionManager.changeGameMode(GameMode.SURVIVAL);
         this.getAbilities().allowFlying = true;
         this.getAbilities().invulnerable = true;
@@ -41,6 +64,12 @@ public class ChunkloaderFakePlayer extends ServerPlayerEntity {
         this.setNoGravity(true);
         this.setInvulnerable(true);
         this.setHealth(getMaxHealth());
+        } catch (Exception e) {
+            ChunkloaderMod.LOGGER.warn(
+                "Error during fake player setup for {}: {}. Continuing with limited functionality.",
+                profile.name(), e.getMessage()
+            );
+        }
     }
     
     public void setVisibleAsMarker(boolean visible) {
@@ -57,8 +86,22 @@ public class ChunkloaderFakePlayer extends ServerPlayerEntity {
     
     public void spawn() {
         if (registered) return;
+        try {
         server.getPlayerManager().onPlayerConnect(connection, this, clientData);
         registered = true;
+        } catch (Exception e) {
+            ChunkloaderMod.LOGGER.warn(
+                "Error during spawn() for fake player {}: {}. The fakeplayer will work but may not be visible.",
+                this.getName().getString(), e.getMessage()
+            );
+            try {
+                if (server.getPlayerManager() != null && server.getPlayerManager().getPlayerList().contains(this)) {
+                    server.getPlayerManager().remove(this);
+                }
+            } catch (Exception e3) {
+            }
+            registered = true;
+        }
     }
     
     public void despawn() {

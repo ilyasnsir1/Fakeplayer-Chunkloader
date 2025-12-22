@@ -30,7 +30,8 @@ public record ChunkMapData(
     boolean visualize3DActive,
     boolean canIncreaseRadius,
     List<ChunkloaderPosition> otherChunkloaders,
-    String ownerName
+    String ownerName,
+    boolean hideOtherDots
 ) {
 
     public void write(PacketByteBuf buf) {
@@ -64,6 +65,7 @@ public record ChunkMapData(
             pos.write(buf);
         }
         buf.writeString(ownerName != null ? ownerName : "");
+        buf.writeBoolean(hideOtherDots);
     }
 
     public static ChunkMapData read(PacketByteBuf buf) {
@@ -99,6 +101,7 @@ public record ChunkMapData(
             otherChunkloaders.add(de.chunkloader.network.ChunkloaderPosition.read(buf));
         }
         String ownerName = buf.readString(32767);
+        boolean hideOtherDots = buf.readBoolean();
         return new ChunkMapData(
             name,
             enabled,
@@ -123,7 +126,8 @@ public record ChunkMapData(
             visualize3DActive,
             canIncreaseRadius,
             Collections.unmodifiableList(otherChunkloaders),
-            ownerName.isEmpty() ? null : ownerName
+            ownerName.isEmpty() ? null : ownerName,
+            hideOtherDots
         );
     }
 }

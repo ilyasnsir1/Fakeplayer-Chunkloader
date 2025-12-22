@@ -22,7 +22,7 @@ public class InGameHudMixin {
     )
     private void renderStatusHUDs(DrawContext context, RenderTickCounter tickCounter, CallbackInfo ci) {
         var client = net.minecraft.client.MinecraftClient.getInstance();
-        if (client == null || client.textRenderer == null || client.player == null) {
+        if (client == null || client.textRenderer == null || client.player == null || client.currentScreen != null) {
             return;
         }
         

@@ -34,6 +34,13 @@ public class ChunkplayerStatusHUD {
         enabled = !enabled;
     }
     
+    public static void setEnabled(boolean value) {
+        enabled = value;
+        if (!value) {
+            lastStatus = null;
+        }
+    }
+    
     public static boolean isEnabled() {
         return enabled;
     }

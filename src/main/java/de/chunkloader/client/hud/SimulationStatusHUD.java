@@ -34,6 +34,13 @@ public class SimulationStatusHUD {
         enabled = !enabled;
     }
     
+    public static void setEnabled(boolean value) {
+        enabled = value;
+        if (!value) {
+            lastStatus = null;
+        }
+    }
+    
     public static boolean isEnabled() {
         return enabled;
     }
@@ -74,6 +81,7 @@ public class SimulationStatusHUD {
         int lineHeight = 12;
         int contentHeight = lineHeight;
         if (lastStatus.inSimulatedChunk()) {
+            contentHeight += lineHeight;
             contentHeight += lineHeight;
             contentHeight += lineHeight;
             if (lastStatus.distance() >= 0) {
@@ -131,6 +139,13 @@ public class SimulationStatusHUD {
             context.drawText(textRenderer, chunkValue, textX + chunkLabelWidth, textY, 0xFFFFFFFF, false);
             textY += lineHeight;
             
+            Text sdLabel = Text.literal("SD: ").formatted(Formatting.GRAY);
+            Text sdValue = Text.literal(lastStatus.simulationDistance() + " chunks").formatted(Formatting.WHITE);
+            int sdLabelWidth = textRenderer.getWidth(sdLabel);
+            context.drawText(textRenderer, sdLabel, textX, textY, 0xFFCCCCCC, false);
+            context.drawText(textRenderer, sdValue, textX + sdLabelWidth, textY, 0xFFFFFFFF, false);
+            textY += lineHeight;
+            
             if (lastStatus.distance() >= 0) {
                 Text distanceLabel = Text.literal("Distance: ").formatted(Formatting.GRAY);
                 Text distanceValue = Text.literal(lastStatus.distance() + " chunks").formatted(Formatting.WHITE);
@@ -175,7 +190,7 @@ public class SimulationStatusHUD {
         int lineHeight = 12;
         int contentHeight = lineHeight;
         if (lastStatus.inSimulatedChunk()) {
-            contentHeight += lineHeight * 3;
+            contentHeight += lineHeight * 4;
         }
         return contentHeight + padding * 2;
     }
