@@ -1,0 +1,42 @@
+# eclipse
+bin
+*.launch
+.settings
+.metadata
+.classpath
+.project
+
+# idea
+out
+*.ipr
+*.iws
+*.iml
+.idea
+
+# gradle
+build
+.gradle
+
+# other
+eclipse
+runs
+
+# Java
+*.hprof
+*.class
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+
+# Local IDE / helpers
+.settings/
+.vscode/
+runClient.bat
+runclient.bat
+build_neoforge_*.log
+
