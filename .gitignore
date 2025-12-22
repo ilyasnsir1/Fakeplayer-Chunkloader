@@ -1,0 +1,39 @@
+# Gradle
+.gradle/
+build/
+bin/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# Minecraft
+run/
+logs/
+runClient.bat
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Java
+*.hprof
+*.class
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Local IDE / helpers
+.project
+.settings/
+build_neoforge_*.log
+
