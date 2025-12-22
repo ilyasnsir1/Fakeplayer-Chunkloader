@@ -1,0 +1,24 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "de.chunkloader.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "EntityMixin",
+    "EntityRemoveMixin",
+    "PlayerEntityMixin",
+    "PlayerManagerMixin",
+    "ServerCommonNetworkHandlerMixin",
+    "ServerPlayerEntityMixin",
+    "ServerWorldMixin",
+    "ServerWorldRandomTickMixin",
+    "ServerWorldTickChunkMixin"
+  ],
+  "client": [
+    "client.PlayerEntityClientMixin",
+    "client.InGameHudMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
