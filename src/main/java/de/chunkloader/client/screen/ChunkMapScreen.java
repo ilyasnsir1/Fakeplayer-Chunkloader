@@ -874,24 +874,34 @@ public class ChunkMapScreen extends Screen {
         graphics.fill(topBoxX - 2, topBoxY - 2, topBoxX - 1, topBoxY + topBoxHeight + 2, borderColor);
         graphics.fill(topBoxX + topBoxWidth + 1, topBoxY - 2, topBoxX + topBoxWidth + 2, topBoxY + topBoxHeight + 2, borderColor);
 
-        if (topBoxButtons.size() < TOPBOX_BUTTON_COUNT) {
-            return;
-        }
-
         ChunkMapLayoutPreset layoutPreset = ChunkMapLayoutPreset.fromConfig(clientConfig);
-        if (layoutPreset.isVerticalButtonBar()) {
-            int buttonCount = TOPBOX_BUTTON_COUNT;
-            int separatorGap = 12;
-            int totalButtonsHeight = buttonCount * TOPBOX_BUTTON_HEIGHT + separatorGap;
-            int startY = topBoxY + (topBoxHeight - totalButtonsHeight) / 2;
-            int dividerY = startY + 4 * TOPBOX_BUTTON_HEIGHT + separatorGap / 2;
-            graphics.fill(topBoxX + 4, dividerY, topBoxX + topBoxWidth - 4, dividerY + 1, dividerColor);
-        } else {
-            int buttonSpacing = 12;
-            int padding = 16;
-            int startX = topBoxX + padding;
-            int dividerX = startX + 4 * TOPBOX_BUTTON_WIDTH + 3 * buttonSpacing + 12;
-            graphics.fill(dividerX, topBoxY + 4, dividerX + 1, topBoxY + topBoxHeight - 4, dividerColor);
+        boolean verticalButtonBar = layoutPreset.isVerticalButtonBar();
+        int numButtons = topBoxButtons.size();
+
+        if (!verticalButtonBar && numButtons >= 2) {
+            int buttonWidth = TOPBOX_BUTTON_WIDTH;
+            int totalButtonsWidth = numButtons * buttonWidth;
+            int availableSpace = topBoxWidth - totalButtonsWidth;
+            int spacing = availableSpace / (numButtons + 1);
+            int startX = topBoxX + spacing;
+            int lineY = topBoxY + 4;
+            int lineHeight = topBoxHeight - 8;
+            for (int i = 1; i < numButtons; i++) {
+                int lineX = startX + buttonWidth * i + spacing * (i - 1) + spacing / 2;
+                graphics.fill(lineX, lineY, lineX + 1, lineY + lineHeight, dividerColor);
+            }
+        } else if (verticalButtonBar && numButtons >= 2) {
+            int availableSpace = topBoxHeight - (numButtons * TOPBOX_BUTTON_HEIGHT);
+            int innerSpacing = availableSpace > 0 ? (availableSpace / (numButtons + 1)) : 2;
+            innerSpacing = Math.max(2, innerSpacing);
+
+            int startY = topBoxY + innerSpacing;
+            int lineX1 = topBoxX + 4;
+            int lineX2 = topBoxX + topBoxWidth - 4;
+            for (int i = 1; i < numButtons; i++) {
+                int lineY = startY + TOPBOX_BUTTON_HEIGHT * i + innerSpacing * (i - 1) + innerSpacing / 2;
+                graphics.fill(lineX1, lineY, lineX2, lineY + 1, dividerColor);
+            }
         }
     }
     
@@ -1217,56 +1227,38 @@ public class ChunkMapScreen extends Screen {
         }
 
         ChunkMapLayoutPreset layoutPreset = ChunkMapLayoutPreset.fromConfig(clientConfig);
-        boolean vertical = layoutPreset.isVerticalButtonBar();
-        
+        boolean verticalButtonBar = layoutPreset.isVerticalButtonBar();
+
+        String uiLabel = switch (layoutPreset) {
+            case TOP -> "UI";
+            case LEFT -> "UI 2";
+            case RIGHT -> "UI 3";
+            case BOTTOM -> "UI 4";
+            case TOP_SWAP -> "UI 5";
+            case LEFT_SWAP -> "UI 6";
+            case RIGHT_SWAP -> "UI 7";
+            case BOTTOM_SWAP -> "UI 8";
+        };
+
         int buttonWidth = TOPBOX_BUTTON_WIDTH;
         int buttonHeight = TOPBOX_BUTTON_HEIGHT;
-        int buttonSpacing = 12;
-        int padding = 16;
+        int numButtons = TOPBOX_BUTTON_COUNT;
+        int spacing;
+        int startX;
+        int startY;
 
-        int infoX;
-        int listX;
-        int helpX;
-        int uiX;
-        int deleteX;
-        int infoY;
-        int listY;
-        int helpY;
-        int uiY;
-        int deleteY;
-
-        if (vertical) {
-            int separatorGap = 12;
-            int totalButtonsHeight = TOPBOX_BUTTON_COUNT * buttonHeight + separatorGap;
-            int startX = topBoxX + (topBoxWidth - buttonWidth) / 2;
-            int startY = topBoxY + (topBoxHeight - totalButtonsHeight) / 2;
-
-            infoX = startX;
-            listX = startX;
-            helpX = startX;
-            uiX = startX;
-            deleteX = startX;
-
-            infoY = startY;
-            helpY = startY + buttonHeight;
-            listY = startY + 2 * buttonHeight;
-            uiY = startY + 3 * buttonHeight;
-            deleteY = startY + 4 * buttonHeight + separatorGap;
+        if (!verticalButtonBar) {
+            int totalButtonsWidth = numButtons * buttonWidth;
+            int availableSpace = topBoxWidth - totalButtonsWidth;
+            spacing = availableSpace / (numButtons + 1);
+            startX = topBoxX + spacing;
+            startY = topBoxY + (topBoxHeight - buttonHeight) / 2;
         } else {
-            int startX = topBoxX + padding;
-            int startY = topBoxY + (topBoxHeight - buttonHeight) / 2;
-
-            infoX = startX;
-            helpX = startX + (buttonWidth + buttonSpacing);
-            listX = startX + 2 * (buttonWidth + buttonSpacing);
-            uiX = startX + 3 * (buttonWidth + buttonSpacing);
-            deleteX = startX + 4 * buttonWidth + 3 * buttonSpacing + 24;
-
-            infoY = startY;
-            listY = startY;
-            helpY = startY;
-            uiY = startY;
-            deleteY = startY;
+            int availableSpace = topBoxHeight - (numButtons * buttonHeight);
+            spacing = availableSpace > 0 ? (availableSpace / (numButtons + 1)) : 2;
+            spacing = Math.max(2, spacing);
+            startX = topBoxX + (topBoxWidth - buttonWidth) / 2;
+            startY = topBoxY + spacing;
         }
         
         infoButton = Button.builder(
@@ -1274,45 +1266,51 @@ public class ChunkMapScreen extends Screen {
             btn -> {
                 this.minecraft.setScreen(new ChunkloaderMenuScreen(this));
             })
-            .bounds(infoX, infoY, buttonWidth, buttonHeight)
+            .bounds(startX, startY, buttonWidth, buttonHeight)
             .build();
         infoButton.setMessage(Component.literal("Info").withStyle(ChatFormatting.WHITE));
         topBoxButtons.add(infoButton);
         this.addRenderableWidget(infoButton);
         
+        int helpButtonX = verticalButtonBar ? startX : (startX + buttonWidth + spacing);
+        int helpButtonY = verticalButtonBar ? (startY + (buttonHeight + spacing) * 1) : startY;
         Button helpButton = Button.builder(
             Component.literal("Help"),
             btn -> {
                 this.minecraft.setScreen(new ChunkMapHelpScreen(this));
             })
-            .bounds(helpX, helpY, buttonWidth, buttonHeight)
+            .bounds(helpButtonX, helpButtonY, buttonWidth, buttonHeight)
             .build();
         helpButton.setMessage(Component.literal("Help").withStyle(ChatFormatting.WHITE));
         topBoxButtons.add(helpButton);
         this.addRenderableWidget(helpButton);
 
+        int listButtonX = verticalButtonBar ? startX : (startX + (buttonWidth + spacing) * 2);
+        int listButtonY = verticalButtonBar ? (startY + (buttonHeight + spacing) * 2) : startY;
         Button listButton = Button.builder(
             Component.literal("List"),
             btn -> {
                 ChunkloaderNetworking.requestDisabledChunkloadersList();
             })
-            .bounds(listX, listY, buttonWidth, buttonHeight)
+            .bounds(listButtonX, listButtonY, buttonWidth, buttonHeight)
             .build();
         listButton.setMessage(Component.literal("List").withStyle(ChatFormatting.WHITE));
         topBoxButtons.add(listButton);
         this.addRenderableWidget(listButton);
 
-        int uiNumber = layoutPreset.ordinal() + 1;
-        String uiLabel = uiNumber == 1 ? "UI" : "UI " + uiNumber;
+        int layoutButtonX = verticalButtonBar ? startX : (startX + (buttonWidth + spacing) * 3);
+        int layoutButtonY = verticalButtonBar ? (startY + (buttonHeight + spacing) * 3) : startY;
         Button uiButton = Button.builder(
             Component.literal(uiLabel),
             btn -> cycleLayoutPreset())
-            .bounds(uiX, uiY, buttonWidth, buttonHeight)
+            .bounds(layoutButtonX, layoutButtonY, buttonWidth, buttonHeight)
             .build();
         uiButton.setMessage(Component.literal(uiLabel).withStyle(ChatFormatting.WHITE));
         topBoxButtons.add(uiButton);
         this.addRenderableWidget(uiButton);
         
+        int deleteButtonX = verticalButtonBar ? startX : (startX + (buttonWidth + spacing) * 4);
+        int deleteButtonY = verticalButtonBar ? (startY + (buttonHeight + spacing) * 4) : startY;
         Button deleteButton = Button.builder(
             Component.literal("Delete"),
             btn -> {
@@ -1332,7 +1330,7 @@ public class ChunkMapScreen extends Screen {
                     null
                 ));
             })
-            .bounds(deleteX, deleteY, buttonWidth, buttonHeight)
+            .bounds(deleteButtonX, deleteButtonY, buttonWidth, buttonHeight)
             .build();
         deleteButton.setMessage(Component.literal("Delete").withStyle(ChatFormatting.RED));
         topBoxButtons.add(deleteButton);
