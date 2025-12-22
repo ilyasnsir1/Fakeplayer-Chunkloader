@@ -385,8 +385,6 @@ public class ClientConfig {
         this.actionSearchBorderColor = DEFAULT_ACTION_SEARCH_BORDER_COLOR;
         this.actionSearchTextColor = DEFAULT_ACTION_SEARCH_TEXT_COLOR;
         this.actionSearchPlaceholderColor = DEFAULT_ACTION_SEARCH_PLACEHOLDER_COLOR;
-
-        this.chunkMapLayoutPreset = DEFAULT_CHUNKMAP_LAYOUT_PRESET;
         save();
     }
 }
