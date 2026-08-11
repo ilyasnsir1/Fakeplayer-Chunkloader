@@ -1,52 +1,66 @@
 package de.chunkloader.client.screen;
 
-import com.google.common.collect.ImmutableList;
 import de.chunkloader.ChunkloaderForgeMod;
+import com.google.common.collect.ImmutableList;
 import de.chunkloader.client.config.ClientConfig;
+import de.chunkloader.client.config.PanelColorTarget;
+import de.chunkloader.client.CustomFakePlayerSkinCache;
 import de.chunkloader.network.ChunkMapCell;
 import de.chunkloader.network.ChunkMapData;
-import de.chunkloader.network.ChunkloaderNetworking;
 import de.chunkloader.network.payload.ChunkloaderActionPayload;
-import net.minecraft.ChatFormatting;
+import de.chunkloader.client.network.ChunkloaderClientNetworking;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.renderer.RenderPipelines;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.multiplayer.PlayerInfo;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.renderer.RenderPipelines;
-import com.mojang.blaze3d.systems.RenderSystem;
-import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.Style;
+import net.minecraft.network.chat.TextColor;
+import net.minecraft.ChatFormatting;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.core.BlockPos;
+import net.minecraft.util.Mth;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.Level;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.eclipse.jdt.annotation.Nullable;
 
 public class ChunkMapScreen extends Screen {
 
-    private static @Nullable ClientConfig clientConfig = null;
+    private static ClientConfig clientConfig = null;
 
     private static final int CELL_SIZE = 18;
     private static final int ACTION_ROW_GAP = 2;
     private static final int ACTION_SEARCH_HEIGHT = 18;
+    private static final int ACTION_SEARCH_INSET_X = 4;
+    private static final int ACTION_SEARCH_INSET_Y = 5;
+    private static final int ACTION_SEARCH_TEXT_HEIGHT = 10;
     private static final int ACTION_SEARCH_GAP = 0;
-    private static final int ACTION_SEARCH_Y_OFFSET = -6;
+    private static final int ACTION_SEARCH_Y_OFFSET = -4;
     private static final int ACTION_SEARCH_LIST_GAP = 3;
     private static final int ACTION_BUTTON_HEIGHT = 20;
     private static final ResourceLocation GRID_OVERLAY = ResourceLocation.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "textures/gui/grid_overlay.png");
     private static final ResourceLocation HOVER_OVERLAY = ResourceLocation.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "textures/gui/cell_overlay.png");
     private static final ResourceLocation FALLBACK_SKIN = ResourceLocation.fromNamespaceAndPath("minecraft", "textures/entity/player/wide/steve.png");
 
+    private static final Component LABEL_STATUS = Component.literal("Status:");
+    private static final Component LABEL_DIM = Component.literal("Dim:");
+    private static final Component LABEL_CHUNK = Component.literal("Chunk:");
+    private static final Component LABEL_BLOCK = Component.literal("Block:");
+    private static final Component LABEL_SD = Component.literal("SD:");
+    private static final Component LABEL_RADIUS = Component.literal("Radius:");
+
     private ChunkMapData data;
-    private @Nullable ChunkMapGrid grid;
-    private @Nullable ChunkMapTexture mapTexture;
-    private @Nullable Boolean previousAllowMobSpawning = null;
+    private ChunkMapGrid grid;
     private int gridWidth;
     private int gridHeight;
     private int gridLeft;
@@ -69,28 +83,39 @@ public class ChunkMapScreen extends Screen {
     private final Map<Button, Boolean> buttonOriginalActiveState = new HashMap<>();
     private final List<ActionHeaderLayout> actionHeaderLayouts = new ArrayList<>();
     private int actionContentHeight = 0;
-    private @Nullable EditBox actionSearchField;
+    private EditBox actionSearchField;
     private String actionSearchQuery = "";
-    private @Nullable Button resetButton;
-    private @Nullable Button infoButton;
-    private @Nullable Button closeButton;
+    private Button resetButton;
+    private Button infoButton;
+    private Button closeButton;
+    private Button easterEggLockedSkinButton;
     private int footerRowY;
-
     private int actionScrollOffset = 0;
     private int actionViewportLeft;
     private int actionViewportRight;
     private int actionViewportTop;
     private int actionViewportBottom;
-
     private boolean buttonsNeedUpdate = true;
     private int lastScrollOffset = -1;
+    private Boolean previousAllowMobSpawning = null;
+    private int mapRotation = 0;
 
     private boolean actionScrollbarDragging = false;
     private int actionScrollbarDragOffsetY = 0;
+    private PanelColorEditorOverlay colorEditorOverlay;
+    private boolean retainChunkMapSession;
+    private List<Component> pendingDotTooltip = null;
+
+    public ChunkMapData getData() { return this.data; }
+
+    public void clearAndInit() { this.clearWidgets(); this.init(); }
 
     private static final int TOPBOX_BUTTON_WIDTH = 50;
     private static final int TOPBOX_BUTTON_HEIGHT = 20;
     private static final int TOPBOX_BUTTON_COUNT = 5;
+
+    public record PanelColorTargetHit(PanelColorTarget target, int left, int top, int right, int bottom) {
+    }
 
     private enum VerticalTopBoxPlacement {
         NONE,
@@ -184,6 +209,10 @@ public class ChunkMapScreen extends Screen {
         }
     }
 
+    private int getVisibleActionScrollOffset() {
+        return colorEditorOverlay != null ? 0 : actionScrollOffset;
+    }
+
     private ScrollbarMetrics getActionScrollbarMetrics() {
         int maxScroll = getMaxActionScroll();
         if (maxScroll <= 0) {
@@ -205,7 +234,7 @@ public class ChunkMapScreen extends Screen {
         }
 
         int scrollbarTrackTop = actionViewportTop;
-        int scrollbarY = scrollbarTrackTop + (int) ((double) actionScrollOffset / maxScroll * (availableHeight - scrollbarHeight));
+        int scrollbarY = scrollbarTrackTop + (int) ((double) getVisibleActionScrollOffset() / maxScroll * (availableHeight - scrollbarHeight));
         return new ScrollbarMetrics(scrollbarX, scrollbarWidth, scrollbarTrackTop, availableHeight, scrollbarY, scrollbarHeight, maxScroll);
     }
 
@@ -213,43 +242,75 @@ public class ChunkMapScreen extends Screen {
         super(Component.literal("Chunk Loader Map"));
         this.data = data;
         this.previousAllowMobSpawning = data.allowMobSpawning();
-        if (clientConfig == null) {
-            clientConfig = ClientConfig.load();
-        }
+        this.mapRotation = rotationFromYaw(getOpenDirectionYaw());
     }
-    
-    public void updateData(ChunkMapData newData) {
-        boolean previousWasFakeplayer = this.data != null && this.data.allowMobSpawning();
-        boolean newIsFakeplayer = newData.allowMobSpawning();
-        
-        this.data = newData;
-        
-        if (previousAllowMobSpawning != null && previousWasFakeplayer != newIsFakeplayer) {
-            if (previousWasFakeplayer && !newIsFakeplayer) {
-                de.chunkloader.client.hud.SimulationStatusHUD.setEnabled(false);
-            } else if (!previousWasFakeplayer && newIsFakeplayer) {
-                de.chunkloader.client.hud.ChunkplayerStatusHUD.setEnabled(false);
+
+    private float getOpenDirectionYaw() {
+        Minecraft client = Minecraft.getInstance();
+        if (client != null && client.player != null) {
+            return client.player.getYRot();
+        }
+        return data.fakeplayerYaw();
+    }
+
+    private static int rotationFromYaw(float yawDegrees) {
+        float wrappedYaw = Mth.wrapDegrees(yawDegrees);
+        if (wrappedYaw >= -45.0f && wrappedYaw <= 45.0f) {
+            return 2;
+        }
+        if (wrappedYaw > 45.0f && wrappedYaw < 135.0f) {
+            return 1;
+        }
+        if (wrappedYaw >= 135.0f || wrappedYaw <= -135.0f) {
+            return 0;
+        }
+        return 3;
+    }
+
+        public void updateData(ChunkMapData newData) {
+            boolean previousWasFakeplayer = this.data != null && this.data.allowMobSpawning();
+            boolean newIsFakeplayer = newData.allowMobSpawning();
+
+            boolean sameMapLayout = this.data != null
+                && this.data.centerChunkX() == newData.centerChunkX()
+                && this.data.centerChunkZ() == newData.centerChunkZ()
+                && this.data.topLeftChunkX() == newData.topLeftChunkX()
+                && this.data.topLeftChunkZ() == newData.topLeftChunkZ()
+                && this.data.mapWidth() == newData.mapWidth()
+                && this.data.mapHeight() == newData.mapHeight()
+                && this.data.chunkRadius() == newData.chunkRadius()
+                && this.data.enabled() == newData.enabled()
+                && this.data.allowMobSpawning() == newData.allowMobSpawning()
+                && this.data.blockY() == newData.blockY()
+                && java.util.Objects.equals(this.data.dimensionKey(), newData.dimensionKey());
+
+            this.data = newData;
+
+            if (previousAllowMobSpawning != null && previousWasFakeplayer != newIsFakeplayer) {
+                if (previousWasFakeplayer && !newIsFakeplayer) {
+                    de.chunkloader.client.hud.SimulationStatusHUD.setEnabled(false);
+                } else if (!previousWasFakeplayer && newIsFakeplayer) {
+                    de.chunkloader.client.hud.ChunkplayerStatusHUD.setEnabled(false);
+                }
+            }
+            previousAllowMobSpawning = newIsFakeplayer;
+
+            if (this.grid != null && sameMapLayout && this.grid.applyMarkerStates(newData)) {
+                if (panelWidth > 0) {
+                    int savedScrollOffset = actionScrollOffset;
+                    buildTopBoxButtons();
+                    ensureActionSearchField();
+                    buildActionButtons();
+                    actionScrollOffset = clampActionScrollOffset(savedScrollOffset, getMaxActionScroll());
+                    buttonsNeedUpdate = true;
+                }
+                return;
+            }
+
+            if (this.width > 0 && this.height > 0) {
+                this.init();
             }
         }
-        previousAllowMobSpawning = newIsFakeplayer;
-        if (this.grid != null) {
-            Level level = Minecraft.getInstance().level;
-            this.grid.close();
-            this.grid = new ChunkMapGrid(level, data, gridLeft, gridTop, CELL_SIZE);
-            if (this.mapTexture != null) {
-                this.mapTexture.close();
-            }
-            this.mapTexture = level != null ? new ChunkMapTexture(level, data) : null;
-        }
-        if (panelWidth > 0) {
-            int savedScrollOffset = actionScrollOffset;
-            buildTopBoxButtons();
-            ensureActionSearchField();
-            buildActionButtons();
-            actionScrollOffset = clampActionScrollOffset(savedScrollOffset, getMaxActionScroll());
-            buttonsNeedUpdate = true;
-        }
-    }
 
     @Override
     protected void init() {
@@ -261,7 +322,6 @@ public class ChunkMapScreen extends Screen {
 
         ChunkMapLayoutPreset layoutPreset = ChunkMapLayoutPreset.fromConfig(clientConfig);
 
-        this.actionSearchField = null;
         this.gridWidth = data.mapWidth() * CELL_SIZE + 2;
         this.gridHeight = data.mapHeight() * CELL_SIZE + 2;
 
@@ -292,9 +352,22 @@ public class ChunkMapScreen extends Screen {
             totalWidth += gap + verticalTopBoxWidth;
         }
 
-        int startX = (this.width - totalWidth) / 2;
-        if (startX < 16) {
-            startX = 16;
+        int overlayRight = getVerticalOverlayRightEdge();
+        int startX;
+        if (overlayRight > 0) {
+            int leftMargin = 18;
+            int availableLeft = overlayRight;
+            int availableRight = this.width - leftMargin;
+            int availableWidth = availableRight - availableLeft;
+            startX = availableLeft + (availableWidth - totalWidth) / 2;
+            if (startX < availableLeft + 12) {
+                startX = availableLeft + 12;
+            }
+        } else {
+            startX = (this.width - totalWidth) / 2;
+            if (startX < 16) {
+                startX = 16;
+            }
         }
 
         int framePadding = 6;
@@ -302,14 +375,30 @@ public class ChunkMapScreen extends Screen {
         int leftPanelBorder = 2;
 
         int frameTop;
-        if (layoutPreset.isBottomBar()) {
-            int requiredHeight = mapFrameHeight + 80;
-            frameTop = (this.height - requiredHeight) / 2;
+        if (colorEditorOverlay != null && layoutPreset.isVerticalButtonBar()) {
+            int overlayBottom = getHorizontalOverlayBottomEdge() > 0 ? getHorizontalOverlayBottomEdge() + 6 : 135;
+            int availH = (this.height - 15) - overlayBottom;
+            int menuTotalHeight = layoutPreset.isBottomBar() ? (mapFrameHeight + 80) : mapFrameHeight;
+            if (availH > menuTotalHeight) {
+                frameTop = overlayBottom + (availH - menuTotalHeight) / 2;
+            } else {
+                frameTop = overlayBottom + 4;
+            }
         } else {
-            frameTop = (this.height - mapFrameHeight) / 2;
-        }
-        if (frameTop < 32) {
-            frameTop = 32;
+            if (layoutPreset.isBottomBar()) {
+                int requiredHeight = mapFrameHeight + 80;
+                frameTop = (this.height - requiredHeight) / 2;
+            } else if (layoutPreset.isTopBar()) {
+                frameTop = (this.height - mapFrameHeight) / 2;
+                if (frameTop < 75) {
+                    frameTop = 75;
+                }
+            } else {
+                frameTop = (this.height - mapFrameHeight) / 2;
+                if (frameTop < 32) {
+                    frameTop = 32;
+                }
+            }
         }
 
         this.leftPanelY = frameTop + leftPanelBorder;
@@ -352,44 +441,50 @@ public class ChunkMapScreen extends Screen {
         int closeButtonWidth = 100;
         int closeButtonHeight = 20;
         int contentBottom = this.leftPanelY + this.leftPanelHeight;
-        int closeButtonY;
+        int closeButtonY = contentBottom + 10;
+        this.footerRowY = closeButtonY;
+
+        int buttonSpacing = 12;
+        int padding = 16;
+        int numButtons = TOPBOX_BUTTON_COUNT;
+        this.topBoxWidth = numButtons * TOPBOX_BUTTON_WIDTH + (numButtons - 1) * buttonSpacing + padding * 2 + 80;
 
         if (layoutPreset.isTopBar()) {
-            int buttonSpacing = 12;
-            int padding = 16;
-            int numButtons = TOPBOX_BUTTON_COUNT;
-            this.topBoxWidth = numButtons * TOPBOX_BUTTON_WIDTH + (numButtons - 1) * buttonSpacing + padding * 2 + 80;
             this.topBoxHeight = 28;
-            this.topBoxX = (this.width - this.topBoxWidth) / 2;
+            if (overlayRight > 0) {
+                int availableLeft = overlayRight;
+                int availableRight = this.width - 18;
+                int availableWidth = availableRight - availableLeft;
+                this.topBoxX = availableLeft + (availableWidth - this.topBoxWidth) / 2;
+            } else {
+                this.topBoxX = (this.width - this.topBoxWidth) / 2;
+            }
             this.topBoxY = 35;
-            closeButtonY = contentBottom + 10;
-            this.footerRowY = closeButtonY;
         } else if (layoutPreset.isVerticalButtonBar()) {
             this.topBoxWidth = verticalTopBoxWidth;
             this.topBoxHeight = this.leftPanelHeight;
             this.topBoxY = this.leftPanelY;
-            closeButtonY = contentBottom + 10;
-            this.footerRowY = closeButtonY;
         } else {
-            int buttonSpacing = 12;
-            int padding = 16;
-            int numButtons = TOPBOX_BUTTON_COUNT;
-            this.topBoxWidth = numButtons * TOPBOX_BUTTON_WIDTH + (numButtons - 1) * buttonSpacing + padding * 2 + 80;
             this.topBoxHeight = 28;
-            this.topBoxX = (this.width - this.topBoxWidth) / 2;
-
-            this.footerRowY = contentBottom + 10;
-            closeButtonY = this.footerRowY;
+            if (overlayRight > 0) {
+                int availableLeft = overlayRight;
+                int availableRight = this.width - 18;
+                int availableWidth = availableRight - availableLeft;
+                this.topBoxX = availableLeft + (availableWidth - this.topBoxWidth) / 2;
+            } else {
+                this.topBoxX = (this.width - this.topBoxWidth) / 2;
+            }
 
             int desiredTopBoxY = this.footerRowY + closeButtonHeight + 18;
             int maxTopBoxY = this.height - 8 - this.topBoxHeight;
             this.topBoxY = Math.min(desiredTopBoxY, maxTopBoxY);
         }
 
-        Level level = Minecraft.getInstance().level;
-        this.grid = new ChunkMapGrid(level, data, gridLeft, gridTop, CELL_SIZE);
-        this.mapTexture = level != null ? new ChunkMapTexture(level, data) : null;
+        ClientLevel world = Minecraft.getInstance().level;
+        this.grid = new ChunkMapGrid(world, data, gridLeft, gridTop, CELL_SIZE, mapRotation);
         buildTopBoxButtons();
+
+        this.actionSearchField = null;
         ensureActionSearchField();
         buildActionButtons();
 
@@ -418,121 +513,233 @@ public class ChunkMapScreen extends Screen {
             this.grid.close();
             this.grid = null;
         }
-        if (this.mapTexture != null) {
-            this.mapTexture.close();
-            this.mapTexture = null;
-        }
 
         buttonsNeedUpdate = true;
         lastScrollOffset = -1;
 
-        this.minecraft.setScreen(new ChunkMapScreen(this.data));
+        openChildScreen(new ChunkMapScreen(this.data));
+    }
+
+    private void openPanelColorEditor() {
+        if (clientConfig == null) {
+            clientConfig = ClientConfig.load();
+        }
+        colorEditorOverlay = new PanelColorEditorOverlay(this, clientConfig);
+        this.clearAndInit();
+    }
+
+    void closePanelColorEditor() {
+        if (colorEditorOverlay != null) {
+            colorEditorOverlay.close();
+        }
+        if (clientConfig != null) {
+            clientConfig.clearColorPreviewOverrides();
+        }
+        colorEditorOverlay = null;
+        applyActionSearchFieldStyle();
+        this.clearAndInit();
+    }
+
+    boolean useVerticalPaletteLayout() {
+        ChunkMapLayoutPreset preset = ChunkMapLayoutPreset.fromConfig(clientConfig);
+        return !preset.isVerticalButtonBar();
+    }
+
+    public int getVerticalOverlayRightEdge() {
+        if (colorEditorOverlay != null && useVerticalPaletteLayout()) {
+            return colorEditorOverlay.getCardRight();
+        }
+        return 0;
+    }
+
+    public int getHorizontalOverlayBottomEdge() {
+        if (colorEditorOverlay != null && !useVerticalPaletteLayout()) {
+            return colorEditorOverlay.getCardBottom();
+        }
+        return 0;
+    }
+
+    <T extends EditBox> T addOverlayWidget(T widget) {
+        return this.addRenderableWidget(widget);
+    }
+
+    private void openChildScreen(Screen child) {
+        retainChunkMapSession = true;
+        this.minecraft.setScreen(child);
     }
 
     @Override
     public void removed() {
-        if (this.grid != null) {
-            this.grid.close();
+        if (colorEditorOverlay != null) {
+            closePanelColorEditor();
         }
-        if (this.mapTexture != null) {
-            this.mapTexture.close();
+        if (!retainChunkMapSession) {
+            ChunkloaderClientNetworking.sendCloseChunkMapToServer();
+            if (this.grid != null) {
+                this.grid.close();
+                this.grid = null;
+            }
         }
+
+        retainChunkMapSession = false;
         super.removed();
     }
 
     @Override
     public void onClose() {
+        if (colorEditorOverlay != null) {
+            closePanelColorEditor();
+            return;
+        }
         if (this.grid != null) {
             this.grid.close();
-        }
-        if (this.mapTexture != null) {
-            this.mapTexture.close();
         }
         super.onClose();
     }
 
-    private void drawDimBackground(GuiGraphics graphics) {
-        graphics.fill(0, 0, this.width, this.height, 0xC0101010);
+    private void drawDimBackground(GuiGraphics context) {
+        context.fill(0, 0, this.width, this.height, 0xC0101010);
     }
 
     @Override
-    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
+    public void renderBackground(GuiGraphics context, int mouseX, int mouseY, float delta) {
     }
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
-        drawDimBackground(graphics);
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
+        pendingDotTooltip = null;
+        boolean renderColorPreview = colorEditorOverlay != null && clientConfig != null;
+        if (renderColorPreview) {
+            clientConfig.setColorPreviewOverrides(colorEditorOverlay.getDraftColors());
+        }
 
-        drawMapFrame(graphics);
-        if (this.grid != null) {
-            graphics.enableScissor(gridLeft - 2, gridTop - 2, gridLeft + gridWidth + 2, gridTop + gridHeight + 2);
-            
-            if (this.mapTexture != null) {
-                int innerLeft = gridLeft + 1;
-                int innerTop = gridTop + 1;
-                int innerWidth = gridWidth - 2;
-                int innerHeight = gridHeight - 2;
-                this.mapTexture.render(graphics, innerLeft, innerTop, innerWidth, innerHeight);
-            } else {
-                graphics.fill(gridLeft, gridTop, gridLeft + gridWidth, gridTop + gridHeight, 0x33000000);
+        try {
+            drawDimBackground(context);
+
+            boolean isSkinScreenPage = colorEditorOverlay != null && colorEditorOverlay.getCurrentPage() == 2;
+            if (!isSkinScreenPage) {
+                drawMapFrame(context);
+
+                if (buttonsNeedUpdate || lastScrollOffset != getVisibleActionScrollOffset()) {
+                    updateButtonPositions();
+                    buttonsNeedUpdate = false;
+                    lastScrollOffset = getVisibleActionScrollOffset();
+                }
+
+                int widgetMouseX = colorEditorOverlay != null ? -999 : mouseX;
+                int widgetMouseY = colorEditorOverlay != null ? -999 : mouseY;
+
+                if (this.grid != null) {
+                    context.enableScissor(gridLeft - 2, gridTop - 2, gridLeft + gridWidth + 2, gridTop + gridHeight + 2);
+                    if (colorEditorOverlay != null) {
+                        context.fill(gridLeft, gridTop, gridLeft + gridWidth, gridTop + gridHeight, 0xFF0A0D10);
+                    } else {
+                        grid.render(context, widgetMouseX, widgetMouseY);
+                        drawChunkloaderPoints(context, widgetMouseX, widgetMouseY);
+                    }
+                    context.disableScissor();
+                    String[] compassLabels = {"N", "W", "S", "E"};
+                    String upLabel = compassLabels[mapRotation];
+                    Font font = Minecraft.getInstance().font;
+                    int compassX = gridLeft + gridWidth / 2 - this.font.width(upLabel) / 2;
+                    int compassY = gridTop - this.font.lineHeight - 8;
+                    int compassColor = toGuiFillColor(clientConfig != null ? clientConfig.getCompassDirectionColor() : 0xFFFFFFAA);
+                    context.drawString(font, Component.literal(upLabel), compassX, compassY, compassColor, true);
+                }
+
+                drawTopBox(context);
+                drawLeftPanel(context);
+                drawSidePanel(context);
+
+                if (actionSearchField != null) {
+                    applyActionSearchFieldStyle();
+                    drawActionSearchFieldChrome(context);
+                    actionSearchField.setBordered(false);
+                    actionSearchField.render(context, widgetMouseX, widgetMouseY, delta);
+                }
+
+                int scissorTop = actionViewportTop;
+                if (actionSearchField != null) {
+                    scissorTop = getActionSearchOuterBottom() + ACTION_SEARCH_LIST_GAP;
+                }
+                scissorTop = Math.min(scissorTop, actionViewportBottom);
+                context.enableScissor(actionViewportLeft, scissorTop, actionViewportRight, actionViewportBottom);
+                drawActionHeaders(context);
+                for (Button button : actionButtons) {
+                    if (button != resetButton) {
+                        button.render(context, widgetMouseX, widgetMouseY, delta);
+                    }
+                }
+                context.disableScissor();
+
+                drawActionScrollbar(context);
+
+                for (Button button : topBoxButtons) {
+                    if (button != null) {
+                        button.render(context, widgetMouseX, widgetMouseY, delta);
+                    }
+                }
+
+                if (resetButton != null) {
+                    resetButton.render(context, widgetMouseX, widgetMouseY, delta);
+                }
+
+                if (closeButton != null) {
+                    closeButton.render(context, widgetMouseX, widgetMouseY, delta);
+                }
+
+                if (colorEditorOverlay == null) {
+                    if (pendingDotTooltip != null) {
+                        drawSimpleTooltip(context, pendingDotTooltip, mouseX, mouseY);
+                    } else if (isMouseOverEasterEggLockedSkinButton(mouseX, mouseY)) {
+                        drawSimpleTooltip(
+                            context,
+                            List.of(
+                                Component.literal("Not available for easter"),
+                                Component.literal("egg players")
+                            ),
+                            mouseX,
+                            mouseY
+                        );
+                    } else {
+                        ChunkMapGrid.Cell hovered = grid != null ? grid.getHoveredCell(mouseX, mouseY) : null;
+                        if (hovered != null) {
+                            drawSimpleTooltip(context, hovered.buildTooltip(), mouseX, mouseY);
+                        }
+                    }
+                }
             }
-
-            grid.render(graphics, mouseX, mouseY);
-            drawChunkloaderPoints(graphics, mouseX, mouseY);
-            graphics.disableScissor();
-        }
-        
-        drawTopBox(graphics);
-        drawLeftPanel(graphics);
-        drawSidePanel(graphics);
-
-        if (buttonsNeedUpdate || lastScrollOffset != actionScrollOffset) {
-            updateButtonPositions();
-            buttonsNeedUpdate = false;
-            lastScrollOffset = actionScrollOffset;
-        }
-
-        if (actionSearchField != null) {
-            drawActionSearchFieldBackground(graphics);
-            actionSearchField.render(graphics, mouseX, mouseY, delta);
-        }
-
-        int scissorTop = actionViewportTop;
-        if (actionSearchField != null) {
-            scissorTop = actionSearchField.getY() + actionSearchField.getHeight() + ACTION_SEARCH_LIST_GAP;
-        }
-        scissorTop = Math.min(scissorTop, actionViewportBottom);
-        graphics.enableScissor(actionViewportLeft, scissorTop, actionViewportRight, actionViewportBottom);
-        drawActionHeaders(graphics);
-        for (Button button : actionButtons) {
-            if (button != resetButton) {
-                button.render(graphics, mouseX, mouseY, delta);
+        } finally {
+            if (renderColorPreview) {
+                clientConfig.clearColorPreviewOverrides();
             }
         }
-        graphics.disableScissor();
 
-        drawActionScrollbar(graphics);
-        
-        for (Button button : topBoxButtons) {
-            button.render(graphics, mouseX, mouseY, delta);
+        if (colorEditorOverlay != null) {
+            colorEditorOverlay.render(context, mouseX, mouseY);
         }
-        
-        if (resetButton != null) {
-            resetButton.render(graphics, mouseX, mouseY, delta);
-        }
-        
-        if (closeButton != null) {
-            closeButton.render(graphics, mouseX, mouseY, delta);
-        }
+    }
 
-        ChunkMapGrid.Cell hovered = grid != null ? grid.getHoveredCell(mouseX, mouseY) : null;
-        if (hovered != null) {
-            drawSimpleTooltip(graphics, hovered.buildTooltip(), mouseX, mouseY);
-        }
+    private void renderLightweightButton(GuiGraphics context, int x1, int y1, int x2, int y2, Component label, boolean active) {
+        int bg = active ? 0xFF5A5A5A : 0xFF303030;
+        int fg = active ? 0xFFFFFFFF : 0xFF777777;
+        context.fill(x1, y1, x2, y2, bg);
+        context.fill(x1, y1, x2, y1 + 1, 0xFF202020);
+        context.fill(x1, y2 - 1, x2, y2, 0xFF202020);
+        context.fill(x1, y1, x1 + 1, y2, 0xFF202020);
+        context.fill(x2 - 1, y1, x2, y2, 0xFF202020);
+        Font f = Minecraft.getInstance().font;
+        int textX = x1 + (x2 - x1 - f.width(label)) / 2;
+        int textY = y1 + (y2 - y1 - f.lineHeight) / 2 + 1;
+        context.drawString(f, label, textX, textY, fg, false);
     }
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        if (colorEditorOverlay != null) {
+            return true;
+        }
+
         if (isMouseOverActionViewport(mouseX, mouseY)) {
             int maxScroll = getMaxActionScroll();
             if (maxScroll > 0) {
@@ -554,6 +761,19 @@ public class ChunkMapScreen extends Screen {
             && mouseY < actionViewportBottom;
     }
 
+    private boolean isMouseOverEasterEggLockedSkinButton(int mouseX, int mouseY) {
+        if (easterEggLockedSkinButton == null || colorEditorOverlay != null) {
+            return false;
+        }
+        if (!isMouseOverActionViewport(mouseX, mouseY)) {
+            return false;
+        }
+        return mouseX >= easterEggLockedSkinButton.getX()
+            && mouseX < easterEggLockedSkinButton.getX() + easterEggLockedSkinButton.getWidth()
+            && mouseY >= easterEggLockedSkinButton.getY()
+            && mouseY < easterEggLockedSkinButton.getY() + easterEggLockedSkinButton.getHeight();
+    }
+
     private int getMaxActionScroll() {
         int viewportHeight = Math.max(0, actionViewportBottom - actionViewportTop);
         int contentHeight = getActionContentHeight();
@@ -565,11 +785,10 @@ public class ChunkMapScreen extends Screen {
     }
 
     private int clampActionScrollOffset(int value, int maxScroll) {
-        int clamped = Math.max(0, Math.min(maxScroll, value));
-        return Math.max(0, Math.min(maxScroll, clamped));
+        return Math.max(0, Math.min(maxScroll, value));
     }
 
-    private void drawActionScrollbar(GuiGraphics graphics) {
+    private void drawActionScrollbar(GuiGraphics context) {
         int maxScroll = getMaxActionScroll();
         if (maxScroll <= 0) {
             return;
@@ -584,32 +803,42 @@ public class ChunkMapScreen extends Screen {
         scrollbarHeight = Math.max(8, Math.min(availableHeight, scrollbarHeight));
 
         int scrollbarTrackTop = actionViewportTop;
-        int scrollbarY = scrollbarTrackTop + (int) ((double) actionScrollOffset / maxScroll * (availableHeight - scrollbarHeight));
+        int scrollbarY = scrollbarTrackTop + (int) ((double) getVisibleActionScrollOffset() / maxScroll * (availableHeight - scrollbarHeight));
 
-        int scrollbarTrackColor = clientConfig != null ? clientConfig.getScrollbarTrackColor() : 0x33000000;
-        int scrollbarThumbColor = clientConfig != null ? clientConfig.getScrollbarThumbColor() : 0xFFAAAAAA;
-        graphics.fill(scrollbarX, scrollbarTrackTop, scrollbarX + scrollbarWidth, scrollbarTrackTop + availableHeight, scrollbarTrackColor);
-        graphics.fill(scrollbarX, scrollbarY, scrollbarX + scrollbarWidth, scrollbarY + scrollbarHeight, scrollbarThumbColor);
+        int scrollbarTrackColor = toGuiFillColor(clientConfig != null ? clientConfig.getScrollbarTrackColor() : 0x33000000);
+        int scrollbarThumbColor = toGuiFillColor(clientConfig != null ? clientConfig.getScrollbarThumbColor() : 0xFFAAAAAA);
+        context.fill(scrollbarX, scrollbarTrackTop, scrollbarX + scrollbarWidth, scrollbarTrackTop + availableHeight, scrollbarTrackColor);
+        context.fill(scrollbarX, scrollbarY, scrollbarX + scrollbarWidth, scrollbarY + scrollbarHeight, scrollbarThumbColor);
     }
 
     @Override
-    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent event, boolean doubleClick) {
-        if (event.button() == 0
-            && actionSearchField != null
-            && !actionSearchField.isMouseOver(event.x(), event.y())) {
-            if (this.getFocused() == actionSearchField) {
-                this.setFocused(null);
+    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean doubleClick) {
+        if (colorEditorOverlay != null) {
+            return colorEditorOverlay.mouseClicked(click);
+        }
+
+        if (click.button() == 0) {
+            double mouseX = click.x();
+            double mouseY = click.y();
+
+            if (mouseX >= gridLeft && mouseX < gridLeft + gridWidth
+                    && mouseY >= gridTop && mouseY < gridTop + gridHeight) {
+                mapRotation = (mapRotation + 1) % 4;
+                ClientLevel world = Minecraft.getInstance().level;
+                if (this.grid != null) {
+                    this.grid.close();
+                }
+                this.grid = new ChunkMapGrid(world, data, gridLeft, gridTop, CELL_SIZE, mapRotation);
+                return true;
             }
-            actionSearchField.setFocused(false);
-        }
 
-        if (super.mouseClicked(event, doubleClick)) {
-            return true;
-        }
+            if (actionSearchField != null && !actionSearchField.isMouseOver(mouseX, mouseY)) {
+                if (this.getFocused() == actionSearchField) {
+                    this.setFocused(null);
+                }
+                actionSearchField.setFocused(false);
+            }
 
-        if (event.button() == 0) {
-            double mouseX = event.x();
-            double mouseY = event.y();
             ScrollbarMetrics metrics = getActionScrollbarMetrics();
             if (metrics != null
                 && mouseX >= metrics.x && mouseX < metrics.x + metrics.width
@@ -620,17 +849,17 @@ public class ChunkMapScreen extends Screen {
             }
         }
 
-        return false;
+        return super.mouseClicked(click, doubleClick);
     }
 
     @Override
-    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent event, double deltaX, double deltaY) {
-        if (super.mouseDragged(event, deltaX, deltaY)) {
-            return true;
+    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double deltaX, double deltaY) {
+        if (colorEditorOverlay != null) {
+            return colorEditorOverlay.mouseDragged(click);
         }
 
         if (actionScrollbarDragging) {
-            double mouseY = event.y();
+            double mouseY = click.y();
             ScrollbarMetrics metrics = getActionScrollbarMetrics();
             if (metrics == null) {
                 actionScrollbarDragging = false;
@@ -651,13 +880,13 @@ public class ChunkMapScreen extends Screen {
             return true;
         }
 
-        return false;
+        return super.mouseDragged(click, deltaX, deltaY);
     }
 
     @Override
-    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent event) {
-        if (super.mouseReleased(event)) {
-            return true;
+    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+        if (colorEditorOverlay != null) {
+            return colorEditorOverlay.mouseReleased(click);
         }
 
         if (actionScrollbarDragging) {
@@ -665,10 +894,29 @@ public class ChunkMapScreen extends Screen {
             return true;
         }
 
-        return false;
+        return super.mouseReleased(click);
     }
 
-    private void drawActionHeaders(GuiGraphics graphics) {
+    @Override
+    public boolean keyPressed(net.minecraft.client.input.KeyEvent keyInput) {
+        if (colorEditorOverlay != null) {
+            return colorEditorOverlay.keyPressed(keyInput);
+        }
+        return super.keyPressed(keyInput);
+    }
+
+    public boolean charTyped(net.minecraft.client.input.CharacterEvent characterEvent) {
+        if (colorEditorOverlay != null) {
+            return colorEditorOverlay.charTyped(characterEvent);
+        }
+        return super.charTyped(characterEvent);
+    }
+
+    private static int toGuiFillColor(int argb) {
+        return argb;
+    }
+
+    private void drawActionHeaders(GuiGraphics context) {
         if (actionHeaderLayouts.isEmpty()) {
             return;
         }
@@ -679,7 +927,7 @@ public class ChunkMapScreen extends Screen {
 
         int textColor = clientConfig != null ? clientConfig.getLeftPanelTextColor() : 0xCC808080;
         for (ActionHeaderLayout headerLayout : actionHeaderLayouts) {
-            int rowY = contentTop + headerLayout.yOffset - actionScrollOffset;
+            int rowY = contentTop + headerLayout.yOffset - getVisibleActionScrollOffset();
             int textY = rowY + (headerLayout.height - this.font.lineHeight) / 2 + 1;
             if (textY + this.font.lineHeight < actionViewportTop || textY > actionViewportBottom) {
                 continue;
@@ -687,7 +935,7 @@ public class ChunkMapScreen extends Screen {
 
             int headerWidth = this.font.width(headerLayout.text);
             int x = buttonX + Math.max(0, (buttonWidth - headerWidth) / 2);
-            graphics.drawString(this.font, headerLayout.text, x, textY, textColor, false);
+            context.drawString(this.font, headerLayout.text, x, textY, textColor, false);
         }
     }
 
@@ -702,30 +950,26 @@ public class ChunkMapScreen extends Screen {
             this.text = text;
         }
     }
-    
-    private void drawMapFrame(GuiGraphics graphics) {
+
+    private void drawMapFrame(GuiGraphics context) {
         int framePadding = 6;
-        int accentThickness = 2;
         int borderThickness = 4;
-        
+
         int innerLeft = gridLeft;
         int innerTop = gridTop;
         int innerRight = gridLeft + gridWidth;
         int innerBottom = gridTop + gridHeight;
-        
+
         int frameLeft = innerLeft - framePadding;
         int frameTop = innerTop - framePadding;
         int frameRight = innerRight + framePadding;
         int frameBottom = innerBottom + framePadding;
-        
-        int frameColor = clientConfig != null ? clientConfig.getFrameColor() : 0xFF111417;
-        int panelColor = clientConfig != null ? clientConfig.getPanelColor() : 0xFF2B2F36;
-        graphics.fill(frameLeft, frameTop, frameRight, frameBottom, frameColor);
-        graphics.fill(innerLeft - borderThickness, innerTop - borderThickness, innerRight + borderThickness, innerBottom + borderThickness, panelColor);
-        graphics.fill(frameLeft, frameBottom - accentThickness, frameRight, frameBottom, 0xFF0C0D10);
-        graphics.fill(frameRight - accentThickness, frameTop, frameRight, frameBottom, 0xFF0C0D10);
+
+        int frameColor = toGuiFillColor(clientConfig != null ? clientConfig.getFrameColor() : 0xFF111417);
+        int panelColor = toGuiFillColor(clientConfig != null ? clientConfig.getPanelColor() : 0xFF2C2C2C);
+        context.fill(frameLeft, frameTop, frameRight, frameBottom, frameColor);
+        context.fill(innerLeft - borderThickness, innerTop - borderThickness, innerRight + borderThickness, innerBottom + borderThickness, panelColor);
     }
-    
 
     private void updateButtonPositions() {
         if (panelWidth <= 0 || panelHeight <= 0) {
@@ -758,39 +1002,77 @@ public class ChunkMapScreen extends Screen {
             if (yOffset == null) {
                 continue;
             }
-            int buttonY = contentTop + yOffset - actionScrollOffset;
+            int buttonY = contentTop + yOffset - getVisibleActionScrollOffset();
             button.setY(buttonY);
-            
+
             int buttonBottom = buttonY + ACTION_BUTTON_HEIGHT;
             boolean isVisible = buttonBottom > actionViewportTop && buttonY < actionViewportBottom;
-            
+
             Boolean originalActive = buttonOriginalActiveState.get(button);
             if (originalActive == null) {
                 originalActive = button.active;
                 buttonOriginalActiveState.put(button, originalActive);
             }
-            
+
             button.active = isVisible && originalActive;
         }
 
         if (actionSearchField != null) {
-            actionSearchField.setX(panelX + 8);
-            actionSearchField.setY(panelY + padding + ACTION_SEARCH_Y_OFFSET);
-            actionSearchField.setWidth(panelWidth - 16);
-            actionSearchField.setHeight(ACTION_SEARCH_HEIGHT);
+            layoutActionSearchField();
         }
     }
 
+    private int getActionSearchOuterLeft() {
+        return panelX + 8;
+    }
+
+    private int getActionSearchOuterTop() {
+        return panelY + 8 + ACTION_SEARCH_Y_OFFSET;
+    }
+
+    private int getActionSearchOuterWidth() {
+        return panelWidth - 16;
+    }
+
+    private int getActionSearchOuterRight() {
+        return getActionSearchOuterLeft() + getActionSearchOuterWidth();
+    }
+
+    private int getActionSearchOuterBottom() {
+        return getActionSearchOuterTop() + ACTION_SEARCH_HEIGHT;
+    }
+
+    private void layoutActionSearchField() {
+        if (actionSearchField == null) {
+            return;
+        }
+        int outerLeft = getActionSearchOuterLeft();
+        int outerTop = getActionSearchOuterTop();
+        int outerWidth = getActionSearchOuterWidth();
+        actionSearchField.setX(outerLeft + ACTION_SEARCH_INSET_X);
+        actionSearchField.setY(outerTop + ACTION_SEARCH_INSET_Y);
+        actionSearchField.setWidth(Math.max(0, outerWidth - ACTION_SEARCH_INSET_X * 2));
+        actionSearchField.setHeight(ACTION_SEARCH_TEXT_HEIGHT);
+    }
+
     private void ensureActionSearchField() {
-        int padding = 8;
-        int x = panelX + 8;
-        int y = panelY + padding + ACTION_SEARCH_Y_OFFSET;
-        int width = panelWidth - 16;
+        int x = getActionSearchOuterLeft();
+        int y = getActionSearchOuterTop();
+        int width = getActionSearchOuterWidth();
 
         if (actionSearchField == null) {
-            actionSearchField = new EditBox(this.font, x, y, width, ACTION_SEARCH_HEIGHT, Component.literal("Search"));
+            actionSearchField = new EditBox(
+                this.font,
+                x + ACTION_SEARCH_INSET_X,
+                y + ACTION_SEARCH_INSET_Y,
+                Math.max(0, width - ACTION_SEARCH_INSET_X * 2),
+                ACTION_SEARCH_TEXT_HEIGHT,
+                Component.literal("Search")
+            );
             actionSearchField.setMaxLength(64);
             actionSearchField.setValue(actionSearchQuery);
+            actionSearchField.setBordered(false);
+            actionSearchField.setTextShadow(false);
             actionSearchField.setResponder(text -> {
                 actionSearchQuery = text;
                 buildActionButtons();
@@ -798,46 +1080,50 @@ public class ChunkMapScreen extends Screen {
                 buttonsNeedUpdate = true;
             });
             applyActionSearchFieldStyle();
-            this.addWidget(actionSearchField);
+            this.addRenderableWidget(actionSearchField);
         } else {
-            actionSearchField.setX(x);
-            actionSearchField.setY(y);
-            actionSearchField.setWidth(width);
-            actionSearchField.setHeight(ACTION_SEARCH_HEIGHT);
+            layoutActionSearchField();
             actionSearchField.setValue(actionSearchQuery);
+            actionSearchField.setBordered(false);
+            actionSearchField.setTextShadow(false);
             applyActionSearchFieldStyle();
         }
     }
 
-    private void applyActionSearchFieldStyle() {
-        if (actionSearchField == null || clientConfig == null) {
-            return;
-        }
-
-        actionSearchField.setTextColor(clientConfig.getActionSearchTextColor());
-        int placeholderRgb = clientConfig.getActionSearchPlaceholderColor() & 0x00FFFFFF;
-        Style placeholderStyle = Style.EMPTY.withColor(placeholderRgb);
-        actionSearchField.setHint(Component.literal("Search...").withStyle(placeholderStyle));
-    }
-
-    private void drawActionSearchFieldBackground(GuiGraphics graphics) {
+    private void drawActionSearchFieldChrome(GuiGraphics context) {
         if (actionSearchField == null) {
             return;
         }
+        int left = getActionSearchOuterLeft();
+        int top = getActionSearchOuterTop();
+        int right = getActionSearchOuterRight();
+        int bottom = getActionSearchOuterBottom();
+        int bg = toGuiFillColor(clientConfig != null ? clientConfig.getActionSearchBackgroundColor() : 0xFF000000);
+        int border = toGuiFillColor(clientConfig != null ? clientConfig.getActionSearchBorderColor() : 0xFF4A4A4A);
+        if (actionSearchField.isFocused()) {
+            border = 0xFFFFFFFF;
+        }
+        context.fill(left, top, right, bottom, bg);
+        context.fill(left, top, right, top + 1, border);
+        context.fill(left, bottom - 1, right, bottom, border);
+        context.fill(left, top, left + 1, bottom, border);
+        context.fill(right - 1, top, right, bottom, border);
+    }
 
-        int x1 = actionSearchField.getX();
-        int y1 = actionSearchField.getY();
-        int x2 = x1 + actionSearchField.getWidth();
-        int y2 = y1 + actionSearchField.getHeight();
+    private void applyActionSearchFieldStyle() {
+        if (actionSearchField == null) {
+            return;
+        }
+        if (clientConfig == null) {
+            return;
+        }
 
-        int backgroundColor = clientConfig != null ? clientConfig.getActionSearchBackgroundColor() : (clientConfig != null ? clientConfig.getPanelColor() : 0xFF2B2F36);
-        int borderColor = clientConfig != null ? clientConfig.getActionSearchBorderColor() : (clientConfig != null ? clientConfig.getBorderColor() : 0xFF4A4A4A);
-
-        graphics.fill(x1, y1, x2, y2, backgroundColor);
-        graphics.fill(x1, y1, x2, y1 + 1, borderColor);
-        graphics.fill(x1, y2 - 1, x2, y2, borderColor);
-        graphics.fill(x1, y1, x1 + 1, y2, borderColor);
-        graphics.fill(x2 - 1, y1, x2, y2, borderColor);
+        actionSearchField.setTextColor(clientConfig.getActionSearchTextColor() | 0xFF000000);
+        int placeholderRgb = clientConfig.getActionSearchPlaceholderColor() & 0x00FFFFFF;
+        actionSearchField.setHint(
+            Component.literal("Search...").withStyle(style -> style.withColor(TextColor.fromRgb(placeholderRgb)))
+        );
+        actionSearchField.setVisible(true);
     }
 
     private boolean actionSearchMatches(String label) {
@@ -851,19 +1137,845 @@ public class ChunkMapScreen extends Screen {
         return label.toLowerCase().contains(query.toLowerCase());
     }
 
-    private void drawTopBox(GuiGraphics graphics) {
-        int panelColor = clientConfig != null ? clientConfig.getPanelColor() : 0xFF2B2F36;
-        int borderColor = clientConfig != null ? clientConfig.getBorderColor() : 0xFF4A4A4A;
-        graphics.fill(topBoxX - 2, topBoxY - 2, topBoxX + topBoxWidth + 2, topBoxY + topBoxHeight + 2, panelColor);
-        graphics.fill(topBoxX - 2, topBoxY - 2, topBoxX + topBoxWidth + 2, topBoxY - 1, borderColor);
-        graphics.fill(topBoxX - 2, topBoxY + topBoxHeight + 1, topBoxX + topBoxWidth + 2, topBoxY + topBoxHeight + 2, borderColor);
-        graphics.fill(topBoxX - 2, topBoxY - 2, topBoxX - 1, topBoxY + topBoxHeight + 2, borderColor);
-        graphics.fill(topBoxX + topBoxWidth + 1, topBoxY - 2, topBoxX + topBoxWidth + 2, topBoxY + topBoxHeight + 2, borderColor);
-        
+    public List<PanelColorTargetHit> collectLinkedPanelColorHits(PanelColorTarget target) {
+        List<PanelColorTargetHit> hits = new ArrayList<>();
+        if (target == null || target.getPage() != 1) {
+            return hits;
+        }
+
+        switch (target) {
+            case LEFT_PANEL_TEXT -> {
+                collectActionHeaderHits(hits);
+                collectInfoLabelHits(hits);
+            }
+            case LEFT_PANEL_VALUE -> collectInfoValueHits(hits);
+            case LEFT_PANEL_STATUS -> collectInfoStatusHits(hits);
+            case LEFT_PANEL_DIM -> collectInfoDimHits(hits);
+            case LEFT_PANEL_NAME -> collectInfoNameHits(hits);
+            case DIVIDER -> collectDividerHits(hits);
+            case PANEL -> {
+                addPanelHits(hits, PanelColorTarget.PANEL);
+                collectMapFramePanelHit(hits);
+            }
+            case BORDER -> addPanelHits(hits, PanelColorTarget.BORDER);
+            case FRAME -> collectMapFrameHit(hits);
+            case SCROLLBAR_TRACK, SCROLLBAR_THUMB -> collectScrollbarHits(hits, target);
+            case SEARCHBAR_BACKGROUND, SEARCHBAR_BORDER, SEARCHBAR_TEXT, SEARCHBAR_PLACEHOLDER ->
+                collectSearchbarHits(hits, target);
+            case COMPASS_DIRECTION -> collectCompassHit(hits);
+            default -> {
+            }
+        }
+        return hits;
+    }
+
+    private void collectActionHeaderHits(List<PanelColorTargetHit> hits) {
+        int buttonX = panelX + 8;
+        int buttonWidth = panelWidth - 16;
+        for (ActionHeaderLayout headerLayout : actionHeaderLayouts) {
+            int rowY = actionViewportTop + headerLayout.yOffset - getVisibleActionScrollOffset();
+            int textY = rowY + (headerLayout.height - this.font.lineHeight) / 2 + 1;
+            int textWidth = this.font.width(headerLayout.text);
+            int textX = buttonX + Math.max(0, (buttonWidth - textWidth) / 2);
+            int textTop = textY - 1;
+            int textBottom = textY + this.font.lineHeight + 1;
+            if (textBottom < actionViewportTop || textTop > actionViewportBottom) {
+                continue;
+            }
+            hits.add(hit(
+                PanelColorTarget.LEFT_PANEL_TEXT,
+                textX - 2,
+                textTop - 1,
+                textX + textWidth + 1,
+                textBottom - 1
+            ));
+        }
+    }
+
+    private void collectInfoLabelHits(List<PanelColorTargetHit> hits) {
+        InfoLayout layout = getInfoLayout();
+        if (layout == null) {
+            return;
+        }
+        addTextHit(hits, PanelColorTarget.LEFT_PANEL_TEXT, "Status:", leftPanelX + layout.padding, layout.infoY);
+        addTextHit(hits, PanelColorTarget.LEFT_PANEL_TEXT, "Dim:", leftPanelX + layout.padding, layout.dimY);
+        addTextHit(hits, PanelColorTarget.LEFT_PANEL_TEXT, "Chunk:", leftPanelX + layout.padding, layout.chunkY);
+        addTextHit(hits, PanelColorTarget.LEFT_PANEL_TEXT, "Block:", leftPanelX + layout.padding, layout.blockY);
+        String radiusLabel = data.allowMobSpawning() ? "SD:" : "Radius:";
+        addTextHit(hits, PanelColorTarget.LEFT_PANEL_TEXT, radiusLabel, leftPanelX + layout.padding, layout.sdY);
+    }
+
+    private void collectInfoValueHits(List<PanelColorTargetHit> hits) {
+        InfoLayout layout = getInfoLayout();
+        if (layout == null) {
+            return;
+        }
+        BlockPos blockPos = new BlockPos(data.centerChunkX() << 4, data.blockY(), data.centerChunkZ() << 4);
+        addTextHit(hits, PanelColorTarget.LEFT_PANEL_VALUE, "X:" + data.centerChunkX(), layout.coordStartX, layout.chunkY);
+        addTextHit(hits, PanelColorTarget.LEFT_PANEL_VALUE, "Z:" + data.centerChunkZ(), layout.coordStartX, layout.chunkY + 12);
+        addTextHit(hits, PanelColorTarget.LEFT_PANEL_VALUE, "X:" + blockPos.getX(), layout.coordStartX, layout.blockY);
+        addTextHit(hits, PanelColorTarget.LEFT_PANEL_VALUE, "Y:" + data.blockY(), layout.coordStartX, layout.blockY + 12);
+        addTextHit(hits, PanelColorTarget.LEFT_PANEL_VALUE, "Z:" + blockPos.getZ(), layout.coordStartX, layout.blockY + 24);
+        addTextHit(hits, PanelColorTarget.LEFT_PANEL_VALUE, data.chunkRadius() + "/3", layout.coordStartX, layout.sdY);
+    }
+
+    private void collectInfoStatusHits(List<PanelColorTargetHit> hits) {
+        InfoLayout layout = getInfoLayout();
+        if (layout == null) {
+            return;
+        }
+        String statusText = data.enabled() ? "active" : "inactive";
+        int statusTextWidth = this.font.width(statusText);
+        addTextHit(
+            hits,
+            PanelColorTarget.LEFT_PANEL_STATUS,
+            statusText,
+            leftPanelX + leftPanelWidth - layout.padding - statusTextWidth,
+            layout.infoY
+        );
+    }
+
+    private void collectInfoDimHits(List<PanelColorTargetHit> hits) {
+        InfoLayout layout = getInfoLayout();
+        if (layout == null) {
+            return;
+        }
+        String dimName = data.dimensionKey().toLowerCase();
+        String dimText = dimName.contains("overworld") ? "Overworld"
+            : (dimName.contains("nether") ? "Nether" : (dimName.contains("end") ? "End" : "?"));
+        int dimTextWidth = this.font.width(dimText);
+        addTextHit(
+            hits,
+            PanelColorTarget.LEFT_PANEL_DIM,
+            dimText,
+            leftPanelX + leftPanelWidth - layout.padding - dimTextWidth,
+            layout.dimY
+        );
+    }
+
+    private void collectInfoNameHits(List<PanelColorTargetHit> hits) {
+        InfoLayout layout = getInfoLayout();
+        if (layout == null || layout.ownerName == null || layout.ownerName.isEmpty()) {
+            return;
+        }
+        int nameWidth = this.font.width(layout.ownerName);
+        int nameX = leftPanelX + (leftPanelWidth - nameWidth) / 2;
+        hits.add(hit(
+            PanelColorTarget.LEFT_PANEL_NAME,
+            nameX - 2,
+            layout.nameY - 2,
+            nameX + nameWidth + 1,
+            layout.nameY + this.font.lineHeight
+        ));
+    }
+
+    private void collectDividerHits(List<PanelColorTargetHit> hits) {
+        InfoLayout layout = getInfoLayout();
+        if (layout != null) {
+            int padding = layout.padding;
+            int div1Y = layout.initialInfoY - 4;
+            int div2Y = layout.initialInfoY + 26;
+            int div3Y = layout.initialInfoY + 98;
+            hits.add(hit(PanelColorTarget.DIVIDER, leftPanelX + padding, div1Y, leftPanelX + leftPanelWidth - padding, div1Y + 1));
+            hits.add(hit(PanelColorTarget.DIVIDER, leftPanelX + padding, div2Y, leftPanelX + leftPanelWidth - padding, div2Y + 1));
+            hits.add(hit(PanelColorTarget.DIVIDER, leftPanelX + padding, div3Y, leftPanelX + leftPanelWidth - padding, div3Y + 1));
+        }
+
+        ChunkMapLayoutPreset layoutPreset = ChunkMapLayoutPreset.fromConfig(clientConfig);
+        boolean verticalButtonBar = layoutPreset.isVerticalButtonBar();
+        int numberOfTopButtons = topBoxButtons.size();
+        if (!verticalButtonBar && numberOfTopButtons >= 2) {
+            int totalButtonsWidth = numberOfTopButtons * TOPBOX_BUTTON_WIDTH;
+            int spacing = (topBoxWidth - totalButtonsWidth) / (numberOfTopButtons + 1);
+            int startX = topBoxX + spacing;
+            int lineTop = topBoxY + 4;
+            int lineBottom = topBoxY + topBoxHeight - 4;
+            for (int index = 1; index < numberOfTopButtons; index++) {
+                int lineX = startX + TOPBOX_BUTTON_WIDTH * index + spacing * (index - 1) + spacing / 2;
+                hits.add(hit(PanelColorTarget.DIVIDER, lineX, lineTop, lineX + 1, lineBottom));
+            }
+        } else if (verticalButtonBar && numberOfTopButtons >= 2) {
+            int availableSpace = topBoxHeight - (numberOfTopButtons * TOPBOX_BUTTON_HEIGHT);
+            int innerSpacing = Math.max(2, availableSpace > 0 ? availableSpace / (numberOfTopButtons + 1) : 2);
+            int startY = topBoxY + innerSpacing;
+            int lineLeft = topBoxX + 4;
+            int lineRight = topBoxX + topBoxWidth - 4;
+            for (int index = 1; index < numberOfTopButtons; index++) {
+                int lineY = startY + TOPBOX_BUTTON_HEIGHT * index + innerSpacing * (index - 1) + innerSpacing / 2;
+                hits.add(hit(PanelColorTarget.DIVIDER, lineLeft, lineY, lineRight, lineY + 1));
+            }
+        }
+    }
+
+    private void addPanelHits(List<PanelColorTargetHit> hits, PanelColorTarget target) {
+        addSinglePanelHit(hits, target, topBoxX, topBoxY, topBoxWidth, topBoxHeight);
+        addSinglePanelHit(hits, target, leftPanelX, leftPanelY, leftPanelWidth, leftPanelHeight);
+        addSinglePanelHit(hits, target, panelX, panelY, panelWidth, panelHeight);
+    }
+
+    private void addSinglePanelHit(
+        List<PanelColorTargetHit> hits,
+        PanelColorTarget target,
+        int panelLeft,
+        int panelTop,
+        int width,
+        int height
+    ) {
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+        int outerLeft = panelLeft - 2;
+        int outerTop = panelTop - 2;
+        int outerRight = panelLeft + width + 2;
+        int outerBottom = panelTop + height + 2;
+        if (target == PanelColorTarget.BORDER) {
+            hits.add(hit(PanelColorTarget.BORDER, outerLeft, outerTop, outerRight, outerBottom));
+        } else {
+            hits.add(hit(PanelColorTarget.PANEL, panelLeft - 1, panelTop - 1, panelLeft + width + 1, panelTop + height + 1));
+        }
+    }
+
+    private void collectMapFramePanelHit(List<PanelColorTargetHit> hits) {
+        if (this.grid == null) {
+            return;
+        }
+        int borderThickness = 4;
+        hits.add(hit(
+            PanelColorTarget.PANEL,
+            gridLeft - borderThickness,
+            gridTop - borderThickness,
+            gridLeft + gridWidth + borderThickness,
+            gridTop + gridHeight + borderThickness
+        ));
+    }
+
+    private void collectMapFrameHit(List<PanelColorTargetHit> hits) {
+        if (this.grid == null) {
+            return;
+        }
+        int framePadding = 6;
+        hits.add(hit(
+            PanelColorTarget.FRAME,
+            gridLeft - framePadding,
+            gridTop - framePadding,
+            gridLeft + gridWidth + framePadding,
+            gridTop + gridHeight + framePadding
+        ));
+    }
+
+    private void collectScrollbarHits(List<PanelColorTargetHit> hits, PanelColorTarget target) {
+        ScrollbarMetrics metrics = getActionScrollbarMetrics();
+        if (metrics == null) {
+            return;
+        }
+        if (target == PanelColorTarget.SCROLLBAR_THUMB) {
+            hits.add(hit(
+                PanelColorTarget.SCROLLBAR_THUMB,
+                metrics.x,
+                metrics.thumbY,
+                metrics.x + metrics.width,
+                metrics.thumbY + metrics.thumbHeight
+            ));
+        } else {
+            hits.add(hit(
+                PanelColorTarget.SCROLLBAR_TRACK,
+                metrics.x,
+                metrics.trackTop,
+                metrics.x + metrics.width,
+                metrics.trackTop + metrics.trackHeight
+            ));
+        }
+    }
+
+    private void collectSearchbarHits(List<PanelColorTargetHit> hits, PanelColorTarget target) {
+        if (actionSearchField == null) {
+            return;
+        }
+        int left = getActionSearchOuterLeft();
+        int top = getActionSearchOuterTop();
+        int right = getActionSearchOuterRight();
+        int bottom = getActionSearchOuterBottom();
+        switch (target) {
+            case SEARCHBAR_BORDER -> hits.add(hit(PanelColorTarget.SEARCHBAR_BORDER, left, top, right, bottom));
+            case SEARCHBAR_BACKGROUND -> hits.add(hit(PanelColorTarget.SEARCHBAR_BACKGROUND, left + 1, top + 1, right - 1, bottom - 1));
+            case SEARCHBAR_TEXT -> {
+                int textLeft = left + ACTION_SEARCH_INSET_X;
+                int textTop = top + ACTION_SEARCH_INSET_Y + Math.max(0, (ACTION_SEARCH_TEXT_HEIGHT - this.font.lineHeight) / 2);
+                String query = actionSearchQuery == null ? "" : actionSearchQuery;
+                if (!query.isBlank()) {
+                    hits.add(hit(
+                        PanelColorTarget.SEARCHBAR_TEXT,
+                        textLeft,
+                        textTop - 1,
+                        textLeft + this.font.width(query) + 3,
+                        textTop + this.font.lineHeight + 1
+                    ));
+                } else {
+                    hits.add(hit(PanelColorTarget.SEARCHBAR_TEXT, left + (right - left) / 2, top + 1, right - 1, bottom - 1));
+                }
+            }
+            case SEARCHBAR_PLACEHOLDER -> {
+                String placeholder = "Search...";
+                int textLeft = left + ACTION_SEARCH_INSET_X;
+                int textTop = top + ACTION_SEARCH_INSET_Y + Math.max(0, (ACTION_SEARCH_TEXT_HEIGHT - this.font.lineHeight) / 2);
+                hits.add(hit(
+                    PanelColorTarget.SEARCHBAR_PLACEHOLDER,
+                    textLeft,
+                    textTop - 1,
+                    textLeft + this.font.width(placeholder) + 3,
+                    textTop + this.font.lineHeight + 1
+                ));
+            }
+            default -> {
+            }
+        }
+    }
+
+    private void collectCompassHit(List<PanelColorTargetHit> hits) {
+        if (this.grid == null) {
+            return;
+        }
+        String[] compassLabels = {"N", "W", "S", "E"};
+        String upLabel = compassLabels[mapRotation];
+        int compassX = gridLeft + gridWidth / 2 - this.font.width(upLabel) / 2;
+        int compassY = gridTop - this.font.lineHeight - 8;
+        hits.add(hit(
+            PanelColorTarget.COMPASS_DIRECTION,
+            compassX - 3,
+            compassY - 2,
+            compassX + this.font.width(upLabel) + 3,
+            compassY + this.font.lineHeight + 2
+        ));
+    }
+
+    private void addTextHit(List<PanelColorTargetHit> hits, PanelColorTarget target, String text, int x, int y) {
+        hits.add(hit(target, x - 2, y - 2, x + this.font.width(text) + 1, y + this.font.lineHeight));
+    }
+
+    private InfoLayout getInfoLayout() {
+        if (data == null) {
+            return null;
+        }
+        int padding = 6;
+        int headSize = 24;
+        int headY = leftPanelY + 8;
+        String ownerName = data.ownerName() != null ? data.ownerName() : null;
+        int nameY = 0;
+        if (ownerName != null && !ownerName.isEmpty()) {
+            nameY = headY + headSize + 4;
+        }
+        int initialInfoY = nameY > 0 ? nameY + this.font.lineHeight + 8 : headY + headSize + 8;
+        int infoY = initialInfoY + 2;
+        int dimY = infoY + 12;
+        int chunkY = dimY + 24 - 3;
+        int blockY = chunkY + 24;
+        int blockZY = blockY + 24;
+        int sdY = blockZY + 15 + 8;
+        int maxLabelWidth = Math.max(this.font.width("Chunk:"), this.font.width("Block:"));
+        int coordStartX = leftPanelX + padding + maxLabelWidth + 4;
+
+        return new InfoLayout(
+            padding,
+            ownerName,
+            nameY,
+            initialInfoY,
+            infoY,
+            dimY,
+            chunkY,
+            blockY,
+            sdY,
+            coordStartX
+        );
+    }
+
+    private record InfoLayout(
+        int padding,
+        String ownerName,
+        int nameY,
+        int initialInfoY,
+        int infoY,
+        int dimY,
+        int chunkY,
+        int blockY,
+        int sdY,
+        int coordStartX
+    ) {
+    }
+
+    public PanelColorTargetHit getPanelColorTargetHit(int mouseX, int mouseY) {
+        if (contains(mouseX, mouseY, gridLeft, gridTop, gridLeft + gridWidth, gridTop + gridHeight)) {
+            return null;
+        }
+
+        for (Button button : topBoxButtons) {
+            if (button != null && contains(mouseX, mouseY, button.getX(), button.getY(), button.getX() + button.getWidth(), button.getY() + button.getHeight())) {
+                return null;
+            }
+        }
+
+        for (Button button : actionButtons) {
+            if (button != null && button.active && contains(mouseX, mouseY, button.getX(), button.getY(), button.getX() + button.getWidth(), button.getY() + button.getHeight())) {
+                return null;
+            }
+        }
+
+        if (closeButton != null && contains(mouseX, mouseY, closeButton.getX(), closeButton.getY(), closeButton.getX() + closeButton.getWidth(), closeButton.getY() + closeButton.getHeight())) {
+            return null;
+        }
+        if (resetButton != null && contains(mouseX, mouseY, resetButton.getX(), resetButton.getY(), resetButton.getX() + resetButton.getWidth(), resetButton.getY() + resetButton.getHeight())) {
+            return null;
+        }
+
+        PanelColorTargetHit hit = getCompassDirectionColorHit(mouseX, mouseY);
+        if (hit != null) {
+            return hit;
+        }
+
+        hit = getActionSearchColorHit(mouseX, mouseY);
+        if (hit != null) {
+            return hit;
+        }
+
+        hit = getActionHeaderColorHit(mouseX, mouseY);
+        if (hit != null) {
+            return hit;
+        }
+
+        hit = getScrollbarColorHit(mouseX, mouseY);
+        if (hit != null) {
+            return hit;
+        }
+
+        hit = getInfoTextColorHit(mouseX, mouseY);
+        if (hit != null) {
+            return hit;
+        }
+
+        hit = getDividerColorHit(mouseX, mouseY);
+        if (hit != null) {
+            return hit;
+        }
+
+        hit = getMapFrameColorHit(mouseX, mouseY);
+        if (hit != null) {
+            return hit;
+        }
+
+        hit = getPanelColorHit(mouseX, mouseY, topBoxX, topBoxY, topBoxWidth, topBoxHeight);
+        if (hit != null) {
+            return hit;
+        }
+
+        hit = getPanelColorHit(mouseX, mouseY, leftPanelX, leftPanelY, leftPanelWidth, leftPanelHeight);
+        if (hit != null) {
+            return hit;
+        }
+
+        return getPanelColorHit(mouseX, mouseY, panelX, panelY, panelWidth, panelHeight);
+    }
+
+    private PanelColorTargetHit getCompassDirectionColorHit(int mouseX, int mouseY) {
+        if (this.grid == null) {
+            return null;
+        }
+        String[] compassLabels = {"N", "W", "S", "E"};
+        String upLabel = compassLabels[mapRotation];
+        Font font = Minecraft.getInstance().font;
+        int compassX = gridLeft + gridWidth / 2 - this.font.width(upLabel) / 2;
+        int compassY = gridTop - this.font.lineHeight - 8;
+        return hitIfContains(
+            PanelColorTarget.COMPASS_DIRECTION,
+            mouseX,
+            mouseY,
+            compassX - 3,
+            compassY - 2,
+            compassX + this.font.width(upLabel) + 3,
+            compassY + this.font.lineHeight + 2
+        );
+    }
+
+    private PanelColorTargetHit getActionSearchColorHit(int mouseX, int mouseY) {
+        if (actionSearchField == null) {
+            return null;
+        }
+
+        int left = getActionSearchOuterLeft();
+        int top = getActionSearchOuterTop();
+        int right = getActionSearchOuterRight();
+        int bottom = getActionSearchOuterBottom();
+        if (!contains(mouseX, mouseY, left, top, right, bottom)) {
+            return null;
+        }
+
+        if (mouseX < left + 2 || mouseX >= right - 2 || mouseY < top + 2 || mouseY >= bottom - 2) {
+            return hit(PanelColorTarget.SEARCHBAR_BORDER, left, top, right, bottom);
+        }
+
+        int textLeft = left + ACTION_SEARCH_INSET_X;
+        int textTop = top + ACTION_SEARCH_INSET_Y + Math.max(0, (ACTION_SEARCH_TEXT_HEIGHT - this.font.lineHeight) / 2);
+        String query = actionSearchQuery == null ? "" : actionSearchQuery;
+        if (!query.isBlank()) {
+            PanelColorTargetHit textHit = hitIfContains(
+                PanelColorTarget.SEARCHBAR_TEXT,
+                mouseX,
+                mouseY,
+                textLeft,
+                textTop - 1,
+                textLeft + this.font.width(query) + 3,
+                textTop + this.font.lineHeight + 1
+            );
+            if (textHit != null) {
+                return textHit;
+            }
+        } else {
+            String placeholder = "Search...";
+            PanelColorTargetHit placeholderHit = hitIfContains(
+                PanelColorTarget.SEARCHBAR_PLACEHOLDER,
+                mouseX,
+                mouseY,
+                textLeft,
+                textTop - 1,
+                textLeft + this.font.width(placeholder) + 3,
+                textTop + this.font.lineHeight + 1
+            );
+            if (placeholderHit != null) {
+                return placeholderHit;
+            }
+            if (mouseX >= left + (right - left) / 2) {
+                return hit(PanelColorTarget.SEARCHBAR_TEXT, left + (right - left) / 2, top + 1, right - 1, bottom - 1);
+            }
+        }
+
+        return hit(PanelColorTarget.SEARCHBAR_BACKGROUND, left + 1, top + 1, right - 1, bottom - 1);
+    }
+
+    private PanelColorTargetHit getActionHeaderColorHit(int mouseX, int mouseY) {
+        int buttonX = panelX + 8;
+        int buttonWidth = panelWidth - 16;
+        for (ActionHeaderLayout headerLayout : actionHeaderLayouts) {
+            int rowY = actionViewportTop + headerLayout.yOffset - getVisibleActionScrollOffset();
+            int textY = rowY + (headerLayout.height - this.font.lineHeight) / 2 + 1;
+            int textWidth = this.font.width(headerLayout.text);
+            int textX = buttonX + Math.max(0, (buttonWidth - textWidth) / 2);
+
+            int textTop = textY - 1;
+            int textBottom = textY + this.font.lineHeight + 1;
+            if (textBottom < actionViewportTop || textTop > actionViewportBottom) {
+                continue;
+            }
+
+            PanelColorTargetHit hit = hitIfContains(
+                PanelColorTarget.LEFT_PANEL_TEXT,
+                mouseX,
+                mouseY,
+                textX - 2,
+                textTop - 1,
+                textX + textWidth + 1,
+                textBottom - 1
+            );
+            if (hit != null) {
+                return hit;
+            }
+        }
+        return null;
+    }
+
+    private PanelColorTargetHit getScrollbarColorHit(int mouseX, int mouseY) {
+        ScrollbarMetrics metrics = getActionScrollbarMetrics();
+        if (metrics == null) {
+            return null;
+        }
+
+        PanelColorTargetHit thumbHit = hitIfContains(
+            PanelColorTarget.SCROLLBAR_THUMB,
+            mouseX,
+            mouseY,
+            metrics.x,
+            metrics.thumbY,
+            metrics.x + metrics.width,
+            metrics.thumbY + metrics.thumbHeight
+        );
+        if (thumbHit != null) {
+            return thumbHit;
+        }
+
+        return hitIfContains(
+            PanelColorTarget.SCROLLBAR_TRACK,
+            mouseX,
+            mouseY,
+            metrics.x,
+            metrics.trackTop,
+            metrics.x + metrics.width,
+            metrics.trackTop + metrics.trackHeight
+        );
+    }
+
+    private PanelColorTargetHit getInfoTextColorHit(int mouseX, int mouseY) {
+        int padding = 6;
+        int headSize = 24;
+        int headY = leftPanelY + 8;
+        String ownerName = data != null && data.ownerName() != null ? data.ownerName() : null;
+        int nameY = 0;
+
+        if (ownerName != null && !ownerName.isEmpty()) {
+            int nameWidth = this.font.width(ownerName);
+            int nameX = leftPanelX + (leftPanelWidth - nameWidth) / 2;
+            nameY = headY + headSize + 4;
+            PanelColorTargetHit nameHit = hitIfContains(
+                PanelColorTarget.LEFT_PANEL_NAME,
+                mouseX,
+                mouseY,
+                nameX - 2,
+                nameY - 2,
+                nameX + nameWidth + 1,
+                nameY + this.font.lineHeight
+            );
+            if (nameHit != null) {
+                return nameHit;
+            }
+        }
+
+        if (data == null) {
+            return null;
+        }
+
+        int infoY = nameY > 0 ? nameY + this.font.lineHeight + 8 : headY + headSize + 8;
+        infoY += 2;
+
+        PanelColorTargetHit hit = hitText(PanelColorTarget.LEFT_PANEL_TEXT, mouseX, mouseY, "Status:", leftPanelX + padding, infoY);
+        if (hit != null) {
+            return hit;
+        }
+        String statusText = data.enabled() ? "active" : "inactive";
+        int statusTextWidth = this.font.width(statusText);
+        hit = hitText(PanelColorTarget.LEFT_PANEL_STATUS, mouseX, mouseY, statusText, leftPanelX + leftPanelWidth - padding - statusTextWidth, infoY);
+        if (hit != null) {
+            return hit;
+        }
+        infoY += 12;
+
+        hit = hitText(PanelColorTarget.LEFT_PANEL_TEXT, mouseX, mouseY, "Dim:", leftPanelX + padding, infoY);
+        if (hit != null) {
+            return hit;
+        }
+        String dimName = data.dimensionKey().toLowerCase();
+        String dimText = dimName.contains("overworld") ? "Overworld" : (dimName.contains("nether") ? "Nether" : (dimName.contains("end") ? "End" : "?"));
+        int dimTextWidth = this.font.width(dimText);
+        hit = hitText(PanelColorTarget.LEFT_PANEL_DIM, mouseX, mouseY, dimText, leftPanelX + leftPanelWidth - padding - dimTextWidth, infoY);
+        if (hit != null) {
+            return hit;
+        }
+        infoY += 24;
+
+        String chunkLabel = "Chunk:";
+        String blockLabel = "Block:";
+        int maxLabelWidth = Math.max(this.font.width(chunkLabel), this.font.width(blockLabel));
+        int coordStartX = leftPanelX + padding + maxLabelWidth + 4;
+        int chunkBlockY = infoY - 3;
+
+        hit = hitText(PanelColorTarget.LEFT_PANEL_TEXT, mouseX, mouseY, chunkLabel, leftPanelX + padding, chunkBlockY);
+        if (hit != null) {
+            return hit;
+        }
+        hit = hitText(PanelColorTarget.LEFT_PANEL_VALUE, mouseX, mouseY, "X:" + data.centerChunkX(), coordStartX, chunkBlockY);
+        if (hit != null) {
+            return hit;
+        }
+        chunkBlockY += 12;
+        hit = hitText(PanelColorTarget.LEFT_PANEL_VALUE, mouseX, mouseY, "Z:" + data.centerChunkZ(), coordStartX, chunkBlockY);
+        if (hit != null) {
+            return hit;
+        }
+        chunkBlockY += 12;
+
+        BlockPos blockPos = new BlockPos(data.centerChunkX() << 4, data.blockY(), data.centerChunkZ() << 4);
+        hit = hitText(PanelColorTarget.LEFT_PANEL_TEXT, mouseX, mouseY, blockLabel, leftPanelX + padding, chunkBlockY);
+        if (hit != null) {
+            return hit;
+        }
+        hit = hitText(PanelColorTarget.LEFT_PANEL_VALUE, mouseX, mouseY, "X:" + blockPos.getX(), coordStartX, chunkBlockY);
+        if (hit != null) {
+            return hit;
+        }
+        chunkBlockY += 12;
+        hit = hitText(PanelColorTarget.LEFT_PANEL_VALUE, mouseX, mouseY, "Y:" + data.blockY(), coordStartX, chunkBlockY);
+        if (hit != null) {
+            return hit;
+        }
+        chunkBlockY += 12;
+        hit = hitText(PanelColorTarget.LEFT_PANEL_VALUE, mouseX, mouseY, "Z:" + blockPos.getZ(), coordStartX, chunkBlockY);
+        if (hit != null) {
+            return hit;
+        }
+
+        int sdDividerY = chunkBlockY + 15;
+        int sdY = sdDividerY + 8;
+        String radiusLabel = data.allowMobSpawning() ? "SD:" : "Radius:";
+        hit = hitText(PanelColorTarget.LEFT_PANEL_TEXT, mouseX, mouseY, radiusLabel, leftPanelX + padding, sdY);
+        if (hit != null) {
+            return hit;
+        }
+        return hitText(
+            PanelColorTarget.LEFT_PANEL_VALUE,
+            mouseX,
+            mouseY,
+            data.chunkRadius() + "/3",
+            coordStartX,
+            sdY
+        );
+    }
+
+    private PanelColorTargetHit getDividerColorHit(int mouseX, int mouseY) {
+        int padding = 6;
+        int headSize = 24;
+        int headY = leftPanelY + 8;
+        String ownerName = data != null && data.ownerName() != null ? data.ownerName() : null;
+        int nameY = ownerName != null && !ownerName.isEmpty() ? headY + headSize + 4 : 0;
+        int initialInfoY = nameY > 0 ? nameY + this.font.lineHeight + 8 : headY + headSize + 8;
+
+        if (data == null) {
+            return null;
+        }
+
+        int div1Y = initialInfoY - 4;
+        int div2Y = initialInfoY + 26;
+        int div3Y = initialInfoY + 98;
+
+        if (contains(mouseX, mouseY, leftPanelX + padding, div1Y - 3, leftPanelX + leftPanelWidth - padding, div1Y + 4)) {
+            return hit(PanelColorTarget.DIVIDER, leftPanelX + padding, div1Y, leftPanelX + leftPanelWidth - padding, div1Y + 1);
+        }
+
+        if (contains(mouseX, mouseY, leftPanelX + padding, div2Y - 3, leftPanelX + leftPanelWidth - padding, div2Y + 4)) {
+            return hit(PanelColorTarget.DIVIDER, leftPanelX + padding, div2Y, leftPanelX + leftPanelWidth - padding, div2Y + 1);
+        }
+
+        if (contains(mouseX, mouseY, leftPanelX + padding, div3Y - 3, leftPanelX + leftPanelWidth - padding, div3Y + 4)) {
+            return hit(PanelColorTarget.DIVIDER, leftPanelX + padding, div3Y, leftPanelX + leftPanelWidth - padding, div3Y + 1);
+        }
+
+        ChunkMapLayoutPreset layoutPreset = ChunkMapLayoutPreset.fromConfig(clientConfig);
+        boolean verticalButtonBar = layoutPreset.isVerticalButtonBar();
+        int numberOfTopButtons = topBoxButtons.size();
+        if (!verticalButtonBar && numberOfTopButtons >= 2) {
+            int totalButtonsWidth = numberOfTopButtons * TOPBOX_BUTTON_WIDTH;
+            int spacing = (topBoxWidth - totalButtonsWidth) / (numberOfTopButtons + 1);
+            int startX = topBoxX + spacing;
+            int lineTop = topBoxY + 4;
+            int lineBottom = topBoxY + topBoxHeight - 4;
+            for (int index = 1; index < numberOfTopButtons; index++) {
+                int lineX = startX + TOPBOX_BUTTON_WIDTH * index + spacing * (index - 1) + spacing / 2;
+                if (contains(mouseX, mouseY, lineX - 3, lineTop, lineX + 4, lineBottom)) {
+                    return hit(PanelColorTarget.DIVIDER, lineX, lineTop, lineX + 1, lineBottom);
+                }
+            }
+        } else if (verticalButtonBar && numberOfTopButtons >= 2) {
+            int availableSpace = topBoxHeight - (numberOfTopButtons * TOPBOX_BUTTON_HEIGHT);
+            int innerSpacing = Math.max(2, availableSpace > 0 ? availableSpace / (numberOfTopButtons + 1) : 2);
+            int startY = topBoxY + innerSpacing;
+            int lineLeft = topBoxX + 4;
+            int lineRight = topBoxX + topBoxWidth - 4;
+            for (int index = 1; index < numberOfTopButtons; index++) {
+                int lineY = startY + TOPBOX_BUTTON_HEIGHT * index + innerSpacing * (index - 1) + innerSpacing / 2;
+                if (contains(mouseX, mouseY, lineLeft, lineY - 3, lineRight, lineY + 4)) {
+                    return hit(PanelColorTarget.DIVIDER, lineLeft, lineY, lineRight, lineY + 1);
+                }
+            }
+        }
+        return null;
+    }
+
+    private PanelColorTargetHit getMapFrameColorHit(int mouseX, int mouseY) {
+        int framePadding = 6;
+        int borderThickness = 4;
+        int frameLeft = gridLeft - framePadding;
+        int frameTop = gridTop - framePadding;
+        int frameRight = gridLeft + gridWidth + framePadding;
+        int frameBottom = gridTop + gridHeight + framePadding;
+        if (!contains(mouseX, mouseY, frameLeft - 1, frameTop - 1, frameRight + 1, frameBottom + 1)) {
+            return null;
+        }
+
+        if (contains(mouseX, mouseY, gridLeft, gridTop, gridLeft + gridWidth, gridTop + gridHeight)) {
+            return null;
+        }
+
+        if (contains(
+            mouseX,
+            mouseY,
+            gridLeft - borderThickness,
+            gridTop - borderThickness,
+            gridLeft + gridWidth + borderThickness,
+            gridTop + gridHeight + borderThickness
+        )) {
+            return hit(
+                PanelColorTarget.PANEL,
+                gridLeft - borderThickness,
+                gridTop - borderThickness,
+                gridLeft + gridWidth + borderThickness,
+                gridTop + gridHeight + borderThickness
+            );
+        }
+
+        return hit(PanelColorTarget.FRAME, frameLeft, frameTop, frameRight, frameBottom);
+    }
+
+    private PanelColorTargetHit getPanelColorHit(int mouseX, int mouseY, int panelLeft, int panelTop, int width, int height) {
+        int outerLeft = panelLeft - 2;
+        int outerTop = panelTop - 2;
+        int outerRight = panelLeft + width + 2;
+        int outerBottom = panelTop + height + 2;
+        if (!contains(mouseX, mouseY, outerLeft, outerTop, outerRight, outerBottom)) {
+            return null;
+        }
+
+        if (
+            mouseX < panelLeft - 1
+                || mouseX >= panelLeft + width + 1
+                || mouseY < panelTop - 1
+                || mouseY >= panelTop + height + 1
+        ) {
+            return hit(PanelColorTarget.BORDER, outerLeft, outerTop, outerRight, outerBottom);
+        }
+        return hit(PanelColorTarget.PANEL, panelLeft - 1, panelTop - 1, panelLeft + width + 1, panelTop + height + 1);
+    }
+
+    private PanelColorTargetHit hitText(PanelColorTarget target, int mouseX, int mouseY, String text, int x, int y) {
+        return hitIfContains(target, mouseX, mouseY, x - 2, y - 2, x + this.font.width(text) + 1, y + this.font.lineHeight);
+    }
+
+    private static PanelColorTargetHit hitIfContains(
+        PanelColorTarget target,
+        int mouseX,
+        int mouseY,
+        int left,
+        int top,
+        int right,
+        int bottom
+    ) {
+        return contains(mouseX, mouseY, left, top, right, bottom) ? hit(target, left, top, right, bottom) : null;
+    }
+
+    private static PanelColorTargetHit hit(PanelColorTarget target, int left, int top, int right, int bottom) {
+        return new PanelColorTargetHit(target, left, top, right, bottom);
+    }
+
+    private static boolean contains(int mouseX, int mouseY, int left, int top, int right, int bottom) {
+        return mouseX >= left && mouseX < right && mouseY >= top && mouseY < bottom;
+    }
+
+    private void drawTopBox(GuiGraphics context) {
+        int panelColor = toGuiFillColor(clientConfig != null ? clientConfig.getPanelColor() : 0xFF2C2C2C);
+        int borderColor = toGuiFillColor(clientConfig != null ? clientConfig.getBorderColor() : 0xFF4A4A4A);
+        context.fill(topBoxX - 2, topBoxY - 2, topBoxX + topBoxWidth + 2, topBoxY + topBoxHeight + 2, panelColor);
+        context.fill(topBoxX - 2, topBoxY - 2, topBoxX + topBoxWidth + 2, topBoxY - 1, borderColor);
+        context.fill(topBoxX - 2, topBoxY + topBoxHeight + 1, topBoxX + topBoxWidth + 2, topBoxY + topBoxHeight + 2, borderColor);
+        context.fill(topBoxX - 2, topBoxY - 2, topBoxX - 1, topBoxY + topBoxHeight + 2, borderColor);
+        context.fill(topBoxX + topBoxWidth + 1, topBoxY - 2, topBoxX + topBoxWidth + 2, topBoxY + topBoxHeight + 2, borderColor);
+
+        int dividerColor = toGuiFillColor(clientConfig != null ? clientConfig.getDividerColor() : 0x33FFFFFF);
         ChunkMapLayoutPreset layoutPreset = ChunkMapLayoutPreset.fromConfig(clientConfig);
         boolean verticalButtonBar = layoutPreset.isVerticalButtonBar();
         int numButtons = topBoxButtons.size();
-        int dividerColor = clientConfig != null ? clientConfig.getDividerColor() : 0x33FFFFFF;
 
         if (!verticalButtonBar && numButtons >= 2) {
             int buttonWidth = TOPBOX_BUTTON_WIDTH;
@@ -875,7 +1987,7 @@ public class ChunkMapScreen extends Screen {
             int lineHeight = topBoxHeight - 8;
             for (int i = 1; i < numButtons; i++) {
                 int lineX = startX + buttonWidth * i + spacing * (i - 1) + spacing / 2;
-                graphics.fill(lineX, lineY, lineX + 1, lineY + lineHeight, dividerColor);
+                context.fill(lineX, lineY, lineX + 1, lineY + lineHeight, dividerColor);
             }
         } else if (verticalButtonBar && numButtons >= 2) {
             int availableSpace = topBoxHeight - (numButtons * TOPBOX_BUTTON_HEIGHT);
@@ -887,38 +1999,38 @@ public class ChunkMapScreen extends Screen {
             int lineX2 = topBoxX + topBoxWidth - 4;
             for (int i = 1; i < numButtons; i++) {
                 int lineY = startY + TOPBOX_BUTTON_HEIGHT * i + innerSpacing * (i - 1) + innerSpacing / 2;
-                graphics.fill(lineX1, lineY, lineX2, lineY + 1, dividerColor);
+                context.fill(lineX1, lineY, lineX2, lineY + 1, dividerColor);
             }
         }
     }
-    
-    private void drawLeftPanel(GuiGraphics graphics) {
-        int panelColor = clientConfig != null ? clientConfig.getPanelColor() : 0xFF2B2F36;
-        int borderColor = clientConfig != null ? clientConfig.getBorderColor() : 0xFF4A4A4A;
-        graphics.fill(leftPanelX - 2, leftPanelY - 2, leftPanelX + leftPanelWidth + 2, leftPanelY + leftPanelHeight + 2, panelColor);
-        graphics.fill(leftPanelX - 2, leftPanelY - 2, leftPanelX + leftPanelWidth + 2, leftPanelY - 1, borderColor);
-        graphics.fill(leftPanelX - 2, leftPanelY + leftPanelHeight + 1, leftPanelX + leftPanelWidth + 2, leftPanelY + leftPanelHeight + 2, borderColor);
-        graphics.fill(leftPanelX - 2, leftPanelY - 2, leftPanelX - 1, leftPanelY + leftPanelHeight + 2, borderColor);
-        graphics.fill(leftPanelX + leftPanelWidth + 1, leftPanelY - 2, leftPanelX + leftPanelWidth + 2, leftPanelY + leftPanelHeight + 2, borderColor);
+
+    private void drawLeftPanel(GuiGraphics context) {
+        int panelColor = toGuiFillColor(clientConfig != null ? clientConfig.getPanelColor() : 0xFF2C2C2C);
+        int borderColor = toGuiFillColor(clientConfig != null ? clientConfig.getBorderColor() : 0xFF4A4A4A);
+        context.fill(leftPanelX - 2, leftPanelY - 2, leftPanelX + leftPanelWidth + 2, leftPanelY + leftPanelHeight + 2, panelColor);
+        context.fill(leftPanelX - 2, leftPanelY - 2, leftPanelX + leftPanelWidth + 2, leftPanelY - 1, borderColor);
+        context.fill(leftPanelX - 2, leftPanelY + leftPanelHeight + 1, leftPanelX + leftPanelWidth + 2, leftPanelY + leftPanelHeight + 2, borderColor);
+        context.fill(leftPanelX - 2, leftPanelY - 2, leftPanelX - 1, leftPanelY + leftPanelHeight + 2, borderColor);
+        context.fill(leftPanelX + leftPanelWidth + 1, leftPanelY - 2, leftPanelX + leftPanelWidth + 2, leftPanelY + leftPanelHeight + 2, borderColor);
 
         int padding = 6;
         int headSize = 24;
         int headY = leftPanelY + 8;
         int nameY = 0;
-        
+
         String ownerName = data != null && data.ownerName() != null ? data.ownerName() : null;
 
         int leftPanelNameColor = clientConfig != null ? clientConfig.getLeftPanelNameColor() : 0xFFFFFFFF;
 
         if (ownerName != null && !ownerName.isEmpty()) {
             int headX = leftPanelX + (leftPanelWidth - headSize) / 2;
-            drawPlayerHead(graphics, headX, headY, headSize, ownerName);
+            drawPlayerHead(context, headX, headY, headSize, ownerName);
 
             Component nameText = Component.literal(ownerName);
                 int nameWidth = this.font.width(nameText);
                 int nameX = leftPanelX + (leftPanelWidth - nameWidth) / 2;
                 nameY = headY + headSize + 4;
-                graphics.drawString(this.font, nameText, nameX, nameY, leftPanelNameColor, false);
+                context.drawString(this.font, nameText, nameX, nameY, leftPanelNameColor, false);
             } else {
             nameY = 0;
         }
@@ -929,193 +2041,200 @@ public class ChunkMapScreen extends Screen {
 
         int infoY = nameY > 0 ? nameY + this.font.lineHeight + 8 : headY + headSize + 8;
 
-        int dividerColor = clientConfig != null ? clientConfig.getDividerColor() : 0x33FFFFFF;
-        graphics.fill(leftPanelX + padding, infoY - 4, leftPanelX + leftPanelWidth - padding, infoY - 3, dividerColor);
+        int dividerColor = toGuiFillColor(clientConfig != null ? clientConfig.getDividerColor() : 0x33FFFFFF);
+        context.fill(leftPanelX + padding, infoY - 4, leftPanelX + leftPanelWidth - padding, infoY - 3, dividerColor);
         infoY += 2;
 
         int leftPanelTextColor = clientConfig != null ? clientConfig.getLeftPanelTextColor() : 0xCC808080;
         int leftPanelValueColor = clientConfig != null ? clientConfig.getLeftPanelValueColor() : 0xFFFFFFFF;
+        int leftPanelStatusColor = clientConfig != null ? clientConfig.getLeftPanelStatusColor() : 0;
+        int leftPanelDimColor = clientConfig != null ? clientConfig.getLeftPanelDimColor() : 0;
 
-        graphics.drawString(this.font, Component.literal("Status:"), leftPanelX + padding, infoY, leftPanelTextColor, false);
+        context.drawString(this.font, LABEL_STATUS, leftPanelX + padding, infoY, leftPanelTextColor, false);
         String statusText = data.enabled() ? "active" : "inactive";
-        int statusColor = data.enabled() ? (data.allowMobSpawning() ? 0x55FF55 : 0x5555FF) : 0xFF5555;
+        int defaultStatusColor = data.enabled() ? (data.allowMobSpawning() ? 0x55FF55 : 0x5555FF) : 0xFF5555;
+        int finalStatusColor = (leftPanelStatusColor != 0 && leftPanelStatusColor != 0xFF55FF55) ? leftPanelStatusColor : (defaultStatusColor | 0xFF000000);
         int statusTextWidth = this.font.width(statusText);
-        graphics.drawString(this.font, Component.literal(statusText), 
-            leftPanelX + leftPanelWidth - padding - statusTextWidth, infoY, statusColor | 0xFF000000, false);
+        context.drawString(this.font, Component.literal(statusText),
+            leftPanelX + leftPanelWidth - padding - statusTextWidth, infoY, finalStatusColor, false);
         infoY += 12;
 
-        graphics.drawString(this.font, Component.literal("Dim:"), 
+        context.drawString(this.font, LABEL_DIM,
             leftPanelX + padding, infoY, leftPanelTextColor, false);
         String dimName = data.dimensionKey().toLowerCase();
         String dimText;
-        int dimColor;
+        int defaultDimColor;
         if (dimName.contains("overworld")) {
             dimText = "Overworld";
-            dimColor = 0x55FF55;
+            defaultDimColor = 0x55FF55;
         } else if (dimName.contains("nether")) {
             dimText = "Nether";
-            dimColor = 0xFF5555;
+            defaultDimColor = 0xFF5555;
         } else if (dimName.contains("end")) {
             dimText = "End";
-            dimColor = 0xFF55FF;
+            defaultDimColor = 0xFF55FF;
         } else {
             dimText = "?";
-            dimColor = 0xAAAAAA;
+            defaultDimColor = 0xAAAAAA;
         }
+        int finalDimColor = (leftPanelDimColor != 0 && leftPanelDimColor != 0xFF55FF55) ? leftPanelDimColor : (defaultDimColor | 0xFF000000);
         int dimTextWidth = this.font.width(dimText);
-        graphics.drawString(this.font, Component.literal(dimText), 
-            leftPanelX + leftPanelWidth - padding - dimTextWidth, infoY, dimColor | 0xFF000000, false);
+        context.drawString(this.font, Component.literal(dimText),
+            leftPanelX + leftPanelWidth - padding - dimTextWidth, infoY, finalDimColor, false);
         infoY += 12;
 
-        graphics.fill(leftPanelX + padding, infoY, leftPanelX + leftPanelWidth - padding, infoY + 1, dividerColor);
+        context.fill(leftPanelX + padding, infoY, leftPanelX + leftPanelWidth - padding, infoY + 1, dividerColor);
         infoY += 12;
 
-        Component chunkLabel = Component.literal("Chunk:");
-        Component blockLabel = Component.literal("Block:");
+        Component chunkLabel = LABEL_CHUNK;
+        Component blockLabel = LABEL_BLOCK;
         int chunkLabelWidth = this.font.width(chunkLabel);
         int blockLabelWidth = this.font.width(blockLabel);
         int maxLabelWidth = Math.max(chunkLabelWidth, blockLabelWidth);
         int coordStartX = leftPanelX + padding + maxLabelWidth + 4;
-        
+
         int chunkBlockY = infoY - 3;
-        graphics.drawString(this.font, chunkLabel, leftPanelX + padding, chunkBlockY, leftPanelTextColor, false);
-        
+        context.drawString(this.font, chunkLabel, leftPanelX + padding, chunkBlockY, leftPanelTextColor, false);
+
         String chunkXStr = "X:" + data.centerChunkX();
         String chunkZStr = "Z:" + data.centerChunkZ();
-        
-        graphics.drawString(this.font, Component.literal(chunkXStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
+
+        context.drawString(this.font, Component.literal(chunkXStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
         chunkBlockY += 12;
-        graphics.drawString(this.font, Component.literal(chunkZStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
+        context.drawString(this.font, Component.literal(chunkZStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
         chunkBlockY += 12;
 
         BlockPos blockPos = new BlockPos(data.centerChunkX() << 4, data.blockY(), data.centerChunkZ() << 4);
-        
-        graphics.drawString(this.font, blockLabel, leftPanelX + padding, chunkBlockY, leftPanelTextColor, false);
-        
+
+        context.drawString(this.font, blockLabel, leftPanelX + padding, chunkBlockY, leftPanelTextColor, false);
+
         String xStr = "X:" + blockPos.getX();
         String yStr = "Y:" + data.blockY();
         String zStr = "Z:" + blockPos.getZ();
-        
-        graphics.drawString(this.font, Component.literal(xStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
+
+        context.drawString(this.font, Component.literal(xStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
         chunkBlockY += 12;
-        graphics.drawString(this.font, Component.literal(yStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
+        context.drawString(this.font, Component.literal(yStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
         chunkBlockY += 12;
-        graphics.drawString(this.font, Component.literal(zStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
+        context.drawString(this.font, Component.literal(zStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
         int originalInfoY = chunkBlockY + 12 + 3;
         infoY = originalInfoY;
 
-            graphics.fill(leftPanelX + padding, infoY, leftPanelX + leftPanelWidth - padding, infoY + 1, dividerColor);
+            context.fill(leftPanelX + padding, infoY, leftPanelX + leftPanelWidth - padding, infoY + 1, dividerColor);
             int sdDividerY = infoY;
             infoY += 12;
-        
+
             String radiusValue = String.valueOf(data.chunkRadius());
             String radiusSeparator = "/3";
-        String radiusLabel = data.allowMobSpawning() ? "SD:" : "Radius:";
+        Component radiusLabel = data.allowMobSpawning() ? LABEL_SD : LABEL_RADIUS;
         int sdY = sdDividerY + 8;
-        graphics.drawString(this.font, Component.literal(radiusLabel),
+        context.drawString(this.font, radiusLabel,
                 leftPanelX + padding, sdY, leftPanelTextColor, false);
-            graphics.drawString(this.font, Component.literal(radiusValue), 
+            context.drawString(this.font, Component.literal(radiusValue),
                 coordStartX, sdY, leftPanelValueColor, false);
             int radiusValueWidth = this.font.width(radiusValue);
-            graphics.drawString(this.font, Component.literal(radiusSeparator), 
+            context.drawString(this.font, Component.literal(radiusSeparator),
                 coordStartX + radiusValueWidth, sdY, leftPanelValueColor, false);
             infoY = sdY + 12;
     }
 
-    private void drawSidePanel(GuiGraphics graphics) {
-        int panelColor = clientConfig != null ? clientConfig.getPanelColor() : 0xFF2B2F36;
-        int borderColor = clientConfig != null ? clientConfig.getBorderColor() : 0xFF4A4A4A;
-        graphics.fill(panelX - 2, panelY - 2, panelX + panelWidth + 2, panelY + panelHeight + 2, panelColor);
-        graphics.fill(panelX - 2, panelY - 2, panelX + panelWidth + 2, panelY - 1, borderColor);
-        graphics.fill(panelX - 2, panelY + panelHeight + 1, panelX + panelWidth + 2, panelY + panelHeight + 2, borderColor);
-        graphics.fill(panelX - 2, panelY - 2, panelX - 1, panelY + panelHeight + 2, borderColor);
-        graphics.fill(panelX + panelWidth + 1, panelY - 2, panelX + panelWidth + 2, panelY + panelHeight + 2, borderColor);
+    private void drawSidePanel(GuiGraphics context) {
+        int panelColor = toGuiFillColor(clientConfig != null ? clientConfig.getPanelColor() : 0xFF2C2C2C);
+        int borderColor = toGuiFillColor(clientConfig != null ? clientConfig.getBorderColor() : 0xFF4A4A4A);
+        context.fill(panelX - 2, panelY - 2, panelX + panelWidth + 2, panelY + panelHeight + 2, panelColor);
+        context.fill(panelX - 2, panelY - 2, panelX + panelWidth + 2, panelY - 1, borderColor);
+        context.fill(panelX - 2, panelY + panelHeight + 1, panelX + panelWidth + 2, panelY + panelHeight + 2, borderColor);
+        context.fill(panelX - 2, panelY - 2, panelX - 1, panelY + panelHeight + 2, borderColor);
+        context.fill(panelX + panelWidth + 1, panelY - 2, panelX + panelWidth + 2, panelY + panelHeight + 2, borderColor);
 
-        net.minecraft.client.gui.Font font = this.font;
+        Font renderer = this.font;
         int padding = 8;
         int y = panelY + padding + 4;
-        
-        Component title = Component.literal("Chunkloader: " + data.displayName());
-        graphics.drawString(font, title.copy().withStyle(ChatFormatting.BOLD), panelX + padding, y, 0xFFFFFF, false);
+
+        MutableComponent title = Component.literal("Player: " + data.displayName());
+        context.drawString(renderer, title.withStyle(net.minecraft.ChatFormatting.BOLD), panelX + padding, y, 0xFFFFFF, false);
         y += 16;
 
+        drawSeparator(context, panelX + padding, y, panelWidth - padding * 2);
         y += 8;
 
-        graphics.drawString(font, Component.literal("Status:").withStyle(ChatFormatting.GRAY), 
+        context.drawString(renderer, Component.literal("Status:").withStyle(net.minecraft.ChatFormatting.GRAY),
             panelX + padding, y, 0xFFFFFF, false);
         Component status = data.enabled()
             ? Component.literal("active")
             : Component.literal("inactive");
-        int statusColor = data.enabled() 
-            ? (data.allowMobSpawning() ? 0x55FF55 : 0x5555FF) 
+        int statusColor = data.enabled()
+            ? (data.allowMobSpawning() ? 0x55FF55 : 0x5555FF)
             : 0xFF5555;
-        graphics.drawString(font, status, panelX + padding + 50, y, statusColor, false);
+        context.drawString(renderer, status, panelX + padding + 50, y, statusColor, false);
         y += 12;
 
-        graphics.drawString(font, Component.literal("Mode:").withStyle(ChatFormatting.GRAY), 
+        context.drawString(renderer, Component.literal("Mode:").withStyle(net.minecraft.ChatFormatting.GRAY),
             panelX + padding, y, 0xFFFFFF, false);
         Component mode = data.allowMobSpawning()
             ? Component.literal("Fakeplayer (mob spawning)")
             : Component.literal("Chunkplayer");
         int modeColor = data.allowMobSpawning() ? 0x55FF55 : 0x79C0FF;
-        graphics.drawString(font, mode, panelX + padding + 50, y, modeColor, false);
+        context.drawString(renderer, mode, panelX + padding + 50, y, modeColor, false);
         y += 12;
 
+        drawSeparator(context, panelX + padding, y, panelWidth - padding * 2);
         y += 8;
 
-        graphics.drawString(font, Component.literal("Dimension:").withStyle(ChatFormatting.GRAY), 
+        context.drawString(renderer, Component.literal("Dimension:").withStyle(net.minecraft.ChatFormatting.GRAY),
             panelX + padding, y, 0xFFFFFF, false);
-        graphics.drawString(font, Component.literal(data.dimensionKey()), panelX + padding + 50, y, 0xFFFFFF, false);
+        context.drawString(renderer, Component.literal(data.dimensionKey()), panelX + padding + 50, y, 0xFFFFFF, false);
         y += 12;
 
         BlockPos blockPos = new BlockPos(data.centerChunkX() << 4, data.blockY(), data.centerChunkZ() << 4);
-        graphics.drawString(font, Component.literal("Position:").withStyle(ChatFormatting.GRAY), 
+        context.drawString(renderer, Component.literal("Position:").withStyle(net.minecraft.ChatFormatting.GRAY),
             panelX + padding, y, 0xFFFFFF, false);
-        graphics.drawString(font, Component.literal(blockPos.getX() + " / " + data.blockY() + " / " + blockPos.getZ()), 
+        context.drawString(renderer, Component.literal(blockPos.getX() + " / " + data.blockY() + " / " + blockPos.getZ()),
             panelX + padding + 50, y, 0xFFFFFF, false);
         y += 12;
 
         String radiusLabelSide = data.allowMobSpawning() ? "SD:" : "Radius:";
-        graphics.drawString(font, Component.literal(radiusLabelSide).withStyle(ChatFormatting.GRAY),
+        context.drawString(renderer, Component.literal(radiusLabelSide).withStyle(net.minecraft.ChatFormatting.GRAY),
             panelX + padding, y, 0xFFFFFF, false);
-        Component radiusText = Component.literal(data.chunkRadius() + " / 3");
-        graphics.drawString(font, radiusText, panelX + padding + 50, y, 0xFFFFFF, false);
-        y += 12;
+        MutableComponent radiusText = Component.literal(data.chunkRadius() + " / 3");
+        context.drawString(renderer, radiusText, panelX + padding + 50, y, 0xFFFFFF, false);
+            y += 12;
 
+        drawSeparator(context, panelX + padding, y, panelWidth - padding * 2);
         y += 8;
 
         if (!data.allowMobSpawning()) {
-            int legendStartY = y;
-            int buttonAreaStart = panelY + panelHeight - 80;
-            int legendHeight = 12 + 14 + 14 + 14;
+        int legendStartY = y;
+        int buttonAreaStart = panelY + panelHeight - 80;
+        int legendHeight = 12 + 14 + 14 + 14;
 
-            if (legendStartY + legendHeight > buttonAreaStart - 10) {
-                return;
-            }
+        if (legendStartY + legendHeight > buttonAreaStart - 10) {
+            return;
+        }
 
-            graphics.drawString(font, Component.literal("Legend").withStyle(ChatFormatting.BOLD),
-                panelX + padding, y, 0xFFFFFF, false);
-            y += 12;
+            context.drawString(renderer, Component.literal("Legend").withStyle(net.minecraft.ChatFormatting.BOLD),
+            panelX + padding, y, 0xFFFFFF, false);
+        y += 12;
 
-            int loadedColor = data.allowMobSpawning()
-                ? ChunkMapGrid.COLOR_LOADED
-                : ChunkMapGrid.COLOR_IN_RANGE;
-            drawLegendItem(graphics, font, panelX + padding, y, loadedColor,
+        int loadedColor = data.allowMobSpawning()
+            ? ChunkMapGrid.COLOR_LOADED
+            : ChunkMapGrid.COLOR_IN_RANGE;
+        drawLegendItem(context, renderer, panelX + padding, y, loadedColor,
                 Component.literal("Loaded"));
-            y += 14;
+        y += 14;
 
-            if (data.allowMobSpawning()) {
-                drawLegendItem(graphics, font, panelX + padding, y, ChunkMapGrid.COLOR_LOADED,
+        if (data.allowMobSpawning()) {
+            drawLegendItem(context, renderer, panelX + padding, y, ChunkMapGrid.COLOR_LOADED,
                     Component.literal("Simulation Distance"));
-                y += 14;
-            }
-
-            drawLegendItem(graphics, font, panelX + padding, y, ChunkMapGrid.COLOR_IN_RANGE,
-                Component.literal("Within radius"));
             y += 14;
+        }
 
-            drawLegendItem(graphics, font, panelX + padding, y, ChunkMapGrid.COLOR_OTHER,
-                Component.literal("Other chunkloader"));
+        drawLegendItem(context, renderer, panelX + padding, y, ChunkMapGrid.COLOR_IN_RANGE,
+                Component.literal("Within radius"));
+        y += 14;
+
+        drawLegendItem(context, renderer, panelX + padding, y, ChunkMapGrid.COLOR_OTHER,
+                Component.literal("Other player"));
         }
     }
 
@@ -1124,60 +2243,49 @@ public class ChunkMapScreen extends Screen {
         if (client == null || playerName == null || playerName.isEmpty()) {
             return FALLBACK_SKIN;
         }
-        
-        ResourceLocation entryTexture = resolveSkinFromPlayerListEntry(client, playerName);
+
+        ResourceLocation entryTexture = resolveSkinFromPlayerInfo(client, playerName);
         if (entryTexture != null && !entryTexture.equals(FALLBACK_SKIN)) {
             return entryTexture;
         }
-        
+
         return FALLBACK_SKIN;
     }
 
-    private ResourceLocation resolveSkinFromPlayerListEntry(Minecraft client, String playerName) {
-        return null;
-    }
+    private ResourceLocation resolveSkinFromPlayerInfo(Minecraft client, String playerName) {
+        ClientPacketListener handler = client.getConnection();
+        if (handler == null) {
+            return null;
+        }
 
-    private void drawPlayerHead(GuiGraphics graphics, int x, int y, int size, String playerName) {
-        ResourceLocation texture = getPlayerSkinTexture(playerName);
-        blitNonAtlas(graphics, texture, x, y, 8f, 8f, 8, 8, size, size, 64, 64);
-        blitNonAtlas(graphics, texture, x, y, 40f, 8f, 8, 8, size, size, 64, 64);
-    }
+        PlayerInfo entry = null;
+        for (var playerEntry : handler.getOnlinePlayers()) {
+            if (playerEntry.getProfile().name() != null && playerEntry.getProfile().name().equals(playerName)) {
+                entry = playerEntry;
+                break;
+            }
+        }
 
-    private static void blitNonAtlas(
-        GuiGraphics g,
-        ResourceLocation texture,
-        int x,
-        int y,
-        float u,
-        float v,
-        int uWidth,
-        int vHeight,
-        int width,
-        int height,
-        int textureWidth,
-        int textureHeight
-    ) {
+        if (entry == null) {
+            return null;
+        }
+
         try {
-            try {
-                var tm = Minecraft.getInstance().getTextureManager();
-                var at = tm.getTexture(texture);
-                if (at != null) {
-                    RenderSystem.setShaderTexture(0, at.getTextureView());
-                }
-            } catch (Throwable ignored) {}
-
-            g.blit(RenderPipelines.GUI_TEXTURED, texture, x, y, u, v, width, height, uWidth, vHeight, textureWidth, textureHeight, 0xFFFFFFFF);
-        } catch (Throwable t) {
-            g.blit(texture, x, y, (int) u, (int) v, width, height, textureWidth, textureHeight);
+            var skin = entry.getSkin();
+            if (skin == null || skin.body() == null) {
+                return null;
+            }
+            ResourceLocation texture = skin.body().texturePath();
+            return texture != null && !texture.equals(FALLBACK_SKIN) ? texture : null;
+        } catch (Exception ignored) {
+            return null;
         }
     }
 
-    private void drawLegendItem(GuiGraphics graphics, net.minecraft.client.gui.Font font, int x, int y, int color, Component text) {
-        int squareSize = 6;
-        int squareY = y + (font.lineHeight - squareSize) / 2;
-        graphics.fill(x, squareY, x + squareSize, squareY + squareSize, 0xFF000000 | color);
-        graphics.fill(x + 1, squareY + 1, x + squareSize - 1, squareY + squareSize - 1, color);
-        graphics.drawString(font, text, x + 10, y, 0xFFFFFF, false);
+    private void drawPlayerHead(GuiGraphics context, int x, int y, int size, String playerName) {
+        ResourceLocation texture = getPlayerSkinTexture(playerName);
+        blitNonAtlas(context, texture, x, y, 8f, 8f, 8, 8, size, size, 64, 64);
+        blitNonAtlas(context, texture, x, y, 40f, 8f, 8, 8, size, size, 64, 64);
     }
 
     private void drawSimpleTooltip(GuiGraphics graphics, List<Component> lines, int mouseX, int mouseY) {
@@ -1196,12 +2304,25 @@ public class ChunkMapScreen extends Screen {
         int boxH = lines.size() * lineHeight + padding * 2;
 
         int x = mouseX + 12;
-        int y = mouseY + 12;
-
-        if (x + boxW > this.width) x = this.width - boxW - 2;
-        if (y + boxH > this.height) y = this.height - boxH - 2;
-        if (x < 2) x = 2;
-        if (y < 2) y = 2;
+        int y = mouseY - 12;
+        if (x + boxW > this.width) {
+            x = mouseX - 12 - boxW;
+        }
+        if (y + boxH > this.height) {
+            y = mouseY - 12 - boxH;
+        }
+        if (x < 2) {
+            x = 2;
+        }
+        if (y < 2) {
+            y = 2;
+        }
+        if (x + boxW > this.width) {
+            x = Math.max(2, this.width - boxW - 2);
+        }
+        if (y + boxH > this.height) {
+            y = Math.max(2, this.height - boxH - 2);
+        }
 
         int bg = 0xF0100010;
         int border = 0x505000FF;
@@ -1220,508 +2341,40 @@ public class ChunkMapScreen extends Screen {
         }
     }
 
-    private void buildTopBoxButtons() {
-        topBoxButtons.forEach(this::removeWidget);
-        topBoxButtons.clear();
-
-        if (clientConfig == null) {
-            clientConfig = ClientConfig.load();
+    private static void blitNonAtlas(
+        GuiGraphics g,
+        ResourceLocation texture,
+        int x,
+        int y,
+        float u,
+        float v,
+        int uWidth,
+        int vHeight,
+        int width,
+        int height,
+        int textureWidth,
+        int textureHeight
+    ) {
+        try {
+            g.blit(RenderPipelines.GUI_TEXTURED, texture, x, y, u, v, width, height, uWidth, vHeight, textureWidth, textureHeight, 0xFFFFFFFF);
+        } catch (Throwable t) {
+            g.blit(texture, x, y, (int) u, (int) v, width, height, textureWidth, textureHeight);
         }
-
-        ChunkMapLayoutPreset layoutPreset = ChunkMapLayoutPreset.fromConfig(clientConfig);
-        boolean verticalButtonBar = layoutPreset.isVerticalButtonBar();
-
-        String uiLabel = switch (layoutPreset) {
-            case TOP -> "UI";
-            case LEFT -> "UI 2";
-            case RIGHT -> "UI 3";
-            case BOTTOM -> "UI 4";
-            case TOP_SWAP -> "UI 5";
-            case LEFT_SWAP -> "UI 6";
-            case RIGHT_SWAP -> "UI 7";
-            case BOTTOM_SWAP -> "UI 8";
-        };
-
-        int buttonWidth = TOPBOX_BUTTON_WIDTH;
-        int buttonHeight = TOPBOX_BUTTON_HEIGHT;
-        int numButtons = TOPBOX_BUTTON_COUNT;
-        int spacing;
-        int startX;
-        int startY;
-
-        if (!verticalButtonBar) {
-            int totalButtonsWidth = numButtons * buttonWidth;
-            int availableSpace = topBoxWidth - totalButtonsWidth;
-            spacing = availableSpace / (numButtons + 1);
-            startX = topBoxX + spacing;
-            startY = topBoxY + (topBoxHeight - buttonHeight) / 2;
-        } else {
-            int availableSpace = topBoxHeight - (numButtons * buttonHeight);
-            spacing = availableSpace > 0 ? (availableSpace / (numButtons + 1)) : 2;
-            spacing = Math.max(2, spacing);
-            startX = topBoxX + (topBoxWidth - buttonWidth) / 2;
-            startY = topBoxY + spacing;
-        }
-        
-        infoButton = Button.builder(
-            Component.literal("Info"),
-            btn -> {
-                this.minecraft.setScreen(new ChunkloaderMenuScreen(this));
-            })
-            .bounds(startX, startY, buttonWidth, buttonHeight)
-            .build();
-        infoButton.setMessage(Component.literal("Info").withStyle(ChatFormatting.WHITE));
-        topBoxButtons.add(infoButton);
-        this.addRenderableWidget(infoButton);
-        
-        int helpButtonX = verticalButtonBar ? startX : (startX + buttonWidth + spacing);
-        int helpButtonY = verticalButtonBar ? (startY + (buttonHeight + spacing) * 1) : startY;
-        Button helpButton = Button.builder(
-            Component.literal("Help"),
-            btn -> {
-                this.minecraft.setScreen(new ChunkMapHelpScreen(this));
-            })
-            .bounds(helpButtonX, helpButtonY, buttonWidth, buttonHeight)
-            .build();
-        helpButton.setMessage(Component.literal("Help").withStyle(ChatFormatting.WHITE));
-        topBoxButtons.add(helpButton);
-        this.addRenderableWidget(helpButton);
-
-        int listButtonX = verticalButtonBar ? startX : (startX + (buttonWidth + spacing) * 2);
-        int listButtonY = verticalButtonBar ? (startY + (buttonHeight + spacing) * 2) : startY;
-        Button listButton = Button.builder(
-            Component.literal("List"),
-            btn -> {
-                ChunkloaderNetworking.requestDisabledChunkloadersList();
-            })
-            .bounds(listButtonX, listButtonY, buttonWidth, buttonHeight)
-            .build();
-        listButton.setMessage(Component.literal("List").withStyle(ChatFormatting.WHITE));
-        topBoxButtons.add(listButton);
-        this.addRenderableWidget(listButton);
-        
-        int layoutButtonX = verticalButtonBar ? startX : (startX + (buttonWidth + spacing) * 3);
-        int layoutButtonY = verticalButtonBar ? (startY + (buttonHeight + spacing) * 3) : startY;
-        Button layoutButton = Button.builder(
-                Component.literal(uiLabel),
-                btn -> cycleLayoutPreset())
-            .bounds(layoutButtonX, layoutButtonY, buttonWidth, buttonHeight)
-            .build();
-        layoutButton.setMessage(Component.literal(uiLabel).withStyle(ChatFormatting.WHITE));
-        topBoxButtons.add(layoutButton);
-        this.addRenderableWidget(layoutButton);
-
-        int deleteButtonX = verticalButtonBar ? startX : (startX + (buttonWidth + spacing) * 4);
-        int deleteButtonY = verticalButtonBar ? (startY + (buttonHeight + spacing) * 4) : startY;
-        Button deleteButton = Button.builder(
-            Component.literal("Delete"),
-            btn -> {
-                this.minecraft.setScreen(new ChunkloaderConfirmationScreen(
-                    this,
-                    Component.literal("Delete Chunkloader?").withStyle(ChatFormatting.RED, ChatFormatting.BOLD),
-                    Component.literal("This will permanently delete this chunkloader.\nThis action cannot be undone!"),
-                    () -> {
-                        ChunkloaderNetworking.sendAction(
-                            ChunkloaderActionPayload.Action.DELETE,
-                            data.fakeplayerChunkX(),
-                            data.fakeplayerChunkZ(),
-                            0
-                        );
-                        this.minecraft.setScreen(null);
-                    },
-                    null
-                ));
-            })
-            .bounds(deleteButtonX, deleteButtonY, buttonWidth, buttonHeight)
-            .build();
-        deleteButton.setMessage(Component.literal("Delete").withStyle(ChatFormatting.RED));
-        topBoxButtons.add(deleteButton);
-        this.addRenderableWidget(deleteButton);
     }
 
-    private void buildActionButtons() {
-        actionButtons.forEach(this::removeWidget);
-        actionButtons.clear();
-        actionButtonYOffset.clear();
-        buttonOriginalActiveState.clear();
-        actionHeaderLayouts.clear();
-        actionContentHeight = 0;
-        if (panelWidth <= 0) {
-            return;
-        }
-        int buttonWidth = panelWidth - 16;
-        int buttonX = panelX + 8;
-
-        int cursorY = 0;
-        int gap = ACTION_ROW_GAP;
-        int headerHeight = this.font.lineHeight + 4;
-
-        boolean generalHeaderMatches = actionSearchMatches("General");
-        String enableLabelRaw = data.enabled()
-            ? (data.allowMobSpawning() ? "Disable Fakeplayer" : "Disable Chunkplayer")
-            : (data.allowMobSpawning() ? "Enable Fakeplayer" : "Enable Chunkplayer");
-        boolean enableButtonMatches = actionSearchMatches(enableLabelRaw);
-        boolean showEnableButton = generalHeaderMatches || enableButtonMatches;
-
-        Button enableButton = Button.builder(
-            data.enabled()
-                ? (data.allowMobSpawning() ? Component.literal("Disable Fakeplayer") : Component.literal("Disable Chunkplayer"))
-                : (data.allowMobSpawning() ? Component.literal("Enable Fakeplayer") : Component.literal("Enable Chunkplayer")),
-            btn -> {
-                ChunkloaderNetworking.sendAction(
-                ChunkloaderActionPayload.Action.TOGGLE_ENABLED,
-                data.fakeplayerChunkX(),
-                data.fakeplayerChunkZ(),
-                0
-                );
-                if (data.enabled()) {
-                    Minecraft.getInstance().setScreen(null);
-                }
-            })
-            .bounds(buttonX, 0, buttonWidth, 20)
-            .build();
-        if (data.enabled()) {
-            enableButton.setMessage((data.allowMobSpawning() ? Component.literal("Disable Fakeplayer") : Component.literal("Disable Chunkplayer")).withStyle(ChatFormatting.RED));
-        } else {
-            enableButton.setMessage((data.allowMobSpawning() ? Component.literal("Enable Fakeplayer") : Component.literal("Enable Chunkplayer")).withStyle(ChatFormatting.GREEN));
-        }
-
-        if (showEnableButton) {
-            actionButtons.add(enableButton);
-            actionButtonYOffset.put(enableButton, cursorY);
-            this.addRenderableWidget(enableButton);
-            cursorY += ACTION_BUTTON_HEIGHT + gap;
-        }
-
-        String radiusHeaderRaw = data.allowMobSpawning() ? "Simulation distance" : "Radius";
-        boolean radiusHeaderMatches = actionSearchMatches(radiusHeaderRaw);
-        boolean radiusDownMatches = actionSearchMatches(data.allowMobSpawning() ? "SD -1" : "Radius -1");
-        boolean radiusUpMatches = actionSearchMatches(data.allowMobSpawning() ? "SD +1" : "Radius +1");
-        boolean showRadiusRow = radiusHeaderMatches || radiusDownMatches || radiusUpMatches;
-
-        boolean modeHeaderMatches = actionSearchMatches("Mode");
-        boolean mobButtonMatches = actionSearchMatches("mob spawning");
-        boolean showModeHeader = modeHeaderMatches || mobButtonMatches || showRadiusRow;
-        if (showModeHeader) {
-            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Component.literal("Mode").withStyle(ChatFormatting.GRAY)));
-            cursorY += headerHeight + gap;
-        }
-
-        Button mobButton = Button.builder(
-            data.allowMobSpawning()
-                ? Component.literal("Disable mob spawning")
-                : Component.literal("Enable mob spawning"),
-            btn -> ChunkloaderNetworking.sendAction(
-                ChunkloaderActionPayload.Action.TOGGLE_MOB_SPAWNING,
-                data.fakeplayerChunkX(),
-                data.fakeplayerChunkZ(),
-                0
-            ))
-            .bounds(buttonX, 0, buttonWidth, 20)
-            .build();
-        if (data.allowMobSpawning()) {
-            mobButton.setMessage(Component.literal("Disable mob spawning").withStyle(ChatFormatting.BLUE));
-        } else {
-            mobButton.setMessage(Component.literal("Enable mob spawning").withStyle(ChatFormatting.GREEN));
-        }
-
-        if (modeHeaderMatches || mobButtonMatches) {
-            actionButtons.add(mobButton);
-            actionButtonYOffset.put(mobButton, cursorY);
-            this.addRenderableWidget(mobButton);
-            cursorY += ACTION_BUTTON_HEIGHT + gap;
-        }
-
-        boolean showRadiusButtons = modeHeaderMatches || showRadiusRow;
-
-        int radiusY = 0;
-        int halfWidth = (buttonWidth - 4) / 2;
-        boolean isFakePlayer = data.allowMobSpawning();
-        boolean canDecrease = data.chunkRadius() > 0;
-        boolean canIncrease = data.canIncreaseRadius();
-        
-        String radiusDownLabel = isFakePlayer ? "SD -1" : "Radius -1";
-        Button radiusDown = Button.builder(
-            Component.literal(radiusDownLabel),
-            btn -> {
-                if (canDecrease) {
-                    ChunkloaderNetworking.sendAction(
-                        ChunkloaderActionPayload.Action.RADIUS_DECREMENT,
-                        data.fakeplayerChunkX(),
-                        data.fakeplayerChunkZ(),
-                        1
-                    );
-                }
-            })
-            .bounds(buttonX, radiusY, halfWidth, 20)
-            .build();
-        if (!canDecrease) {
-            radiusDown.active = false;
-            radiusDown.setMessage(Component.literal(radiusDownLabel).withStyle(ChatFormatting.DARK_GRAY));
-        }
-
-        if (showRadiusButtons) {
-            actionButtons.add(radiusDown);
-            actionButtonYOffset.put(radiusDown, cursorY);
-            this.addRenderableWidget(radiusDown);
-        }
-
-        String radiusUpLabel = isFakePlayer ? "SD +1" : "Radius +1";
-        Button radiusUp = Button.builder(
-            Component.literal(radiusUpLabel),
-            btn -> {
-                if (canIncrease) {
-                    ChunkloaderNetworking.sendAction(
-                        ChunkloaderActionPayload.Action.RADIUS_INCREMENT,
-                        data.fakeplayerChunkX(),
-                        data.fakeplayerChunkZ(),
-                        1
-                    );
-                }
-            })
-            .bounds(buttonX + halfWidth + 4, radiusY, halfWidth, 20)
-            .build();
-        if (!canIncrease) {
-            radiusUp.active = false;
-            radiusUp.setMessage(Component.literal(radiusUpLabel).withStyle(ChatFormatting.DARK_GRAY));
-        }
-
-        if (showRadiusButtons) {
-            actionButtons.add(radiusUp);
-            actionButtonYOffset.put(radiusUp, cursorY);
-            this.addRenderableWidget(radiusUp);
-            cursorY += ACTION_BUTTON_HEIGHT + gap;
-        }
-
-        boolean renameMatches = actionSearchMatches("Rename");
-        boolean showHideNameMatches = actionSearchMatches("Show name") || actionSearchMatches("Hide name");
-
-        Button renameButton = Button.builder(
-            Component.literal("Rename"),
-            btn -> {
-                this.minecraft.setScreen(new RenameChunkloaderScreen(
-                    this,
-                    data.fakeplayerChunkX(),
-                    data.fakeplayerChunkZ(),
-                    data.displayName()
-                ));
-            })
-            .bounds(buttonX, 0, buttonWidth, 20)
-            .build();
-        renameButton.setMessage(Component.literal("Rename").withStyle(ChatFormatting.WHITE));
-
-        int nameVisibleY = 0;
-        Button nameVisibleButton = Button.builder(
-            data.nameVisible()
-                ? Component.literal("Hide name")
-                : Component.literal("Show name"),
-            btn -> ChunkloaderNetworking.sendAction(
-                ChunkloaderActionPayload.Action.TOGGLE_NAME_VISIBLE,
-                data.fakeplayerChunkX(),
-                data.fakeplayerChunkZ(),
-                0
-            ))
-            .bounds(buttonX, nameVisibleY, buttonWidth, 20)
-            .build();
-        if (data.nameVisible()) {
-            nameVisibleButton.setMessage(Component.literal("Hide name").withStyle(ChatFormatting.WHITE));
-        } else {
-            nameVisibleButton.setMessage(Component.literal("Show name").withStyle(ChatFormatting.WHITE));
-        }
-
-        boolean hideOptionsHeaderMatches = actionSearchMatches("Hide options");
-        boolean hideOtherDotsMatches = actionSearchMatches("Hide other dots") || actionSearchMatches("Show other dots");
-        boolean showHideOptionsSection = hideOptionsHeaderMatches || hideOtherDotsMatches || showHideNameMatches;
-        if (showHideOptionsSection) {
-            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Component.literal("Hide options").withStyle(ChatFormatting.GRAY)));
-            cursorY += headerHeight + gap;
-        }
-
-        if (showHideOptionsSection) {
-            actionButtons.add(nameVisibleButton);
-            actionButtonYOffset.put(nameVisibleButton, cursorY);
-            this.addRenderableWidget(nameVisibleButton);
-            cursorY += ACTION_BUTTON_HEIGHT + gap;
-        }
-
-        int hideOtherDotsY = 0;
-        Button hideOtherDotsButton = Button.builder(
-            data.hideOtherDots()
-                ? Component.literal("Show other dots")
-                : Component.literal("Hide other dots"),
-            btn -> ChunkloaderNetworking.sendAction(
-                ChunkloaderActionPayload.Action.TOGGLE_HIDE_OTHER_DOTS,
-                data.fakeplayerChunkX(),
-                data.fakeplayerChunkZ(),
-                0
-            ))
-            .bounds(buttonX, hideOtherDotsY, buttonWidth, 20)
-            .build();
-        if (data.hideOtherDots()) {
-            hideOtherDotsButton.setMessage(Component.literal("Show other dots").withStyle(ChatFormatting.WHITE));
-        } else {
-            hideOtherDotsButton.setMessage(Component.literal("Hide other dots").withStyle(ChatFormatting.WHITE));
-        }
-
-        if (showHideOptionsSection) {
-            actionButtons.add(hideOtherDotsButton);
-            actionButtonYOffset.put(hideOtherDotsButton, cursorY);
-            this.addRenderableWidget(hideOtherDotsButton);
-            cursorY += ACTION_BUTTON_HEIGHT + gap;
-        }
-
-        boolean visualizationHeaderMatches = actionSearchMatches("Visualization");
-        boolean visualizeMatches = actionSearchMatches("visualization");
-        boolean visualize3dMatches = actionSearchMatches("3D");
-        boolean showVisualizationSection = visualizationHeaderMatches || visualizeMatches || visualize3dMatches;
-        if (showVisualizationSection) {
-            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Component.literal("Visualization").withStyle(ChatFormatting.GRAY)));
-            cursorY += headerHeight + gap;
-        }
-
-        int visualizeY = 0;
-        Button visualizeButton = Button.builder(
-            data.visualizeActive()
-                ? Component.literal("Disable visualization")
-                : Component.literal("Enable visualization"),
-            btn -> ChunkloaderNetworking.sendAction(
-                ChunkloaderActionPayload.Action.TOGGLE_VISUALIZE,
-                data.fakeplayerChunkX(),
-                data.fakeplayerChunkZ(),
-                0
-            ))
-            .bounds(buttonX, visualizeY, buttonWidth, 20)
-            .build();
-        if (data.visualizeActive()) {
-            visualizeButton.setMessage(Component.literal("Disable visualization").withStyle(ChatFormatting.WHITE));
-        } else {
-            visualizeButton.setMessage(Component.literal("Enable visualization").withStyle(ChatFormatting.WHITE));
-        }
-
-        if (showVisualizationSection) {
-            actionButtons.add(visualizeButton);
-            actionButtonYOffset.put(visualizeButton, cursorY);
-            this.addRenderableWidget(visualizeButton);
-            cursorY += ACTION_BUTTON_HEIGHT + gap;
-        }
-
-        int visualize3DY = 0;
-        Button visualize3DButton = Button.builder(
-            data.visualize3DActive()
-                ? Component.literal("Disable 3D visualization")
-                : Component.literal("Enable 3D visualization"),
-            btn -> ChunkloaderNetworking.sendAction(
-                ChunkloaderActionPayload.Action.TOGGLE_VISUALIZE3D,
-                data.fakeplayerChunkX(),
-                data.fakeplayerChunkZ(),
-                0
-            ))
-            .bounds(buttonX, visualize3DY, buttonWidth, 20)
-            .build();
-        if (data.visualize3DActive()) {
-            visualize3DButton.setMessage(Component.literal("Disable 3D visualization").withStyle(ChatFormatting.WHITE));
-        } else {
-            visualize3DButton.setMessage(Component.literal("Enable 3D visualization").withStyle(ChatFormatting.WHITE));
-        }
-
-        if (showVisualizationSection) {
-            actionButtons.add(visualize3DButton);
-            actionButtonYOffset.put(visualize3DButton, cursorY);
-            this.addRenderableWidget(visualize3DButton);
-            cursorY += ACTION_BUTTON_HEIGHT + gap;
-        }
-
-        boolean settingsHeaderMatches = actionSearchMatches("Settings");
-        boolean panelColorMatches = actionSearchMatches("Panel color");
-        boolean keybindMatches = actionSearchMatches("Keybinds");
-        boolean showSettingsSection = settingsHeaderMatches || panelColorMatches || keybindMatches || renameMatches;
-        if (showSettingsSection) {
-            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Component.literal("Settings").withStyle(ChatFormatting.GRAY)));
-            cursorY += headerHeight + gap;
-        }
-
-        if (showSettingsSection) {
-            actionButtons.add(renameButton);
-            actionButtonYOffset.put(renameButton, cursorY);
-            this.addRenderableWidget(renameButton);
-            cursorY += ACTION_BUTTON_HEIGHT + gap;
-        }
-        
-        int panelColorY = 0;
-        Button panelColorButton = Button.builder(
-            Component.literal("Panel color"),
-            btn -> {
-                if (clientConfig == null) {
-                    clientConfig = ClientConfig.load();
-                }
-                this.minecraft.setScreen(new PanelColorScreen(this, clientConfig));
-            })
-            .bounds(buttonX, panelColorY, buttonWidth, 20)
-            .build();
-        panelColorButton.setMessage(Component.literal("Panel color").withStyle(ChatFormatting.WHITE));
-
-        if (showSettingsSection) {
-            actionButtons.add(panelColorButton);
-            actionButtonYOffset.put(panelColorButton, cursorY);
-            this.addRenderableWidget(panelColorButton);
-            cursorY += ACTION_BUTTON_HEIGHT + gap;
-        }
-        
-        int keybindY = 0;
-        Button keybindButton = Button.builder(
-            Component.literal("Keybinds"),
-            btn -> {
-                this.minecraft.setScreen(new KeybindConfigScreen(this));
-            })
-            .bounds(buttonX, keybindY, buttonWidth, 20)
-            .build();
-        keybindButton.setMessage(Component.literal("Keybinds").withStyle(ChatFormatting.WHITE));
-
-        if (showSettingsSection) {
-            actionButtons.add(keybindButton);
-            actionButtonYOffset.put(keybindButton, cursorY);
-            this.addRenderableWidget(keybindButton);
-            cursorY += ACTION_BUTTON_HEIGHT + gap;
-        }
-
-        actionContentHeight = cursorY > 0 ? Math.max(0, cursorY - gap) : 0;
-        
-        int resetY = footerRowY > 0 ? footerRowY : (panelY + panelHeight + 8);
-        resetButton = Button.builder(
-            Component.literal("Reset to defaults"),
-            btn -> {
-                this.minecraft.setScreen(new ChunkloaderConfirmationScreen(
-                    this,
-                    Component.literal("Reset to Defaults?").withStyle(ChatFormatting.RED, ChatFormatting.BOLD),
-                    Component.literal("This will reset all settings to default values.\nThis action cannot be undone!"),
-                    () -> {
-                        ChunkloaderNetworking.sendAction(
-                ChunkloaderActionPayload.Action.RESET_TO_DEFAULTS,
-                data.fakeplayerChunkX(),
-                data.fakeplayerChunkZ(),
-                            0
-                        );
-                        if (clientConfig != null) {
-                            clientConfig.resetToDefaults();
-                        }
-                    },
-                    null
-                ));
-            })
-            .bounds(buttonX, resetY, buttonWidth, 20)
-            .build();
-        resetButton.setMessage(Component.literal("Reset to defaults").withStyle(ChatFormatting.WHITE));
-        this.addRenderableWidget(resetButton);
-
-        buttonsNeedUpdate = true;
-    }
-    
-    @Override
-    public boolean isPauseScreen() {
-        return false;
+    private void drawSeparator(GuiGraphics context, int x, int y, int width) {
+        context.fill(x, y, x + width, y + 1, 0x4A4A4A);
     }
 
-    private void drawChunkloaderPoints(GuiGraphics graphics, int mouseX, int mouseY) {
+    private void drawLegendItem(GuiGraphics context, Font renderer, int x, int y, int color, Component text) {
+        int squareSize = 6;
+        int squareY = y + (renderer.lineHeight - squareSize) / 2;
+        context.fill(x, squareY, x + squareSize, squareY + squareSize, 0xFF000000 | color);
+        context.fill(x + 1, squareY + 1, x + squareSize - 1, squareY + squareSize - 1, color);
+        context.drawString(renderer, text, x + 10, y, 0xFFFFFF, false);
+    }
+
+    private void drawChunkloaderPoints(GuiGraphics context, int mouseX, int mouseY) {
         int cellSize = CELL_SIZE;
         int gridInnerLeft = gridLeft + 1;
         int gridInnerTop = gridTop + 1;
@@ -1731,29 +2384,48 @@ public class ChunkMapScreen extends Screen {
         int halfMap = (data.mapWidth() - 1) / 2;
         int ownColumn = ownOffsetX + halfMap;
         int ownRow = ownOffsetZ + halfMap;
+        int n = data.mapWidth() - 1;
 
         if (ownColumn >= 0 && ownColumn < data.mapWidth() && ownRow >= 0 && ownRow < data.mapHeight()) {
-            int ownInnerChunkX = Math.floorMod(data.fakeplayerBlockX(), 16);
-            int ownInnerChunkZ = Math.floorMod(data.fakeplayerBlockZ(), 16);
+            int ownInnerChunkX = ((data.fakeplayerBlockX() % 16) + 16) % 16;
+            int ownInnerChunkZ = ((data.fakeplayerBlockZ() % 16) + 16) % 16;
 
-            int ownCellLeft = gridInnerLeft + ownColumn * cellSize;
-            int ownCellTop = gridInnerTop + ownRow * cellSize;
-            float ownPosInCellX = (ownInnerChunkX / 16.0f) * cellSize;
-            float ownPosInCellZ = (ownInnerChunkZ / 16.0f) * cellSize;
+            int ownPixelCol, ownPixelRow;
+            float ownSubX, ownSubZ;
+            switch (mapRotation) {
+                case 1 -> {
+                    ownPixelCol = n - ownRow; ownPixelRow = ownColumn;
+                    ownSubX = (1 - ownInnerChunkZ / 16.0f) * cellSize; ownSubZ = (ownInnerChunkX / 16.0f) * cellSize;
+                }
+                case 2 -> {
+                    ownPixelCol = n - ownColumn; ownPixelRow = n - ownRow;
+                    ownSubX = (1 - ownInnerChunkX / 16.0f) * cellSize; ownSubZ = (1 - ownInnerChunkZ / 16.0f) * cellSize;
+                }
+                case 3 -> {
+                    ownPixelCol = ownRow; ownPixelRow = n - ownColumn;
+                    ownSubX = (ownInnerChunkZ / 16.0f) * cellSize; ownSubZ = (1 - ownInnerChunkX / 16.0f) * cellSize;
+                }
+                default -> {
+                    ownPixelCol = ownColumn; ownPixelRow = ownRow;
+                    ownSubX = (ownInnerChunkX / 16.0f) * cellSize; ownSubZ = (ownInnerChunkZ / 16.0f) * cellSize;
+                }
+            }
 
-            int ownPointX = ownCellLeft + (int) ownPosInCellX;
-            int ownPointY = ownCellTop + (int) ownPosInCellZ;
+            int ownCellLeft = gridInnerLeft + ownPixelCol * cellSize;
+            int ownCellTop = gridInnerTop + ownPixelRow * cellSize;
+            int ownPointX = ownCellLeft + (int) ownSubX;
+            int ownPointY = ownCellTop + (int) ownSubZ;
 
             int ownPointColor = 0xFFFF0000;
             int ownPointSize = 3;
             int ownPointHalfSize = ownPointSize / 2;
 
-            graphics.fill(
+            context.fill(
                 ownPointX - ownPointHalfSize - 1, ownPointY - ownPointHalfSize - 1,
                 ownPointX + ownPointHalfSize + 1, ownPointY + ownPointHalfSize + 1,
                 0xFF000000
             );
-            graphics.fill(
+            context.fill(
                 ownPointX - ownPointHalfSize, ownPointY - ownPointHalfSize,
                 ownPointX + ownPointHalfSize, ownPointY + ownPointHalfSize,
                 ownPointColor
@@ -1764,53 +2436,73 @@ public class ChunkMapScreen extends Screen {
                 String ownTooltipText = data.fakeplayerName() != null ? data.fakeplayerName() :
                     String.format("%s at (%d, %d)", data.allowMobSpawning() ? "Fakeplayer" : "Chunkplayer",
                         data.fakeplayerChunkX(), data.fakeplayerChunkZ());
-                drawSimpleTooltip(graphics, List.of(Component.literal(ownTooltipText)), mouseX, mouseY);
+                pendingDotTooltip = List.of(Component.literal(ownTooltipText));
             }
         }
 
         if (data.otherChunkloaders() == null || data.otherChunkloaders().isEmpty()) {
             return;
         }
-        
-        if (data.hideOtherDots()) {
+
+        if (clientConfig.isHideOtherDots()) {
             return;
         }
-
-        int halfMapWidth = (data.mapWidth() - 1) / 2;
-        int halfMapHeight = (data.mapHeight() - 1) / 2;
 
         for (de.chunkloader.network.ChunkloaderPosition pos : data.otherChunkloaders()) {
             int offsetX = pos.chunkX() - data.centerChunkX();
             int offsetZ = pos.chunkZ() - data.centerChunkZ();
 
-            int column = offsetX + halfMapWidth;
-            int row = offsetZ + halfMapHeight;
+            int column = offsetX + halfMap;
+            int row = offsetZ + halfMap;
 
             if (column < 0 || column >= data.mapWidth() || row < 0 || row >= data.mapHeight()) {
                 continue;
             }
 
-            int innerChunkX = Math.floorMod(pos.blockX(), 16);
-            int innerChunkZ = Math.floorMod(pos.blockZ(), 16);
+            int innerChunkX = ((pos.blockX() % 16) + 16) % 16;
+            int innerChunkZ = ((pos.blockZ() % 16) + 16) % 16;
 
-            int cellLeft = gridInnerLeft + column * cellSize;
-            int cellTop = gridInnerTop + row * cellSize;
-            float posInCellX = (innerChunkX / 16.0f) * cellSize;
-            float posInCellZ = (innerChunkZ / 16.0f) * cellSize;
+            int pixelCol, pixelRow;
+            float subX, subZ;
+            switch (mapRotation) {
+                case 1 -> {
+                    pixelCol = n - row; pixelRow = column;
+                    subX = (1 - innerChunkZ / 16.0f) * cellSize; subZ = (innerChunkX / 16.0f) * cellSize;
+                }
+                case 2 -> {
+                    pixelCol = n - column; pixelRow = n - row;
+                    subX = (1 - innerChunkX / 16.0f) * cellSize; subZ = (1 - innerChunkZ / 16.0f) * cellSize;
+                }
+                case 3 -> {
+                    pixelCol = row; pixelRow = n - column;
+                    subX = (innerChunkZ / 16.0f) * cellSize; subZ = (1 - innerChunkX / 16.0f) * cellSize;
+                }
+                default -> {
+                    pixelCol = column; pixelRow = row;
+                    subX = (innerChunkX / 16.0f) * cellSize; subZ = (innerChunkZ / 16.0f) * cellSize;
+                }
+            }
 
-            int pointX = cellLeft + (int) posInCellX;
-            int pointY = cellTop + (int) posInCellZ;
+            int cellLeft = gridInnerLeft + pixelCol * cellSize;
+            int cellTop = gridInnerTop + pixelRow * cellSize;
+            int pointX = cellLeft + (int) subX;
+            int pointY = cellTop + (int) subZ;
 
-            int pointColor = pos.isFakeplayer() ? 0xFF55FF55 : 0xFF5996FF;
+            int pointColor;
+            if (pos.isFakeplayer()) {
+                pointColor = 0xFF55FF55;
+            } else {
+                pointColor = 0xFF5996FF;
+            }
             int pointSize = 3;
             int pointHalfSize = pointSize / 2;
 
-            graphics.fill(
+            context.fill(
                 pointX - pointHalfSize - 1, pointY - pointHalfSize - 1,
                 pointX + pointHalfSize + 1, pointY + pointHalfSize + 1,
                 0xFF000000
             );
-            graphics.fill(
+            context.fill(
                 pointX - pointHalfSize, pointY - pointHalfSize,
                 pointX + pointHalfSize, pointY + pointHalfSize,
                 pointColor
@@ -1820,13 +2512,14 @@ public class ChunkMapScreen extends Screen {
                 mouseY >= pointY - pointHalfSize - 2 && mouseY < pointY + pointHalfSize + 2) {
                 String tooltipText = pos.name() != null ? pos.name() :
                     String.format("%s at (%d, %d)", pos.isFakeplayer() ? "Fakeplayer" : "Chunkplayer", pos.chunkX(), pos.chunkZ());
-                drawSimpleTooltip(graphics, List.of(Component.literal(tooltipText)), mouseX, mouseY);
+                pendingDotTooltip = List.of(Component.literal(tooltipText));
             }
         }
     }
 
     private static class ChunkMapGrid implements AutoCloseable {
 
+        private static final int COLOR_BACKGROUND = 0xAA000000;
         private static final int COLOR_BORDER = 0xFF3A3A3A;
         static final int COLOR_LOADED = 0x55FF55;
         static final int COLOR_IN_RANGE = 0x5996FF;
@@ -1845,7 +2538,7 @@ public class ChunkMapScreen extends Screen {
         private final int gridInnerRight;
         private final int gridInnerBottom;
 
-        ChunkMapGrid(Level level, ChunkMapData data, int left, int top, int cellSize) {
+        ChunkMapGrid(ClientLevel world, ChunkMapData data, int left, int top, int cellSize, int rotation) {
             this.left = left;
             this.top = top;
             this.width = data.mapWidth() * cellSize + 2 * BORDER;
@@ -1862,6 +2555,7 @@ public class ChunkMapScreen extends Screen {
                 stateByOffset.put(pack(cell.offsetX(), cell.offsetZ()), cell);
             }
 
+            int n = data.mapWidth() - 1;
             for (int row = 0; row < data.mapHeight(); row++) {
                 for (int column = 0; column < data.mapWidth(); column++) {
                     int chunkX = data.topLeftChunkX() + column;
@@ -1881,10 +2575,18 @@ public class ChunkMapScreen extends Screen {
                         )
                     );
                     ChunkPos chunkPos = new ChunkPos(chunkX, chunkZ);
-                    int cellLeft = gridInnerLeft + column * cellSize;
-                    int cellTop = gridInnerTop + row * cellSize;
+
+                    int pixelCol, pixelRow;
+                    switch (rotation) {
+                        case 1 -> { pixelCol = n - row; pixelRow = column; }
+                        case 2 -> { pixelCol = n - column; pixelRow = n - row; }
+                        case 3 -> { pixelCol = row; pixelRow = n - column; }
+                        default -> { pixelCol = column; pixelRow = row; }
+                    }
+                    int cellLeft = gridInnerLeft + pixelCol * cellSize;
+                    int cellTop = gridInnerTop + pixelRow * cellSize;
                     this.cells.add(new Cell(
-                        level,
+                        world,
                         chunkPos,
                         state,
                         cellLeft,
@@ -1895,20 +2597,50 @@ public class ChunkMapScreen extends Screen {
                         gridInnerLeft,
                         gridInnerTop,
                         gridInnerRight,
-                        gridInnerBottom
+                        gridInnerBottom,
+                        rotation
                     ));
                 }
             }
         }
 
-        void render(GuiGraphics graphics, int mouseX, int mouseY) {
-            graphics.fill(left, top, left + width, top + BORDER, COLOR_BORDER);
-            graphics.fill(left, top + height - BORDER, left + width, top + height, COLOR_BORDER);
-            graphics.fill(left, top, left + BORDER, top + height, COLOR_BORDER);
-            graphics.fill(left + width - BORDER, top, left + width, top + height, COLOR_BORDER);
+        boolean applyMarkerStates(ChunkMapData newData) {
+            if (cells.isEmpty()) {
+                return false;
+            }
+            Map<Long, ChunkMapCell> stateByOffset = new HashMap<>();
+            for (ChunkMapCell cell : newData.cells()) {
+                stateByOffset.put(pack(cell.offsetX(), cell.offsetZ()), cell);
+            }
+            for (Cell cell : cells) {
+                int offsetX = cell.chunkPos.x - newData.centerChunkX();
+                int offsetZ = cell.chunkPos.z - newData.centerChunkZ();
+                ChunkMapCell state = stateByOffset.get(pack(offsetX, offsetZ));
+                if (state != null) {
+                    cell.applyMarkerState(state, newData);
+                }
+            }
+            return true;
+        }
+
+        void render(GuiGraphics context, int mouseX, int mouseY) {
+            context.fill(left, top, left + width, top + height, COLOR_BACKGROUND);
+
+            context.fill(left, top, left + width, top + BORDER, COLOR_BORDER);
+            context.fill(left, top + height - BORDER, left + width, top + height, COLOR_BORDER);
+            context.fill(left, top, left + BORDER, top + height, COLOR_BORDER);
+            context.fill(left + width - BORDER, top, left + width, top + height, COLOR_BORDER);
+
+            int scissorLeft = Math.max(left, gridInnerLeft);
+            int scissorTop = Math.max(top, gridInnerTop);
+            int scissorRight = Math.min(left + width, gridInnerRight);
+            int scissorBottom = Math.min(top + height, gridInnerBottom);
 
             for (Cell cell : cells) {
-                cell.render(graphics, mouseX, mouseY);
+                if (cell.left + cell.size >= scissorLeft && cell.left <= scissorRight &&
+                    cell.top + cell.size >= scissorTop && cell.top <= scissorBottom) {
+                    cell.render(context, mouseX, mouseY);
+                }
             }
         }
 
@@ -1930,35 +2662,38 @@ public class ChunkMapScreen extends Screen {
         }
 
         static long pack(int offsetX, int offsetZ) {
-            return ((long) offsetX << 32) | (offsetZ & 0xFFFFFFFFL);
+            return ((long)offsetX << 32) | (offsetZ & 0xFFFFFFFFL);
         }
 
         static class Cell implements AutoCloseable {
+
             private static final int COLOR_OCCUPIED = 0x88404040;
-            private static final int COLOR_LOADED_OVERLAY = 0x2687FF59;
+            private static final int COLOR_LOADED_OVERLAY = 0x6655CC55;
             private static final int COLOR_LOADED_OVERLAY_CHUNKPLAYER = 0x665555FF;
-            private static final int COLOR_SIMULATION_DISTANCE = 0x2687FF59;
+            private static final int COLOR_SIMULATION_DISTANCE = 0x6655CC55;
             private static final int COLOR_RANGE_OVERLAY = 0x1A3D7FFF;
             private static final int COLOR_RANGE_OVERLAY_DISABLED = 0x26FF5555;
-
             private final ChunkPos chunkPos;
-            private final ChunkMapCell state;
+            private ChunkMapCell state;
             private final int left;
             private final int top;
             private final int size;
-            private final ChunkMapData data;
+            private final int baseColor;
+            private final ChunkTileImage tileImage;
+            private ChunkMapData data;
             private final int gridLeft;
             private final int gridTop;
             private final int gridRight;
             private final int gridBottom;
 
-            Cell(Level level, ChunkPos chunkPos, ChunkMapCell state, int left, int top, int size, int sampleY,
-                 ChunkMapData data, int gridLeft, int gridTop, int gridRight, int gridBottom) {
+            Cell(ClientLevel world, ChunkPos chunkPos, ChunkMapCell state, int left, int top, int size, int sampleY, ChunkMapData data, int gridLeft, int gridTop, int gridRight, int gridBottom, int rotation) {
                 this.chunkPos = chunkPos;
                 this.state = state;
                 this.left = left;
                 this.top = top;
                 this.size = size;
+                this.baseColor = ((chunkPos.x + chunkPos.z) & 1) == 0 ? 0xFF1F1F1F : 0xFF242424;
+                this.tileImage = world != null ? new ChunkTileImage(world, chunkPos, sampleY, rotation) : null;
                 this.data = data;
                 this.gridLeft = gridLeft;
                 this.gridTop = gridTop;
@@ -1966,7 +2701,12 @@ public class ChunkMapScreen extends Screen {
                 this.gridBottom = gridBottom;
             }
 
-            void render(GuiGraphics graphics, int mouseX, int mouseY) {
+            void applyMarkerState(ChunkMapCell newState, ChunkMapData newData) {
+                this.state = newState;
+                this.data = newData;
+            }
+
+            void render(GuiGraphics context, int mouseX, int mouseY) {
                 int innerLeft = Math.max(gridLeft, left);
                 int innerTop = Math.max(gridTop, top);
                 int innerRight = Math.min(gridRight, left + size);
@@ -1979,7 +2719,37 @@ public class ChunkMapScreen extends Screen {
                 boolean isSimulatedOnly = state.simulatedByFakeplayer() && !state.loaded() && !state.occupiedByOther();
 
                 if (!isSimulatedOnly) {
-                    graphics.fill(innerLeft, innerTop, innerRight, innerBottom, 0x1A000000);
+                    context.fill(innerLeft, innerTop, innerRight, innerBottom, 0x33000000);
+                }
+
+                ResourceLocation textureId = null;
+                if (tileImage != null && innerRight > innerLeft && innerBottom > innerTop) {
+                    try {
+                        textureId = tileImage.getTextureId();
+                    } catch (Exception e) {
+                        textureId = null;
+                    }
+                }
+                int textureWidth = innerRight - innerLeft;
+                int textureHeight = innerBottom - innerTop;
+
+                if (textureId != null && textureWidth > 0 && textureHeight > 0) {
+                    context.blit(
+                        RenderPipelines.GUI_TEXTURED,
+                        textureId,
+                        innerLeft,
+                        innerTop,
+                        0.0f,
+                        0.0f,
+                        textureWidth,
+                        textureHeight,
+                        16,
+                        16,
+                        16,
+                        16
+                    );
+                } else {
+                    context.fill(innerLeft, innerTop, innerRight, innerBottom, baseColor);
                 }
 
                 int overlayWidth = innerRight - innerLeft;
@@ -1987,8 +2757,8 @@ public class ChunkMapScreen extends Screen {
                 if (overlayWidth > 0 && overlayHeight > 0) {
                     int srcX = innerLeft - left;
                     int srcY = innerTop - top;
-                    ChunkMapScreen.blitNonAtlas(
-                        graphics,
+                    context.blit(
+                        RenderPipelines.GUI_TEXTURED,
                         GRID_OVERLAY,
                         innerLeft,
                         innerTop,
@@ -1996,36 +2766,35 @@ public class ChunkMapScreen extends Screen {
                         srcY,
                         overlayWidth,
                         overlayHeight,
-                        overlayWidth,
-                        overlayHeight,
                         18,
                         18
                     );
                 }
 
+                if (!data.allowMobSpawning()) {
                 if (state.withinRange() && !state.loaded()) {
-                    int overlayColor = data.enabled() ? COLOR_RANGE_OVERLAY : COLOR_RANGE_OVERLAY_DISABLED;
-                    graphics.fill(innerLeft, innerTop, innerRight, innerBottom, overlayColor);
+                        int overlayColor = data.enabled() ? COLOR_RANGE_OVERLAY : COLOR_RANGE_OVERLAY_DISABLED;
+                        context.fill(innerLeft, innerTop, innerRight, innerBottom, overlayColor);
                 }
-
                 if (state.loaded() && !state.occupiedByOther()) {
-                    int loadedColor = data.allowMobSpawning()
-                        ? COLOR_LOADED_OVERLAY
-                        : COLOR_LOADED_OVERLAY_CHUNKPLAYER;
-                    graphics.fill(innerLeft, innerTop, innerRight, innerBottom, loadedColor);
+                        int loadedColor = data.allowMobSpawning()
+                            ? COLOR_LOADED_OVERLAY
+                            : COLOR_LOADED_OVERLAY_CHUNKPLAYER;
+                        context.fill(innerLeft, innerTop, innerRight, innerBottom, loadedColor);
+                    }
                 }
 
                 if (state.simulatedByFakeplayer()) {
-                    graphics.fill(innerLeft, innerTop, innerRight, innerBottom, COLOR_SIMULATION_DISTANCE);
+                    context.fill(innerLeft, innerTop, innerRight, innerBottom, COLOR_SIMULATION_DISTANCE);
                 }
 
                 if (state.occupiedByOther()) {
                     if (data.allowMobSpawning()) {
                         if (!state.simulatedByFakeplayer()) {
-                            graphics.fill(innerLeft, innerTop, innerRight, innerBottom, COLOR_OCCUPIED);
+                            context.fill(innerLeft, innerTop, innerRight, innerBottom, COLOR_OCCUPIED);
                         }
                     } else {
-                        graphics.fill(innerLeft, innerTop, innerRight, innerBottom, COLOR_OCCUPIED);
+                        context.fill(innerLeft, innerTop, innerRight, innerBottom, COLOR_OCCUPIED);
                     }
                 }
 
@@ -2035,15 +2804,13 @@ public class ChunkMapScreen extends Screen {
                     if (hoverWidth > 0 && hoverHeight > 0) {
                         int srcX = innerLeft - left;
                         int srcY = innerTop - top;
-                        ChunkMapScreen.blitNonAtlas(
-                            graphics,
+                        context.blit(
+                            RenderPipelines.GUI_TEXTURED,
                             HOVER_OVERLAY,
                             innerLeft,
                             innerTop,
                             srcX,
                             srcY,
-                            hoverWidth,
-                            hoverHeight,
                             hoverWidth,
                             hoverHeight,
                             18,
@@ -2060,15 +2827,22 @@ public class ChunkMapScreen extends Screen {
                 int innerBottom = Math.min(gridBottom, top + size);
 
                 return mouseX >= innerLeft && mouseX < innerRight &&
-                    mouseY >= innerTop && mouseY < innerBottom;
+                       mouseY >= innerTop && mouseY < innerBottom;
             }
 
             List<Component> buildTooltip() {
                 List<Component> tooltip = new ArrayList<>();
                 tooltip.add(Component.literal("Chunk X:" + chunkPos.x + " Z:" + chunkPos.z));
 
-                if (state.loaded()) {
-                    tooltip.add(Component.literal("Loaded by this chunkloader"));
+                if (state.occupiedByOther()) {
+                    String loaderName = state.simulatingFakeplayerName();
+                    if (loaderName != null && !loaderName.isBlank()) {
+                        tooltip.add(Component.literal("Loaded by " + loaderName));
+                    } else {
+                        tooltip.add(Component.literal("Loaded by another loader"));
+                    }
+                } else if (state.loaded()) {
+                    tooltip.add(Component.literal("Loaded by this player"));
                 } else if (state.withinRange()) {
                     if (!data.allowMobSpawning()) {
                         tooltip.add(Component.literal("Inside radius (enable to load)"));
@@ -2076,11 +2850,7 @@ public class ChunkMapScreen extends Screen {
                         tooltip.add(Component.literal("Inside simulation distance (enable to load)"));
                     }
                 } else {
-                    tooltip.add(Component.literal("Outside of this chunkloader"));
-                }
-
-                if (state.occupiedByOther() && state.loaded() && !state.simulatedByFakeplayer()) {
-                    tooltip.add(Component.literal("Loaded by a different chunkloader"));
+                    tooltip.add(Component.literal("Outside of this player"));
                 }
 
                 return ImmutableList.copyOf(tooltip);
@@ -2088,7 +2858,533 @@ public class ChunkMapScreen extends Screen {
 
             @Override
             public void close() {
+                if (tileImage != null) {
+                    tileImage.close();
+                }
             }
         }
     }
+
+    private void buildTopBoxButtons() {
+        topBoxButtons.forEach(this::removeWidget);
+        topBoxButtons.clear();
+
+        if (clientConfig == null) {
+            clientConfig = ClientConfig.load();
+        }
+
+        ChunkMapLayoutPreset layoutPreset = ChunkMapLayoutPreset.fromConfig(clientConfig);
+        boolean vertical = layoutPreset.isVerticalButtonBar();
+
+        int buttonWidth = TOPBOX_BUTTON_WIDTH;
+        int buttonHeight = TOPBOX_BUTTON_HEIGHT;
+        int numButtons = TOPBOX_BUTTON_COUNT;
+        int spacing;
+        int startX;
+        int startY;
+
+        if (vertical) {
+            int availableSpace = topBoxHeight - (numButtons * buttonHeight);
+            spacing = availableSpace > 0 ? (availableSpace / (numButtons + 1)) : 2;
+            spacing = Math.max(2, spacing);
+            startX = topBoxX + (topBoxWidth - buttonWidth) / 2;
+            startY = topBoxY + spacing;
+        } else {
+            int totalButtonsWidth = numButtons * buttonWidth;
+            int availableSpace = topBoxWidth - totalButtonsWidth;
+            spacing = availableSpace / (numButtons + 1);
+            startX = topBoxX + spacing;
+            startY = topBoxY + (topBoxHeight - buttonHeight) / 2;
+        }
+
+        int infoX = vertical ? startX : startX;
+        int infoY = vertical ? startY : startY;
+
+        int helpX = vertical ? startX : (startX + buttonWidth + spacing);
+        int helpY = vertical ? (startY + (buttonHeight + spacing) * 1) : startY;
+
+        int listX = vertical ? startX : (startX + (buttonWidth + spacing) * 2);
+        int listY = vertical ? (startY + (buttonHeight + spacing) * 2) : startY;
+
+        int uiNumber = layoutPreset.ordinal() + 1;
+        String uiLabel = uiNumber == 1 ? "UI" : "UI " + uiNumber;
+        int uiX = vertical ? startX : (startX + (buttonWidth + spacing) * 3);
+        int uiY = vertical ? (startY + (buttonHeight + spacing) * 3) : startY;
+
+        int deleteX = vertical ? startX : (startX + (buttonWidth + spacing) * 4);
+        int deleteY = vertical ? (startY + (buttonHeight + spacing) * 4) : startY;
+
+        infoButton = Button.builder(
+            Component.literal("Info"),
+            btn -> {
+                openChildScreen(new ChunkloaderMenuScreen(this));
+            })
+            .bounds(infoX, infoY, buttonWidth, buttonHeight)
+            .build();
+        infoButton.setMessage(Component.literal("Info").withStyle(net.minecraft.ChatFormatting.WHITE));
+        topBoxButtons.add(infoButton);
+        this.addRenderableWidget(infoButton);
+
+        Button helpButton = Button.builder(
+            Component.literal("Help"),
+            btn -> {
+                openChildScreen(new ChunkMapHelpScreen(this));
+            })
+            .bounds(helpX, helpY, buttonWidth, buttonHeight)
+            .build();
+        helpButton.setMessage(Component.literal("Help").withStyle(net.minecraft.ChatFormatting.WHITE));
+        topBoxButtons.add(helpButton);
+        this.addRenderableWidget(helpButton);
+
+        Button listButton = Button.builder(
+            Component.literal("List"),
+            btn -> {
+                ChunkloaderClientNetworking.requestDisabledChunkloadersList();
+            })
+            .bounds(listX, listY, buttonWidth, buttonHeight)
+            .build();
+        listButton.setMessage(Component.literal("List").withStyle(net.minecraft.ChatFormatting.WHITE));
+        topBoxButtons.add(listButton);
+        this.addRenderableWidget(listButton);
+
+        Button uiButton = Button.builder(
+            Component.literal(uiLabel),
+            btn -> cycleLayoutPreset())
+            .bounds(uiX, uiY, buttonWidth, buttonHeight)
+            .build();
+        uiButton.setMessage(Component.literal(uiLabel).withStyle(net.minecraft.ChatFormatting.WHITE));
+        topBoxButtons.add(uiButton);
+        this.addRenderableWidget(uiButton);
+
+        Button deleteButton = Button.builder(
+            Component.literal("Delete"),
+            btn -> {
+                openChildScreen(new ChunkloaderConfirmationScreen(
+                    this,
+                    Component.literal("Delete Player?").withStyle(net.minecraft.ChatFormatting.RED, net.minecraft.ChatFormatting.BOLD),
+                    Component.literal("This will permanently delete this player.\nThis action cannot be undone!"),
+                    () -> {
+                        if (data.fakeplayerName() != null && !data.fakeplayerName().isBlank()) {
+                            CustomFakePlayerSkinCache.clearPersistedSkin(data.fakeplayerName());
+                        }
+                        ChunkloaderClientNetworking.sendAction(
+                            ChunkloaderActionPayload.Action.DELETE,
+                            data.fakeplayerChunkX(),
+                            data.fakeplayerChunkZ(),
+                            data.dimensionKey(),
+                            0
+                        );
+                        this.minecraft.setScreen(null);
+                    },
+                    null
+                ));
+            })
+            .bounds(deleteX, deleteY, buttonWidth, buttonHeight)
+            .build();
+        deleteButton.setMessage(Component.literal("Delete").withStyle(net.minecraft.ChatFormatting.RED));
+        topBoxButtons.add(deleteButton);
+        this.addRenderableWidget(deleteButton);
+    }
+
+    private void buildActionButtons() {
+        actionButtons.forEach(this::removeWidget);
+        actionButtons.clear();
+        actionButtonYOffset.clear();
+        buttonOriginalActiveState.clear();
+        actionHeaderLayouts.clear();
+        easterEggLockedSkinButton = null;
+        actionContentHeight = 0;
+        if (panelWidth <= 0) {
+            return;
+        }
+        int buttonWidth = panelWidth - 16;
+        int buttonX = panelX + 8;
+
+        int cursorY = 0;
+        int gap = ACTION_ROW_GAP;
+        int headerHeight = this.font.lineHeight + 4;
+
+        boolean generalHeaderMatches = actionSearchMatches("General");
+        String enableLabelRaw = data.enabled()
+            ? (data.allowMobSpawning() ? "Disable Fakeplayer" : "Disable Chunkplayer")
+            : (data.allowMobSpawning() ? "Enable Fakeplayer" : "Enable Chunkplayer");
+        boolean enableButtonMatches = actionSearchMatches(enableLabelRaw);
+        boolean showEnableButton = generalHeaderMatches || enableButtonMatches;
+
+        if (showEnableButton) {
+        Button enableButton = Button.builder(
+            Component.literal(enableLabelRaw),
+            btn -> {
+                ChunkloaderClientNetworking.sendAction(
+                ChunkloaderActionPayload.Action.TOGGLE_ENABLED,
+                data.fakeplayerChunkX(),
+                data.fakeplayerChunkZ(),
+                            data.dimensionKey(),
+                            0
+                );
+                if (data.enabled()) {
+                    Minecraft.getInstance().setScreen(null);
+                }
+            })
+            .bounds(buttonX, 0, buttonWidth, 20)
+            .build();
+        if (data.enabled()) {
+            enableButton.setMessage((data.allowMobSpawning() ? Component.literal("Disable Fakeplayer") : Component.literal("Disable Chunkplayer")).withStyle(net.minecraft.ChatFormatting.RED));
+        } else {
+            enableButton.setMessage((data.allowMobSpawning() ? Component.literal("Enable Fakeplayer") : Component.literal("Enable Chunkplayer")).withStyle(net.minecraft.ChatFormatting.GREEN));
+        }
+        actionButtons.add(enableButton);
+        actionButtonYOffset.put(enableButton, cursorY);
+        this.addRenderableWidget(enableButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        boolean modeHeaderMatches = actionSearchMatches("Mode");
+        String mobLabelRaw = data.allowMobSpawning() ? "Disable mob spawning" : "Enable mob spawning";
+        boolean mobButtonMatches = actionSearchMatches(mobLabelRaw);
+
+        int radiusY = 0;
+        int halfWidth = (buttonWidth - 4) / 2;
+        boolean isFakePlayer = data.allowMobSpawning();
+        boolean canDecrease = data.chunkRadius() > 0;
+        boolean canIncrease = data.canIncreaseRadius();
+
+        String radiusHeaderRaw = isFakePlayer ? "Simulation distance" : "Radius";
+        boolean radiusHeaderMatches = actionSearchMatches(radiusHeaderRaw);
+        String radiusDownLabel = isFakePlayer ? "SD -1" : "Radius -1";
+        String radiusUpLabel = isFakePlayer ? "SD +1" : "Radius +1";
+        boolean radiusDownMatches = actionSearchMatches(radiusDownLabel);
+        boolean radiusUpMatches = actionSearchMatches(radiusUpLabel);
+        boolean showRadiusSection = radiusHeaderMatches || radiusDownMatches || radiusUpMatches;
+
+        boolean showModeHeader = modeHeaderMatches || mobButtonMatches || showRadiusSection;
+        if (showModeHeader) {
+            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Component.literal("Mode")));
+            cursorY += headerHeight + gap;
+        }
+
+        if (modeHeaderMatches || mobButtonMatches) {
+        Button mobButton = Button.builder(
+            Component.literal(mobLabelRaw),
+            btn -> ChunkloaderClientNetworking.sendAction(
+                ChunkloaderActionPayload.Action.TOGGLE_MOB_SPAWNING,
+                data.fakeplayerChunkX(),
+                data.fakeplayerChunkZ(),
+                            data.dimensionKey(),
+                            0
+            ))
+            .bounds(buttonX, 0, buttonWidth, 20)
+            .build();
+        if (data.allowMobSpawning()) {
+            mobButton.setMessage(Component.literal("Disable mob spawning").withStyle(net.minecraft.ChatFormatting.BLUE));
+        } else {
+            mobButton.setMessage(Component.literal("Enable mob spawning").withStyle(net.minecraft.ChatFormatting.GREEN));
+        }
+        actionButtons.add(mobButton);
+        actionButtonYOffset.put(mobButton, cursorY);
+        this.addRenderableWidget(mobButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        boolean showRadiusButtons = modeHeaderMatches || showRadiusSection;
+        if (showRadiusButtons) {
+        Button radiusDown = Button.builder(
+            Component.literal(radiusDownLabel),
+            btn -> {
+                if (canDecrease) {
+                    ChunkloaderClientNetworking.sendAction(
+                        ChunkloaderActionPayload.Action.RADIUS_DECREMENT,
+                        data.fakeplayerChunkX(),
+                        data.fakeplayerChunkZ(),
+                            data.dimensionKey(),
+                            1
+                    );
+                }
+            })
+            .bounds(buttonX, radiusY, halfWidth, 20)
+            .build();
+        if (!canDecrease) {
+            radiusDown.active = false;
+            radiusDown.setMessage(Component.literal(radiusDownLabel).withStyle(net.minecraft.ChatFormatting.DARK_GRAY));
+        }
+        actionButtons.add(radiusDown);
+        actionButtonYOffset.put(radiusDown, cursorY);
+        this.addRenderableWidget(radiusDown);
+
+        Button radiusUp = Button.builder(
+            Component.literal(radiusUpLabel),
+            btn -> {
+                if (canIncrease) {
+                    ChunkloaderClientNetworking.sendAction(
+                        ChunkloaderActionPayload.Action.RADIUS_INCREMENT,
+                        data.fakeplayerChunkX(),
+                        data.fakeplayerChunkZ(),
+                            data.dimensionKey(),
+                            1
+                    );
+                }
+            })
+            .bounds(buttonX + halfWidth + 4, radiusY, halfWidth, 20)
+            .build();
+        if (!canIncrease) {
+            radiusUp.active = false;
+            radiusUp.setMessage(Component.literal(radiusUpLabel).withStyle(net.minecraft.ChatFormatting.DARK_GRAY));
+        }
+        actionButtons.add(radiusUp);
+        actionButtonYOffset.put(radiusUp, cursorY);
+        this.addRenderableWidget(radiusUp);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        boolean renameButtonMatches = actionSearchMatches("Rename");
+
+        boolean hideHeaderMatches = actionSearchMatches("Hide options");
+        String hideNameLabelRaw = data.nameVisible() ? "Hide name" : "Show name";
+        String hideDotsLabelRaw = clientConfig.isHideOtherDots() ? "Show other dots" : "Hide other dots";
+        boolean hideNameMatches = actionSearchMatches(hideNameLabelRaw);
+        boolean hideDotsMatches = actionSearchMatches(hideDotsLabelRaw);
+        boolean showHideSection = hideHeaderMatches || hideNameMatches || hideDotsMatches;
+
+        if (showHideSection) {
+            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Component.literal("Hide options")));
+            cursorY += headerHeight + gap;
+        }
+
+        int nameVisibleY = 0;
+        if (showHideSection) {
+        Button nameVisibleButton = Button.builder(
+            Component.literal(hideNameLabelRaw),
+            btn -> ChunkloaderClientNetworking.sendAction(
+                ChunkloaderActionPayload.Action.TOGGLE_NAME_VISIBLE,
+                data.fakeplayerChunkX(),
+                data.fakeplayerChunkZ(),
+                            data.dimensionKey(),
+                            0
+            ))
+            .bounds(buttonX, nameVisibleY, buttonWidth, 20)
+            .build();
+        if (data.nameVisible()) {
+            nameVisibleButton.setMessage(Component.literal("Hide name").withStyle(net.minecraft.ChatFormatting.WHITE));
+        } else {
+            nameVisibleButton.setMessage(Component.literal("Show name").withStyle(net.minecraft.ChatFormatting.WHITE));
+        }
+        actionButtons.add(nameVisibleButton);
+        actionButtonYOffset.put(nameVisibleButton, cursorY);
+        this.addRenderableWidget(nameVisibleButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+
+        int hideOtherDotsY = 0;
+        Button hideOtherDotsButton = Button.builder(
+            Component.literal(hideDotsLabelRaw),
+            btn -> {
+                clientConfig.toggleHideOtherDots();
+                buildActionButtons();
+                buttonsNeedUpdate = true;
+            })
+            .bounds(buttonX, hideOtherDotsY, buttonWidth, 20)
+            .build();
+        if (clientConfig.isHideOtherDots()) {
+            hideOtherDotsButton.setMessage(Component.literal("Show other dots").withStyle(net.minecraft.ChatFormatting.WHITE));
+        } else {
+            hideOtherDotsButton.setMessage(Component.literal("Hide other dots").withStyle(net.minecraft.ChatFormatting.WHITE));
+        }
+        actionButtons.add(hideOtherDotsButton);
+        actionButtonYOffset.put(hideOtherDotsButton, cursorY);
+        this.addRenderableWidget(hideOtherDotsButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        boolean visHeaderMatches = actionSearchMatches("Visualization");
+        String visLabelRaw = data.visualizeActive() ? "Disable visualization" : "Enable visualization";
+        String vis3DLabelRaw = data.visualize3DActive() ? "Disable 3D visualization" : "Enable 3D visualization";
+        boolean visButtonMatches = actionSearchMatches(visLabelRaw);
+        boolean vis3DButtonMatches = actionSearchMatches(vis3DLabelRaw);
+        boolean showVisSection = visHeaderMatches || visButtonMatches || vis3DButtonMatches;
+
+        if (showVisSection) {
+            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Component.literal("Visualization")));
+            cursorY += headerHeight + gap;
+        }
+
+        int visualizeY = 0;
+        if (showVisSection) {
+        Button visualizeButton = Button.builder(
+            Component.literal(visLabelRaw),
+            btn -> ChunkloaderClientNetworking.sendAction(
+                ChunkloaderActionPayload.Action.TOGGLE_VISUALIZE,
+                data.fakeplayerChunkX(),
+                data.fakeplayerChunkZ(),
+                            data.dimensionKey(),
+                            0
+            ))
+            .bounds(buttonX, visualizeY, buttonWidth, 20)
+            .build();
+        if (data.visualizeActive()) {
+            visualizeButton.setMessage(Component.literal("Disable visualization").withStyle(net.minecraft.ChatFormatting.WHITE));
+        } else {
+            visualizeButton.setMessage(Component.literal("Enable visualization").withStyle(net.minecraft.ChatFormatting.WHITE));
+        }
+        actionButtons.add(visualizeButton);
+        actionButtonYOffset.put(visualizeButton, cursorY);
+        this.addRenderableWidget(visualizeButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+
+        int visualize3DY = 0;
+        Button visualize3DButton = Button.builder(
+            Component.literal(vis3DLabelRaw),
+            btn -> ChunkloaderClientNetworking.sendAction(
+                ChunkloaderActionPayload.Action.TOGGLE_VISUALIZE3D,
+                data.fakeplayerChunkX(),
+                data.fakeplayerChunkZ(),
+                            data.dimensionKey(),
+                            0
+            ))
+            .bounds(buttonX, visualize3DY, buttonWidth, 20)
+            .build();
+        if (data.visualize3DActive()) {
+            visualize3DButton.setMessage(Component.literal("Disable 3D visualization").withStyle(net.minecraft.ChatFormatting.WHITE));
+        } else {
+            visualize3DButton.setMessage(Component.literal("Enable 3D visualization").withStyle(net.minecraft.ChatFormatting.WHITE));
+        }
+        actionButtons.add(visualize3DButton);
+        actionButtonYOffset.put(visualize3DButton, cursorY);
+        this.addRenderableWidget(visualize3DButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        boolean settingsHeaderMatches = actionSearchMatches("Settings");
+        boolean panelColorMatches = actionSearchMatches("Panel color");
+        boolean keybindMatches = actionSearchMatches("Keybinds");
+        boolean skinMatches = actionSearchMatches("Skin");
+        boolean showSettingsSection = settingsHeaderMatches || panelColorMatches || keybindMatches || skinMatches || renameButtonMatches;
+
+        if (showSettingsSection) {
+            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Component.literal("Settings")));
+            cursorY += headerHeight + gap;
+        }
+
+        int renameY = 0;
+        if (showSettingsSection) {
+        Button renameButton = Button.builder(
+            Component.literal("Rename"),
+            btn -> {
+                openChildScreen(new RenameChunkloaderScreen(
+                    this,
+                    data.fakeplayerChunkX(),
+                    data.fakeplayerChunkZ(),
+                    data.dimensionKey(),
+                    data.displayName()
+                ));
+            })
+            .bounds(buttonX, renameY, buttonWidth, 20)
+            .build();
+        renameButton.setMessage(Component.literal("Rename").withStyle(net.minecraft.ChatFormatting.WHITE));
+        actionButtons.add(renameButton);
+        actionButtonYOffset.put(renameButton, cursorY);
+        this.addRenderableWidget(renameButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+
+        int panelColorY = 0;
+        Button panelColorButton = Button.builder(
+            Component.literal("Panel color"),
+            btn -> openPanelColorEditor())
+            .bounds(buttonX, panelColorY, buttonWidth, 20)
+            .build();
+        panelColorButton.setMessage(Component.literal("Panel color").withStyle(net.minecraft.ChatFormatting.WHITE));
+        actionButtons.add(panelColorButton);
+        actionButtonYOffset.put(panelColorButton, cursorY);
+        this.addRenderableWidget(panelColorButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+
+        int skinY = 0;
+        boolean easterEggSkinLocked = data.easterEgg();
+        Button skinButton = Button.builder(
+            Component.literal("Skin"),
+            btn -> {
+                if (data.easterEgg()) {
+                    return;
+                }
+                if (clientConfig == null) {
+                    clientConfig = ClientConfig.load();
+                }
+                openChildScreen(new ChunkplayerSkinScreen(this, clientConfig, data.fakeplayerName()));
+            })
+            .bounds(buttonX, skinY, buttonWidth, 20)
+            .build();
+        if (easterEggSkinLocked) {
+            skinButton.active = false;
+            skinButton.setMessage(Component.literal("Skin").withStyle(net.minecraft.ChatFormatting.DARK_GRAY));
+            easterEggLockedSkinButton = skinButton;
+        } else {
+            skinButton.setMessage(Component.literal("Skin").withStyle(net.minecraft.ChatFormatting.WHITE));
+        }
+        actionButtons.add(skinButton);
+        actionButtonYOffset.put(skinButton, cursorY);
+        this.addRenderableWidget(skinButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+
+        int keybindY = 0;
+        Button keybindButton = Button.builder(
+            Component.literal("Keybinds"),
+            btn -> {
+                openChildScreen(new KeybindConfigScreen(this));
+            })
+            .bounds(buttonX, keybindY, buttonWidth, 20)
+            .build();
+        keybindButton.setMessage(Component.literal("Keybinds").withStyle(net.minecraft.ChatFormatting.WHITE));
+        actionButtons.add(keybindButton);
+        actionButtonYOffset.put(keybindButton, cursorY);
+        this.addRenderableWidget(keybindButton);
+
+        cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        int resetY = footerRowY;
+        resetButton = Button.builder(
+            Component.literal("Reset to defaults"),
+            btn -> {
+                openChildScreen(new ChunkloaderConfirmationScreen(
+                    this,
+                    Component.literal("Reset to Defaults?").withStyle(net.minecraft.ChatFormatting.RED, net.minecraft.ChatFormatting.BOLD),
+                    Component.literal("This will reset all settings to default values.\nThis action cannot be undone!"),
+                    () -> {
+                        ChunkloaderClientNetworking.sendAction(
+                ChunkloaderActionPayload.Action.RESET_TO_DEFAULTS,
+                data.fakeplayerChunkX(),
+                data.fakeplayerChunkZ(),
+                            data.dimensionKey(),
+                            0
+                        );
+                        if (clientConfig != null) {
+                            clientConfig.resetToDefaults();
+                        }
+                    },
+                    null
+                ));
+            })
+            .bounds(buttonX, resetY, buttonWidth, 20)
+            .build();
+        resetButton.setMessage(Component.literal("Reset to defaults").withStyle(net.minecraft.ChatFormatting.WHITE));
+        this.addRenderableWidget(resetButton);
+
+        actionContentHeight = Math.max(0, cursorY - gap);
+
+        buttonsNeedUpdate = true;
+    }
+
+    @Override
+    public boolean isPauseScreen() {
+        return false;
+    }
 }
+

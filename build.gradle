@@ -58,7 +58,6 @@ dependencies {
     implementation "net.neoforged:neoforge:${neo_version}"
     implementation 'com.google.code.gson:gson:2.10.1'
 
-    // VS Code Java (Eclipse JDT) null analysis uses these annotations.
     implementation 'org.eclipse.jdt:org.eclipse.jdt.annotation:2.2.600'
 }
 

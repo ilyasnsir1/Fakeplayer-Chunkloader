@@ -11,20 +11,24 @@ public class ChunkloaderMenuScreen extends Screen {
     private final Screen parent;
 
     public ChunkloaderMenuScreen(Screen parent) {
-        super(Component.literal("Chunkloader Menu"));
+        super(Component.literal("Mod Menu"));
         this.parent = parent;
     }
-    
+
+    public Screen getParentScreen() {
+        return parent;
+    }
+
     @Override
     protected void init() {
         super.init();
-        
+
         int buttonWidth = 200;
         int buttonHeight = 20;
         int buttonSpacing = 30;
         int startY = this.height / 2 - 40;
         int buttonX = (this.width - buttonWidth) / 2;
-        
+
         this.addRenderableWidget(Button.builder(
                 Component.literal("Infos about the mod"),
                 btn -> {
@@ -36,7 +40,7 @@ public class ChunkloaderMenuScreen extends Screen {
             .bounds(buttonX, startY, buttonWidth, buttonHeight)
             .build()
         );
-        
+
         this.addRenderableWidget(Button.builder(
                 Component.literal("Commands"),
                 btn -> {
@@ -48,7 +52,7 @@ public class ChunkloaderMenuScreen extends Screen {
             .bounds(buttonX, startY + buttonSpacing, buttonWidth, buttonHeight)
             .build()
         );
-        
+
         this.addRenderableWidget(Button.builder(
                 Component.literal("Contact"),
                 btn -> {
@@ -60,7 +64,7 @@ public class ChunkloaderMenuScreen extends Screen {
             .bounds(buttonX, startY + buttonSpacing * 2, buttonWidth, buttonHeight)
             .build()
         );
-        
+
         int backButtonWidth = 100;
         int backButtonX = (this.width - backButtonWidth) / 2;
         int backButtonY = this.height - 30;
@@ -82,15 +86,15 @@ public class ChunkloaderMenuScreen extends Screen {
         drawDimBackground(graphics);
         super.render(graphics, mouseX, mouseY, delta);
     }
-    
+
     private void drawDimBackground(@NonNull GuiGraphics graphics) {
         graphics.fill(0, 0, this.width, this.height, 0xC0101010);
     }
-    
+
     @Override
     public void renderBackground(@NonNull GuiGraphics graphics, int mouseX, int mouseY, float delta) {
     }
-    
+
     @Override
     public boolean isPauseScreen() {
         return false;

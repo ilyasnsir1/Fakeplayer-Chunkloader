@@ -12,7 +12,7 @@ import java.util.Objects;
 public record FakePlayerVisibilityPayload(@NonNull String fakePlayerName, boolean visible) implements CustomPacketPayload {
     public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "fakeplayer_visibility");
     public static final Type<FakePlayerVisibilityPayload> TYPE = new Type<>(ID);
-    
+
     public static final StreamCodec<FriendlyByteBuf, FakePlayerVisibilityPayload> STREAM_CODEC = StreamCodec.of(
         (buf, payload) -> {
             buf.writeUtf(payload.fakePlayerName());
@@ -20,7 +20,7 @@ public record FakePlayerVisibilityPayload(@NonNull String fakePlayerName, boolea
         },
         buf -> new FakePlayerVisibilityPayload(Objects.requireNonNull(buf.readUtf(), "fakePlayerName"), buf.readBoolean())
     );
-    
+
     @Override
     public Type<FakePlayerVisibilityPayload> type() {
         return TYPE;

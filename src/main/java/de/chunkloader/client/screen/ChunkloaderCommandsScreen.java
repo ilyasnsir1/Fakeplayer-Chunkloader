@@ -61,16 +61,20 @@ public class ChunkloaderCommandsScreen extends Screen {
         super(Component.literal("Commands"));
         this.parent = parent;
     }
-    
+
+    public Screen getParentScreen() {
+        return parent;
+    }
+
     @Override
     protected void init() {
         super.init();
-        
+
         contentTop = 20;
         contentBottom = this.height - 60;
-        
+
         totalContentHeight = 500;
-        
+
         int buttonWidth = 100;
         int buttonX = (this.width - buttonWidth) / 2;
         int buttonY = this.height - 30;
@@ -90,21 +94,21 @@ public class ChunkloaderCommandsScreen extends Screen {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         drawDimBackground(graphics);
-        
+
         graphics.enableScissor(0, contentTop, this.width, contentBottom);
         renderText(graphics);
         graphics.disableScissor();
-        
+
         drawScrollbar(graphics);
         super.render(graphics, mouseX, mouseY, delta);
     }
-    
+
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
         int availableHeight = contentBottom - contentTop;
         int maxScroll = Math.max(0, totalContentHeight + 40 - availableHeight);
-        
-        scrollOffset = (int) Math.max(0, Math.min(maxScroll, 
+
+        scrollOffset = (int) Math.max(0, Math.min(maxScroll,
             scrollOffset - (int)(verticalAmount * 20)));
         return true;
     }
@@ -174,15 +178,15 @@ public class ChunkloaderCommandsScreen extends Screen {
 
         return false;
     }
-    
+
     private void drawScrollbar(GuiGraphics graphics) {
         int availableHeight = contentBottom - contentTop;
         int totalHeightWithPadding = totalContentHeight + 40;
-        
+
         if (totalHeightWithPadding <= availableHeight) {
             return;
         }
-        
+
         int scrollbarWidth = 3;
         int scrollbarX = this.width - scrollbarWidth - 2;
         int scrollbarHeight = (int)((double)availableHeight / totalHeightWithPadding * availableHeight);
@@ -193,36 +197,40 @@ public class ChunkloaderCommandsScreen extends Screen {
             graphics.fill(scrollbarX, scrollbarY, scrollbarX + scrollbarWidth, scrollbarY + scrollbarHeight, 0xFFAAAAAA);
         }
     }
-    
+
     private void renderText(GuiGraphics graphics) {
         var font = this.font;
         int lineHeight = 12;
         int sectionSpacing = 20;
         int y = contentTop + 20 - scrollOffset;
-        
+
         Component title = Component.literal("Commands").withStyle(ChatFormatting.BOLD);
         int titleWidth = font.width(title);
         graphics.drawString(font, title, (this.width - titleWidth) / 2, y, 0xFFFFFFFF, false);
         y += 30;
-        
+
         String[][][] commands = {
             {{"Basic Commands", ""}},
-            {{"/fakeplayer add", "Creates a fake player at your current position", "Example: /fakeplayer add"}},
-            {{"/fakeplayer remove <name>", "Removes a fake player by name", "Example: /fakeplayer remove Fakeplayer1"}},
-            {{"/fakeplayer list", "Lists all fake players", "Example: /fakeplayer list"}},
-            {{"/fakeplayer info <name>", "Shows detailed information about a fake player", "Example: /fakeplayer info Fakeplayer1"}},
+            {{"/fakeplayer add", "Creates a player at your current position", "Example: /fakeplayer add"}},
+            {{"/fakeplayer remove <name>", "Removes a player by name", "Example: /fakeplayer remove Fakeplayer1"}},
+            {{"/fakeplayer list", "Lists all players", "Example: /fakeplayer list"}},
+            {{"/fakeplayer info <name>", "Shows detailed information about a player", "Example: /fakeplayer info Fakeplayer1"}},
             {{"/fakeplayer reload", "Reloads the configuration file", "Example: /fakeplayer reload"}},
             {{"", ""}},
-            {{"Toggle Commands", ""}},
-            {{"/fakeplayer toggle <name>", "Toggles a fake player on/off", "Example: /fakeplayer toggle Fakeplayer1"}},
-            {{"/fakeplayer enableall", "Enables all fake players", "Example: /fakeplayer enableall"}},
-            {{"/fakeplayer disableall", "Disables all fake players", "Example: /fakeplayer disableall"}},
-            {{"/fakeplayer removeall disabled", "Removes all disabled fake players", "Example: /fakeplayer removeall disabled"}},
+            {{"Enable/Disable Commands", ""}},
+            {{"/fakeplayer disable <name>", "Toggles a player enabled/disabled", "Example: /fakeplayer disable Fakeplayer1"}},
+            {{"/fakeplayer restore <name>", "Restores a disabled player", "Example: /fakeplayer restore Fakeplayer1"}},
+            {{"/fakeplayer restoreall", "Restores all disabled players", "Example: /fakeplayer restoreall"}},
+            {{"/fakeplayer disableall", "Disables all players", "Example: /fakeplayer disableall"}},
+            {{"/fakeplayer removeall disabled", "Removes all disabled players", "Example: /fakeplayer removeall disabled"}},
             {{"", ""}},
             {{"Configuration Commands", ""}},
+            {{"/fakeplayer rename <name> <newName>", "Renames a player (alphanumeric only). Cannot rename to real player names.", "Example: /fakeplayer rename Fakeplayer1 MyPlayer"}},
             {{"/fakeplayer setradius <name> <0-3>", "Sets chunk loading radius (0=1x1, 1=3x3, 2=5x5, 3=7x7)", "Example: /fakeplayer setradius Fakeplayer1 2"}},
-            {{"/fakeplayer setmobspawning <name> <true/false>", "Controls mob spawning (true=FakePlayer, false=Chunkplayer)", "Example: /fakeplayer setmobspawning Fakeplayer1 false"}},
-            {{"/fakeplayer namevisible <name> <true/false>", "Shows/hides the fake player name", "Example: /fakeplayer namevisible Fakeplayer1 false"}},
+            {{"/fakeplayer setmobspawning <name> <true/false>", "Sets mode: true=Fakeplayer (mobs spawn near it like a real player), false=Chunkplayer (chunks-only). Not global.", "Example: /fakeplayer setmobspawning Fakeplayer1 false"}},
+            {{"/fakeplayer toggle <name>", "Toggles mob spawning on/off for a fakeplayer/chunkplayer", "Example: /fakeplayer toggle Fakeplayer1"}},
+            {{"/fakeplayer namevisible <name> <true/false>", "Shows/hides the player name", "Example: /fakeplayer namevisible Fakeplayer1 false"}},
+            {{"/fakeplayer tablist <true/false>", "Shows/hides all players from the tab list", "Example: /fakeplayer tablist false"}},
             {{"", ""}},
             {{"Visualization Commands", ""}},
             {{"/fakeplayer visualize <name>", "Toggles chunk border visualization", "Example: /fakeplayer visualize Fakeplayer1"}},
@@ -236,16 +244,16 @@ public class ChunkloaderCommandsScreen extends Screen {
             {{"/fp", "Short alias for /fakeplayer (all commands work)", "Example: /fp add"}},
             {{"", ""}},
             {{"Permission Commands", ""}},
-            {{"/fakeplayer permission grant <player>", "Grants full chunkloader access to the player", "Example: /fakeplayer permission grant Steve"}},
-            {{"/fakeplayer permission revoke <player>", "Revokes chunkloader access", "Example: /fakeplayer permission revoke Steve"}},
+            {{"/fakeplayer permission grant <player>", "Grants full access to the player", "Example: /fakeplayer permission grant Steve"}},
+            {{"/fakeplayer permission revoke <player>", "Revokes access", "Example: /fakeplayer permission revoke Steve"}},
             {{"", ""}},
             {{"Client-Side Keybinds", ""}},
-            {{"F6", "Toggle Simulation Status HUD", "Shows live status if you're within simulation distance of a fakeplayer"}},
-            {{"F7", "Toggle Chunkplayer Status HUD", "Shows live status if you're in a chunk loaded by a chunkplayer"}},
-            {{"F8", "Open Disabled Chunkloaders List", "Shows all disabled chunkloaders for management"}},
-            {{"Note:", "Keybinds can be changed in Controls settings (Chunkloader category)", "HUDs update automatically every 2 seconds"}}
+            {{"F6", "Toggle Simulation Status HUD", "Shows live status if you're within simulation distance of a player"}},
+            {{"F7", "Toggle Chunk Loading Status HUD", "Shows live status if you're in a chunk loaded by a player"}},
+            {{"F8", "Open Disabled Players List", "Shows all disabled players for management"}},
+            {{"Note:", "Keybinds can be changed in Controls settings or via the Keybinds button in the chunk map", "HUDs update automatically every 2 seconds"}}
         };
-        
+
         boolean isFirstSection = true;
         int lastSectionEndY = y;
         for (String[][] cmdGroup : commands) {
@@ -254,7 +262,7 @@ public class ChunkloaderCommandsScreen extends Screen {
                 y += sectionSpacing;
                 continue;
             }
-            
+
             if (cmd[1].isEmpty()) {
                 if (!isFirstSection) {
                     int separatorY = lastSectionEndY + sectionSpacing / 2;
@@ -263,25 +271,25 @@ public class ChunkloaderCommandsScreen extends Screen {
                     drawSeparator(graphics, separatorX, separatorY, separatorWidth);
                 }
                 isFirstSection = false;
-                
+
                 Component header = Component.literal(cmd[0]).withStyle(ChatFormatting.BOLD, ChatFormatting.YELLOW);
                 int headerWidth = font.width(header);
                 graphics.drawString(font, header, (this.width - headerWidth) / 2, y, 0xFFFFFFFF, false);
                 y += lineHeight + 4;
             } else {
                 int cmdWidth = font.width(Component.literal(cmd[0]));
-                graphics.drawString(font, Component.literal(cmd[0]).withStyle(ChatFormatting.GREEN), 
+                graphics.drawString(font, Component.literal(cmd[0]).withStyle(ChatFormatting.GREEN),
                     (this.width - cmdWidth) / 2, y, 0xFFFFFFFF, false);
                 y += lineHeight;
-                
+
                 int descWidth = font.width(Component.literal(cmd[1]));
-                graphics.drawString(font, Component.literal(cmd[1]), 
+                graphics.drawString(font, Component.literal(cmd[1]),
                     (this.width - descWidth) / 2, y, 0xFFCCCCCC, false);
                 y += lineHeight;
-                
+
                 if (cmd.length > 2 && !cmd[2].isEmpty()) {
                     int exampleWidth = font.width(Component.literal(cmd[2]));
-                    graphics.drawString(font, Component.literal(cmd[2]).withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC), 
+                    graphics.drawString(font, Component.literal(cmd[2]).withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC),
                         (this.width - exampleWidth) / 2, y, 0xFF999999, false);
                     y += lineHeight;
                 }
@@ -289,7 +297,7 @@ public class ChunkloaderCommandsScreen extends Screen {
                 lastSectionEndY = y;
             }
         }
-        
+
         totalContentHeight = y - contentTop - 20 + scrollOffset;
     }
 
@@ -300,12 +308,12 @@ public class ChunkloaderCommandsScreen extends Screen {
     private void drawDimBackground(GuiGraphics graphics) {
         graphics.fill(0, 0, this.width, this.height, 0xC0101010);
     }
-    
+
     @Override
     public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         super.renderBackground(graphics, mouseX, mouseY, delta);
     }
-    
+
     @Override
     public boolean isPauseScreen() {
         return false;

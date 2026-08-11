@@ -242,7 +242,7 @@ public class ChunkMapTexture implements AutoCloseable {
                     RenderSystem.setShaderTexture(0, at.getTextureView());
                 }
             } catch (Throwable ignored) {}
-            
+
             g.blit(RenderPipelines.GUI_TEXTURED, texture, x, y, u, v, width, height, uWidth, vHeight, textureWidth, textureHeight, 0xFFFFFFFF);
         } catch (Throwable t) {
             g.blit(texture, x, y, (int) u, (int) v, width, height, textureWidth, textureHeight);

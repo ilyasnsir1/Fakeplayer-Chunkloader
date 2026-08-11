@@ -9,30 +9,32 @@ import org.eclipse.jdt.annotation.NonNull;
 
 import java.util.Objects;
 
-public record ChunkloaderActionPayload(int chunkX, int chunkZ, @NonNull Action action, int value) implements CustomPacketPayload {
+public record ChunkloaderActionPayload(int chunkX, int chunkZ, @NonNull String dimension, @NonNull Action action, int value) implements CustomPacketPayload {
     public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "chunkloader_action");
     public static final Type<ChunkloaderActionPayload> TYPE = new Type<>(ID);
-    
+
     public static final StreamCodec<FriendlyByteBuf, ChunkloaderActionPayload> STREAM_CODEC = StreamCodec.of(
         (buf, payload) -> {
             buf.writeInt(payload.chunkX());
             buf.writeInt(payload.chunkZ());
+            buf.writeUtf(payload.dimension() != null ? payload.dimension() : "minecraft:overworld", 256);
             buf.writeEnum(payload.action());
             buf.writeInt(payload.value());
         },
         buf -> new ChunkloaderActionPayload(
             buf.readInt(),
             buf.readInt(),
+            Objects.requireNonNull(buf.readUtf(256), "dimension"),
             Objects.requireNonNull(buf.readEnum(Action.class), "action"),
             buf.readInt()
         )
     );
-    
+
     @Override
     public Type<ChunkloaderActionPayload> type() {
         return TYPE;
     }
-    
+
     public enum Action {
         TOGGLE_ENABLED,
         TOGGLE_MOB_SPAWNING,
@@ -46,4 +48,3 @@ public record ChunkloaderActionPayload(int chunkX, int chunkZ, @NonNull Action a
         TOGGLE_HIDE_OTHER_DOTS
     }
 }
-

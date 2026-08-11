@@ -14,7 +14,7 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
 
     public static final Type<DisabledChunkloadersListPayload> TYPE =
         new Type<>(ResourceLocation.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "disabled_chunkloaders_list"));
-    
+
     public static final StreamCodec<FriendlyByteBuf, DisabledChunkloaderEntry> ENTRY_STREAM_CODEC =
         StreamCodec.of(
             (buf, entry) -> {
@@ -27,6 +27,7 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
                 buf.writeBoolean(entry.allowMobSpawning());
                 buf.writeUtf(entry.dimension() != null ? entry.dimension() : "");
                 buf.writeBoolean(entry.isFakeplayer());
+                buf.writeInt(entry.easterEggSkinIndex());
             },
             buf -> {
                 int chunkX = buf.readInt();
@@ -38,16 +39,18 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
                 boolean allowMobSpawning = buf.readBoolean();
                 String dimension = buf.readUtf();
                 boolean isFakeplayer = buf.readBoolean();
+                int easterEggSkinIndex = buf.readInt();
                 return new DisabledChunkloaderEntry(
                     chunkX, chunkZ, blockX, blockY, blockZ,
                     name.isEmpty() ? null : name,
                     allowMobSpawning,
                     dimension.isEmpty() ? null : dimension,
-                    isFakeplayer
+                    isFakeplayer,
+                    easterEggSkinIndex
                 );
             }
         );
-    
+
     public static final StreamCodec<FriendlyByteBuf, DisabledChunkloadersListPayload> STREAM_CODEC =
         StreamCodec.of(
             (buf, payload) -> {
@@ -80,7 +83,8 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
         String name,
         boolean allowMobSpawning,
         String dimension,
-        boolean isFakeplayer
+        boolean isFakeplayer,
+        int easterEggSkinIndex
     ) {
         public boolean hasWarning() {
             return false;
