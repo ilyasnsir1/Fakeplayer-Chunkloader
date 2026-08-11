@@ -1,22 +1,22 @@
 package de.chunkloader.network.payload;
 
 import de.chunkloader.ChunkloaderMod;
-import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.packet.CustomPayload;
-import net.minecraft.util.Identifier;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.Identifier;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
-public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> disabledChunkloaders) implements CustomPayload {
+public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> disabledChunkloaders) implements CustomPacketPayload {
 
-    public static final CustomPayload.Id<DisabledChunkloadersListPayload> ID =
-        new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "disabled_chunkloaders_list"));
-    
-    public static final PacketCodec<RegistryByteBuf, DisabledChunkloadersListPayload> CODEC =
-        PacketCodec.of((payload, buf) -> {
+    public static final CustomPacketPayload.Type<DisabledChunkloadersListPayload> TYPE =
+        new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(ChunkloaderMod.MOD_ID, "disabled_chunkloaders_list"));
+
+    public static final StreamCodec<RegistryFriendlyByteBuf, DisabledChunkloadersListPayload> CODEC =
+        StreamCodec.of((buf, payload) -> {
             buf.writeVarInt(payload.disabledChunkloaders().size());
             for (DisabledChunkloaderEntry entry : payload.disabledChunkloaders()) {
                 entry.write(buf);
@@ -31,8 +31,8 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
         });
 
     @Override
-    public CustomPayload.Id<DisabledChunkloadersListPayload> getId() {
-        return ID;
+    public CustomPacketPayload.Type<DisabledChunkloadersListPayload> type() {
+        return TYPE;
     }
 
     public record DisabledChunkloaderEntry(
@@ -44,36 +44,40 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
         String name,
         boolean allowMobSpawning,
         String dimension,
-        boolean hasWarning
+        boolean hasWarning,
+        int easterEggSkinIndex
     ) {
-        public void write(net.minecraft.network.PacketByteBuf buf) {
+        public void write(net.minecraft.network.FriendlyByteBuf buf) {
             buf.writeInt(chunkX);
             buf.writeInt(chunkZ);
             buf.writeInt(blockX);
             buf.writeInt(blockY);
             buf.writeInt(blockZ);
-            buf.writeString(name != null ? name : "");
+            buf.writeUtf(name != null ? name : "");
             buf.writeBoolean(allowMobSpawning);
-            buf.writeString(dimension != null ? dimension : "");
+            buf.writeUtf(dimension != null ? dimension : "");
             buf.writeBoolean(hasWarning);
+            buf.writeInt(easterEggSkinIndex);
         }
 
-        public static DisabledChunkloaderEntry read(net.minecraft.network.PacketByteBuf buf) {
+        public static DisabledChunkloaderEntry read(net.minecraft.network.FriendlyByteBuf buf) {
             int chunkX = buf.readInt();
             int chunkZ = buf.readInt();
             int blockX = buf.readInt();
             int blockY = buf.readInt();
             int blockZ = buf.readInt();
-            String name = buf.readString(32767);
+            String name = buf.readUtf(32767);
             boolean allowMobSpawning = buf.readBoolean();
-            String dimension = buf.readString(32767);
+            String dimension = buf.readUtf(32767);
             boolean hasWarning = buf.readBoolean();
+            int easterEggSkinIndex = buf.readInt();
             return new DisabledChunkloaderEntry(
                 chunkX, chunkZ, blockX, blockY, blockZ,
                 name.isEmpty() ? null : name,
                 allowMobSpawning,
                 dimension.isEmpty() ? null : dimension,
-                hasWarning
+                hasWarning,
+                easterEggSkinIndex
             );
         }
     }

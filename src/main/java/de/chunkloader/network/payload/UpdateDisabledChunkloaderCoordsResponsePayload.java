@@ -1,32 +1,32 @@
 package de.chunkloader.network.payload;
 
 import de.chunkloader.ChunkloaderMod;
-import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.packet.CustomPayload;
-import net.minecraft.util.Identifier;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.Identifier;
 
 public record UpdateDisabledChunkloaderCoordsResponsePayload(
     boolean success,
     String message
-) implements CustomPayload {
+) implements CustomPacketPayload {
 
-    public static final CustomPayload.Id<UpdateDisabledChunkloaderCoordsResponsePayload> ID =
-        new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "update_disabled_chunkloader_coords_response"));
-    
-    public static final PacketCodec<RegistryByteBuf, UpdateDisabledChunkloaderCoordsResponsePayload> CODEC =
-        PacketCodec.of((payload, buf) -> {
+    public static final CustomPacketPayload.Type<UpdateDisabledChunkloaderCoordsResponsePayload> TYPE =
+        new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(ChunkloaderMod.MOD_ID, "update_disabled_chunkloader_coords_response"));
+
+    public static final StreamCodec<RegistryFriendlyByteBuf, UpdateDisabledChunkloaderCoordsResponsePayload> CODEC =
+        StreamCodec.of((buf, payload) -> {
             buf.writeBoolean(payload.success());
-            buf.writeString(payload.message() != null ? payload.message() : "");
+            buf.writeUtf(payload.message() != null ? payload.message() : "");
         }, buf -> {
             boolean success = buf.readBoolean();
-            String message = buf.readString(32767);
+            String message = buf.readUtf(32767);
             return new UpdateDisabledChunkloaderCoordsResponsePayload(success, message.isEmpty() ? null : message);
         });
 
     @Override
-    public CustomPayload.Id<UpdateDisabledChunkloaderCoordsResponsePayload> getId() {
-        return ID;
+    public CustomPacketPayload.Type<UpdateDisabledChunkloaderCoordsResponsePayload> type() {
+        return TYPE;
     }
 }
 

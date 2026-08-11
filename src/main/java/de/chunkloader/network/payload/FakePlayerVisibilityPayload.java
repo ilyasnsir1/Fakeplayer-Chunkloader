@@ -1,34 +1,34 @@
 package de.chunkloader.network.payload;
 
 import de.chunkloader.ChunkloaderMod;
-import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.packet.CustomPayload;
-import net.minecraft.util.Identifier;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.Identifier;
 
 public record FakePlayerVisibilityPayload(
     String fakePlayerName,
     boolean visible
-) implements CustomPayload {
-    
-    public static final CustomPayload.Id<FakePlayerVisibilityPayload> ID = 
-        new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "fakeplayer_visibility"));
-    
-    public static final PacketCodec<RegistryByteBuf, FakePlayerVisibilityPayload> CODEC = 
-        PacketCodec.of(FakePlayerVisibilityPayload::write, FakePlayerVisibilityPayload::read);
-    
-    private static void write(FakePlayerVisibilityPayload payload, RegistryByteBuf buf) {
-        buf.writeString(payload.fakePlayerName());
+) implements CustomPacketPayload {
+
+    public static final CustomPacketPayload.Type<FakePlayerVisibilityPayload> TYPE =
+        new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(ChunkloaderMod.MOD_ID, "fakeplayer_visibility"));
+
+    public static final StreamCodec<RegistryFriendlyByteBuf, FakePlayerVisibilityPayload> CODEC =
+        StreamCodec.of(FakePlayerVisibilityPayload::write, FakePlayerVisibilityPayload::read);
+
+    private static void write(RegistryFriendlyByteBuf buf, FakePlayerVisibilityPayload payload) {
+        buf.writeUtf(payload.fakePlayerName());
         buf.writeBoolean(payload.visible());
     }
-    
-    private static FakePlayerVisibilityPayload read(RegistryByteBuf buf) {
-        return new FakePlayerVisibilityPayload(buf.readString(), buf.readBoolean());
+
+    private static FakePlayerVisibilityPayload read(RegistryFriendlyByteBuf buf) {
+        return new FakePlayerVisibilityPayload(buf.readUtf(), buf.readBoolean());
     }
-    
+
     @Override
-    public Id<? extends CustomPayload> getId() {
-        return ID;
+    public Type<? extends CustomPacketPayload> type() {
+        return TYPE;
     }
 }
 

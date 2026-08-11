@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version '1.13.6'
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
     id 'maven-publish'
 }
 
@@ -19,15 +19,17 @@ repositories {
 }
 
 loom {
-    accessWidenerPath = file("src/main/resources/chunkloader.accesswidener")
+    // Access widener is empty - re-enable when needed
+    // accessWidenerPath = file("src/main/resources/chunkloader.accesswidener")
     enableModProvidedJavadoc = false
 }
 
 dependencies {
+    // Mojang mappings are the default in Loom 1.16+ (Yarn discontinued for 26.1+).
+    // Loom 1.16 exposes Fabric dependencies through Gradle's standard implementation configuration.
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
-    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
-    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 }
 
 processResources {
@@ -35,7 +37,7 @@ processResources {
     inputs.property "minecraft_version", project.minecraft_version
     inputs.property "loader_version", project.loader_version
     inputs.property "fabric_api_version", project.fabric_api_version
-    
+
     filteringCharset "UTF-8"
 
     filesMatching("fabric.mod.json") {
@@ -46,27 +48,25 @@ processResources {
     }
 }
 
-def targetJavaVersion = 21
+def targetJavaVersion = 25
 tasks.withType(JavaCompile).configureEach {
     it.options.encoding = "UTF-8"
-    if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
-        it.options.release = targetJavaVersion
-    }
+    it.options.release = targetJavaVersion
 }
 
 java {
     def javaVersion = JavaVersion.toVersion(targetJavaVersion)
     sourceCompatibility = javaVersion
     targetCompatibility = javaVersion
+    // Use the JDK that's running Gradle (Java 25+ required); avoids toolchain auto-provisioning.
     if (JavaVersion.current() < javaVersion) {
         toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
     }
-    archivesBaseName = "fakeplayerchunkloader${project.minecraft_version}-fabric"
     withSourcesJar()
 }
 
 jar {
     from("LICENSE") {
-        rename { "${it}_${project.archivesBaseName}" }
+        rename { "${it}_${project.base.archivesName.get()}" }
     }
 }

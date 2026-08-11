@@ -1,32 +1,32 @@
 package de.chunkloader.network.payload;
 
 import de.chunkloader.ChunkloaderMod;
-import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.packet.CustomPayload;
-import net.minecraft.util.Identifier;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.Identifier;
 
 public record RenameChunkloaderResponsePayload(
     boolean success,
     String message
-) implements CustomPayload {
+) implements CustomPacketPayload {
 
-    public static final CustomPayload.Id<RenameChunkloaderResponsePayload> ID =
-        new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "rename_chunkloader_response"));
-    
-    public static final PacketCodec<RegistryByteBuf, RenameChunkloaderResponsePayload> CODEC =
-        PacketCodec.of((payload, buf) -> {
+    public static final CustomPacketPayload.Type<RenameChunkloaderResponsePayload> TYPE =
+        new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(ChunkloaderMod.MOD_ID, "rename_chunkloader_response"));
+
+    public static final StreamCodec<RegistryFriendlyByteBuf, RenameChunkloaderResponsePayload> CODEC =
+        StreamCodec.of((buf, payload) -> {
             buf.writeBoolean(payload.success());
-            buf.writeString(payload.message() != null ? payload.message() : "");
+            buf.writeUtf(payload.message() != null ? payload.message() : "");
         }, buf -> {
             boolean success = buf.readBoolean();
-            String message = buf.readString();
+            String message = buf.readUtf();
             return new RenameChunkloaderResponsePayload(success, message.isEmpty() ? null : message);
         });
 
     @Override
-    public CustomPayload.Id<RenameChunkloaderResponsePayload> getId() {
-        return ID;
+    public CustomPacketPayload.Type<RenameChunkloaderResponsePayload> type() {
+        return TYPE;
     }
 }
 

@@ -1,10 +1,10 @@
 package de.chunkloader.network.payload;
 
 import de.chunkloader.ChunkloaderMod;
-import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.packet.CustomPayload;
-import net.minecraft.util.Identifier;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.Identifier;
 
 public record ChunkplayerStatusResponsePayload(
     boolean inLoadedChunk,
@@ -13,25 +13,25 @@ public record ChunkplayerStatusResponsePayload(
     int chunkZ,
     int radius,
     int distance
-) implements CustomPayload {
+) implements CustomPacketPayload {
 
-    public static final CustomPayload.Id<ChunkplayerStatusResponsePayload> ID =
-        new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "chunkplayer_status_response"));
-    public static final PacketCodec<RegistryByteBuf, ChunkplayerStatusResponsePayload> CODEC =
-        PacketCodec.of(ChunkplayerStatusResponsePayload::write, ChunkplayerStatusResponsePayload::read);
+    public static final CustomPacketPayload.Type<ChunkplayerStatusResponsePayload> TYPE =
+        new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(ChunkloaderMod.MOD_ID, "chunkplayer_status_response"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, ChunkplayerStatusResponsePayload> CODEC =
+        StreamCodec.of(ChunkplayerStatusResponsePayload::write, ChunkplayerStatusResponsePayload::read);
 
-    private static void write(ChunkplayerStatusResponsePayload payload, RegistryByteBuf buf) {
+    private static void write(RegistryFriendlyByteBuf buf, ChunkplayerStatusResponsePayload payload) {
         buf.writeBoolean(payload.inLoadedChunk());
-        buf.writeString(payload.chunkplayerName() != null ? payload.chunkplayerName() : "");
+        buf.writeUtf(payload.chunkplayerName() != null ? payload.chunkplayerName() : "");
         buf.writeInt(payload.chunkX());
         buf.writeInt(payload.chunkZ());
         buf.writeInt(payload.radius());
         buf.writeInt(payload.distance());
     }
 
-    private static ChunkplayerStatusResponsePayload read(RegistryByteBuf buf) {
+    private static ChunkplayerStatusResponsePayload read(RegistryFriendlyByteBuf buf) {
         boolean inLoadedChunk = buf.readBoolean();
-        String chunkplayerName = buf.readString();
+        String chunkplayerName = buf.readUtf();
         int chunkX = buf.readInt();
         int chunkZ = buf.readInt();
         int radius = buf.readInt();
@@ -40,8 +40,8 @@ public record ChunkplayerStatusResponsePayload(
     }
 
     @Override
-    public Id<ChunkplayerStatusResponsePayload> getId() {
-        return ID;
+    public Type<ChunkplayerStatusResponsePayload> type() {
+        return TYPE;
     }
 }
 
