@@ -6,30 +6,34 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
-public record ChunkloaderActionPayload(int chunkX, int chunkZ, Action action, int value) implements CustomPacketPayload {
+import java.util.Objects;
+
+public record ChunkloaderActionPayload(int chunkX, int chunkZ, String dimension, Action action, int value) implements CustomPacketPayload {
     public static final Identifier ID = Identifier.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "chunkloader_action");
     public static final Type<ChunkloaderActionPayload> TYPE = new Type<>(ID);
-    
+
     public static final StreamCodec<FriendlyByteBuf, ChunkloaderActionPayload> STREAM_CODEC = StreamCodec.of(
         (buf, payload) -> {
             buf.writeInt(payload.chunkX());
             buf.writeInt(payload.chunkZ());
+            buf.writeUtf(payload.dimension() != null ? payload.dimension() : "minecraft:overworld", 256);
             buf.writeEnum(payload.action());
             buf.writeInt(payload.value());
         },
         buf -> new ChunkloaderActionPayload(
             buf.readInt(),
             buf.readInt(),
-            buf.readEnum(Action.class),
+            Objects.requireNonNull(buf.readUtf(256), "dimension"),
+            Objects.requireNonNull(buf.readEnum(Action.class), "action"),
             buf.readInt()
         )
     );
-    
+
     @Override
     public Type<ChunkloaderActionPayload> type() {
         return TYPE;
     }
-    
+
     public enum Action {
         TOGGLE_ENABLED,
         TOGGLE_MOB_SPAWNING,
@@ -43,4 +47,3 @@ public record ChunkloaderActionPayload(int chunkX, int chunkZ, Action action, in
         TOGGLE_HIDE_OTHER_DOTS
     }
 }
-

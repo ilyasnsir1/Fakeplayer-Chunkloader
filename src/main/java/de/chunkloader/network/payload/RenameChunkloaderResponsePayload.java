@@ -13,7 +13,7 @@ public record RenameChunkloaderResponsePayload(
 
     public static final Type<RenameChunkloaderResponsePayload> TYPE =
         new Type<>(Identifier.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "rename_chunkloader_response"));
-    
+
     public static final StreamCodec<FriendlyByteBuf, RenameChunkloaderResponsePayload> STREAM_CODEC =
         StreamCodec.of(
             (buf, payload) -> {

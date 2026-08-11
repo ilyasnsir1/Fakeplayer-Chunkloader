@@ -25,6 +25,7 @@ public record ChunkMapData(
     int fakeplayerChunkZ,
     int fakeplayerBlockX,
     int fakeplayerBlockZ,
+    float fakeplayerYaw,
     String fakeplayerName,
     boolean nameVisible,
     boolean visualizeActive,
@@ -32,7 +33,7 @@ public record ChunkMapData(
     boolean canIncreaseRadius,
     List<ChunkloaderPosition> otherChunkloaders,
     String ownerName,
-    boolean hideOtherDots
+    boolean easterEgg
 ) {
 
     public void write(FriendlyByteBuf buf) {
@@ -60,6 +61,7 @@ public record ChunkMapData(
         buf.writeInt(fakeplayerChunkZ);
         buf.writeInt(fakeplayerBlockX);
         buf.writeInt(fakeplayerBlockZ);
+        buf.writeFloat(fakeplayerYaw);
         buf.writeUtf(fakeplayerName != null ? fakeplayerName : "");
         buf.writeBoolean(nameVisible);
         buf.writeBoolean(visualizeActive);
@@ -70,7 +72,7 @@ public record ChunkMapData(
             pos.write(buf);
         }
         buf.writeUtf(ownerName != null ? ownerName : "");
-        buf.writeBoolean(hideOtherDots);
+        buf.writeBoolean(easterEgg);
     }
 
     public static ChunkMapData read(FriendlyByteBuf buf) {
@@ -100,6 +102,7 @@ public record ChunkMapData(
         int fakeplayerChunkZ = buf.readInt();
         int fakeplayerBlockX = buf.readInt();
         int fakeplayerBlockZ = buf.readInt();
+        float fakeplayerYaw = buf.readFloat();
         String fakeplayerName = buf.readUtf(32767);
         boolean nameVisible = buf.readBoolean();
         boolean visualizeActive = buf.readBoolean();
@@ -111,7 +114,7 @@ public record ChunkMapData(
             otherChunkloaders.add(ChunkloaderPosition.read(buf));
         }
         String ownerName = buf.readUtf(32767);
-        boolean hideOtherDots = buf.readBoolean();
+        boolean easterEgg = buf.readBoolean();
         return new ChunkMapData(
             name,
             enabled,
@@ -131,6 +134,7 @@ public record ChunkMapData(
             fakeplayerChunkZ,
             fakeplayerBlockX,
             fakeplayerBlockZ,
+            fakeplayerYaw,
             fakeplayerName.isEmpty() ? null : fakeplayerName,
             nameVisible,
             visualizeActive,
@@ -138,7 +142,7 @@ public record ChunkMapData(
             canIncreaseRadius,
             Collections.unmodifiableList(otherChunkloaders),
             ownerName.isEmpty() ? null : ownerName,
-            hideOtherDots
+            easterEgg
         );
     }
 }

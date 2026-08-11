@@ -1,6 +1,6 @@
 package de.chunkloader.client.screen;
 
-import de.chunkloader.network.ChunkloaderNetworking;
+import de.chunkloader.client.network.ChunkloaderClientNetworking;
 import de.chunkloader.network.payload.DisabledChunkloadersListPayload;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -13,7 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class DisabledChunkloadersScreen extends Screen {
-    
+
     private List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> disabledChunkloaders = new ArrayList<>();
     private EditBox searchField;
     private String searchQuery = "";
@@ -67,11 +67,11 @@ public class DisabledChunkloadersScreen extends Screen {
         int thumbY = contentTop + (int) ((double) scrollOffset / maxScroll * (availableHeight - scrollbarHeight));
         return new ScrollbarMetrics(scrollbarX, scrollbarWidth, contentTop, availableHeight, thumbY, scrollbarHeight, maxScroll);
     }
-    
+
     public DisabledChunkloadersScreen(List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> disabledChunkloaders) {
         this(disabledChunkloaders, null);
     }
-    
+
     public DisabledChunkloadersScreen(List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> disabledChunkloaders, Screen parentScreen) {
         super(Component.literal("Disabled Fakeplayer/Chunkplayer"));
         this.parentScreen = parentScreen;
@@ -80,7 +80,11 @@ public class DisabledChunkloadersScreen extends Screen {
             this.disabledChunkloaders.addAll(disabledChunkloaders);
         }
     }
-    
+
+    public Screen getParentScreen() {
+        return parentScreen;
+    }
+
     public void updateDisabledChunkloaders(List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> disabledChunkloaders) {
         this.disabledChunkloaders = new ArrayList<>();
         if (disabledChunkloaders != null) {
@@ -109,7 +113,7 @@ public class DisabledChunkloadersScreen extends Screen {
         }
         return filtered;
     }
-    
+
     @Override
     protected void init() {
         super.init();
@@ -150,7 +154,7 @@ public class DisabledChunkloadersScreen extends Screen {
         contentBottom = this.height - 60;
 
         List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> visibleEntries = getFilteredEntries();
-        
+
         int buttonWidth = 100;
         int buttonSpacing = 10;
         int totalButtonsWidth = parentScreen != null ? buttonWidth * 2 + buttonSpacing : buttonWidth;
@@ -173,10 +177,10 @@ public class DisabledChunkloadersScreen extends Screen {
             .bounds(buttonX, buttonY, buttonWidth, 20)
             .build()
         );
-        
+
         int availableHeight = contentBottom - contentTop;
         int itemsThatFitFully = availableHeight / ITEM_HEIGHT;
-        
+
         int maxScroll = Math.max(0, visibleEntries.size() - itemsThatFitFully);
         if (scrollOffset > maxScroll) {
             scrollOffset = maxScroll;
@@ -198,7 +202,7 @@ public class DisabledChunkloadersScreen extends Screen {
             );
             maxTextWidth = Math.max(maxTextWidth, textWidth);
         }
-        
+
         for (int i = 0; i < itemsThatFitFully && (scrollOffset + i) < visibleEntries.size(); i++) {
             int index = scrollOffset + i;
             if (index < 0 || index >= visibleEntries.size()) {
@@ -206,25 +210,25 @@ public class DisabledChunkloadersScreen extends Screen {
             }
             DisabledChunkloadersListPayload.DisabledChunkloaderEntry entry = visibleEntries.get(index);
             int itemY = contentTop + i * ITEM_HEIGHT;
-            
+
             if (itemY < contentTop || itemY + ITEM_HEIGHT > contentBottom) {
                 continue;
             }
-            
+
             int infoStartX = 20;
             int infoEndX = infoStartX + maxTextWidth;
             int editButtonSpacing = 15;
             int editButtonX = infoEndX + editButtonSpacing;
             int editButtonWidth = 60;
-            
+
             int deleteButtonWidth = 70;
             int restoreButtonWidth = 70;
             int restoreDeleteSpacing = 10;
             int rightMargin = 20;
-            
+
             int deleteButtonX = this.width - rightMargin - deleteButtonWidth;
             int restoreButtonX = deleteButtonX - restoreDeleteSpacing - restoreButtonWidth;
-            
+
             this.addRenderableWidget(Button.builder(
                     Component.literal("Edit"),
                     btn -> {
@@ -233,38 +237,40 @@ public class DisabledChunkloadersScreen extends Screen {
                 .bounds(editButtonX, itemY + 10, editButtonWidth, 20)
                 .build()
             );
-            
+
             Button restoreButton = Button.builder(
                     Component.literal("Restore"),
                     btn -> {
-                        ChunkloaderNetworking.sendRestoreDisabledChunkloader(entry.chunkX(), entry.chunkZ());
-                        ChunkloaderNetworking.requestDisabledChunkloadersList();
+                        ChunkloaderClientNetworking.sendRestoreDisabledChunkloader(entry.chunkX(), entry.chunkZ(), entry.dimension());
+                        ChunkloaderClientNetworking.requestDisabledChunkloadersList();
                     })
                 .bounds(restoreButtonX, itemY + 10, restoreButtonWidth, 20)
                 .build();
             this.addRenderableWidget(restoreButton);
-            
+
             this.addRenderableWidget(Button.builder(
                     Component.literal("Delete").withStyle(ChatFormatting.RED),
                     btn -> {
                         String name = entry.name() != null ? entry.name() : "Unnamed";
-                        Component title = Component.literal("Delete Chunkloader?").withStyle(ChatFormatting.RED, ChatFormatting.BOLD);
+                        Component title = Component.literal("Delete Player?").withStyle(ChatFormatting.RED, ChatFormatting.BOLD);
                         Component message = Component.literal("Are you sure you want to permanently delete\n" + name + "?");
                         DisabledChunkloadersScreen screen = this;
                         int deleteChunkX = entry.chunkX();
                         int deleteChunkZ = entry.chunkZ();
+                        String deleteDimension = entry.dimension();
                         this.minecraft.setScreen(new ChunkloaderConfirmationScreen(
                             screen,
                             title,
                             message,
                             () -> {
                                 List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> newList = new ArrayList<>(disabledChunkloaders);
-                                newList.removeIf(e -> e.chunkX() == deleteChunkX && e.chunkZ() == deleteChunkZ);
+                                newList.removeIf(e -> e.chunkX() == deleteChunkX && e.chunkZ() == deleteChunkZ
+                                        && java.util.Objects.equals(e.dimension(), deleteDimension));
                                 disabledChunkloaders.clear();
                                 disabledChunkloaders.addAll(newList);
                                 scrollOffset = 0;
-                                ChunkloaderNetworking.sendDeleteDisabledChunkloader(deleteChunkX, deleteChunkZ);
-                                ChunkloaderNetworking.requestDisabledChunkloadersList();
+                                ChunkloaderClientNetworking.sendDeleteDisabledChunkloader(deleteChunkX, deleteChunkZ, deleteDimension);
+                                ChunkloaderClientNetworking.requestDisabledChunkloadersList();
                                 this.minecraft.setScreen(screen);
                             },
                             null
@@ -279,33 +285,33 @@ public class DisabledChunkloadersScreen extends Screen {
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         drawDimBackground(graphics);
-        
+
         var font = this.font;
-        
+
         Component title = Component.literal("Disabled Fakeplayer/Chunkplayer").withStyle(ChatFormatting.BOLD, ChatFormatting.RED);
         int titleWidth = font.width(title);
         graphics.drawString(font, title, (this.width - titleWidth) / 2, 20, 0xFFFF5555, false);
-        
+
         List<DisabledChunkloadersListPayload.DisabledChunkloaderEntry> visibleEntries = getFilteredEntries();
 
         if (visibleEntries.isEmpty()) {
-            Component emptyText = Component.literal("No disabled fakeplayers/chunkplayers").withStyle(ChatFormatting.GRAY);
+            Component emptyText = Component.literal("No disabled players").withStyle(ChatFormatting.GRAY);
             int emptyWidth = font.width(emptyText);
             graphics.drawString(font, emptyText, (this.width - emptyWidth) / 2, this.height / 2, 0xFFCCCCCC, false);
             super.render(graphics, mouseX, mouseY, delta);
             return;
         }
-        
+
         int availableHeight = contentBottom - contentTop;
         int itemsThatFitFully = availableHeight / ITEM_HEIGHT;
-        
+
         int maxScroll = Math.max(0, visibleEntries.size() - itemsThatFitFully);
         if (scrollOffset > maxScroll) {
             scrollOffset = maxScroll;
         }
-        
+
         graphics.enableScissor(0, contentTop, this.width, contentBottom);
-        
+
         for (int i = 0; i < itemsThatFitFully && (scrollOffset + i) < visibleEntries.size(); i++) {
             int index = scrollOffset + i;
             if (index < 0 || index >= visibleEntries.size()) {
@@ -313,15 +319,18 @@ public class DisabledChunkloadersScreen extends Screen {
             }
             DisabledChunkloadersListPayload.DisabledChunkloaderEntry entry = visibleEntries.get(index);
             int itemY = contentTop + i * ITEM_HEIGHT;
-            
+
             if (itemY < contentTop || itemY + ITEM_HEIGHT > contentBottom) {
                 continue;
             }
-            
+
             String name = entry.name() != null ? entry.name() : "Unnamed";
             ChatFormatting color;
             int colorValue;
-            if (entry.allowMobSpawning()) {
+            if (entry.easterEggSkinIndex() >= 0) {
+                color = ChatFormatting.GOLD;
+                colorValue = 0xFFFFAA00;
+            } else if (entry.allowMobSpawning()) {
                 if (entry.hasWarning()) {
                     color = ChatFormatting.YELLOW;
                     colorValue = 0xFFFFFF55;
@@ -335,12 +344,12 @@ public class DisabledChunkloadersScreen extends Screen {
             }
             Component nameText = Component.literal(name).withStyle(color);
             graphics.drawString(font, nameText, 20, itemY + 5, colorValue, false);
-            
-            String posText = String.format("Chunk: %d, %d | Block: %d, %d, %d", 
+
+            String posText = String.format("Chunk: %d, %d | Block: %d, %d, %d",
                 entry.chunkX(), entry.chunkZ(), entry.blockX(), entry.blockY(), entry.blockZ());
             Component positionText = Component.literal(posText).withStyle(ChatFormatting.GRAY);
             graphics.drawString(font, positionText, 20, itemY + 18, 0xFFCCCCCC, false);
-            
+
             String dimText = entry.dimension().replace("minecraft:", "");
             ChatFormatting dimColor = ChatFormatting.GRAY;
             String dimLower = dimText.toLowerCase();
@@ -354,7 +363,7 @@ public class DisabledChunkloadersScreen extends Screen {
             Component dimensionText = Component.literal("Dimension: ").withStyle(ChatFormatting.GRAY)
                 .append(Component.literal(dimText).withStyle(dimColor));
             graphics.drawString(font, dimensionText, 20, itemY + 29, 0xFFFFFFFF, false);
-            
+
             if (i < itemsThatFitFully - 1 && (scrollOffset + i + 1) < visibleEntries.size()) {
                 int lineY = itemY + ITEM_HEIGHT - 1;
                 int lineLeft = 10;
@@ -362,47 +371,47 @@ public class DisabledChunkloadersScreen extends Screen {
                 graphics.fill(lineLeft, lineY, lineRight, lineY + 1, 0x33FFFFFF);
             }
         }
-        
+
         graphics.disableScissor();
-        
+
         drawScrollbar(graphics);
-        
+
         super.render(graphics, mouseX, mouseY, delta);
     }
-    
+
     private void drawScrollbar(GuiGraphics graphics) {
         int availableHeight = contentBottom - contentTop;
         int itemsVisible = availableHeight / ITEM_HEIGHT;
         int total = getFilteredEntries().size();
         int maxItems = Math.max(0, total - itemsVisible);
-        
+
         if (maxItems <= 0) {
             return;
         }
-        
+
         int scrollbarWidth = 3;
         int scrollbarX = this.width - scrollbarWidth - 2;
         int scrollbarHeight = total <= 0 ? 0 : (int)((double)itemsVisible / total * availableHeight);
         if (maxItems > 0) {
             int scrollbarY = contentTop + (int)((double)scrollOffset / maxItems * (availableHeight - scrollbarHeight));
-            
+
             graphics.fill(scrollbarX, contentTop, scrollbarX + scrollbarWidth, contentBottom, 0x33000000);
             graphics.fill(scrollbarX, scrollbarY, scrollbarX + scrollbarWidth, scrollbarY + scrollbarHeight, 0xFFAAAAAA);
         }
     }
-    
+
     private void drawDimBackground(GuiGraphics graphics) {
         graphics.fill(0, 0, this.width, this.height, 0xC0101010);
     }
-    
+
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
         int availableHeight = contentBottom - contentTop;
         int maxItems = Math.max(0, getFilteredEntries().size() - (availableHeight / ITEM_HEIGHT));
-        
+
         int scrollDelta = (int)(verticalAmount * 3);
         scrollOffset = Math.max(0, Math.min(maxItems, scrollOffset - scrollDelta));
-        
+
         this.clearWidgets();
         this.init();
         return true;
@@ -410,6 +419,13 @@ public class DisabledChunkloadersScreen extends Screen {
 
     @Override
     public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent event, boolean doubleClick) {
+        if (event.button() == 0 && searchField != null && !searchField.isMouseOver(event.x(), event.y())) {
+            if (this.getFocused() == searchField) {
+                this.setFocused(null);
+            }
+            searchField.setFocused(false);
+        }
+
         if (super.mouseClicked(event, doubleClick)) {
             return true;
         }
@@ -417,14 +433,6 @@ public class DisabledChunkloadersScreen extends Screen {
         if (event.button() == 0) {
             double mouseX = event.x();
             double mouseY = event.y();
-
-            if (searchField != null && !searchField.isMouseOver(mouseX, mouseY)) {
-                if (this.getFocused() == searchField) {
-                    this.setFocused(null);
-                }
-                searchField.setFocused(false);
-            }
-
             ScrollbarMetrics metrics = getScrollbarMetrics();
             if (metrics != null
                 && mouseX >= metrics.x && mouseX < metrics.x + metrics.width
@@ -487,11 +495,11 @@ public class DisabledChunkloadersScreen extends Screen {
 
         return false;
     }
-    
+
     @Override
     public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
     }
-    
+
     @Override
     public boolean isPauseScreen() {
         return false;

@@ -19,11 +19,6 @@ public final class FakePlayerNameCache {
             return null;
         }
 
-        String cached = plainNameCache.get(player);
-        if (cached != null) {
-            return cached;
-        }
-
         Component customName = player.getCustomName();
         if (customName == null) {
             return null;
@@ -36,12 +31,6 @@ public final class FakePlayerNameCache {
 
         String plainName = removeFormattingCodes(nameString);
 
-        if (!plainName.startsWith("Fakeplayer") && !plainName.startsWith("Chunkplayer") &&
-            !plainName.startsWith("fakeplayer") && !plainName.startsWith("chunkplayer")) {
-            return null;
-        }
-
-        plainNameCache.put(player, plainName);
         return plainName;
     }
 

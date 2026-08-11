@@ -57,6 +57,7 @@ configurations {
 dependencies {
     implementation "net.neoforged:neoforge:${neo_version}"
     implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'io.github.llamalad7:mixinextras-neoforge:0.5.0'
 }
 
 tasks.withType(ProcessResources).configureEach {
