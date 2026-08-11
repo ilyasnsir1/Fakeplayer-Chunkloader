@@ -27,4 +27,3 @@ public record ChunkMapTile(int chunkX, int chunkZ, int[] pixels) {
     }
 }
 
-

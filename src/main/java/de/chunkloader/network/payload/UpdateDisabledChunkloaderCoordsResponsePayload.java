@@ -13,7 +13,7 @@ public record UpdateDisabledChunkloaderCoordsResponsePayload(
 
     public static final Type<UpdateDisabledChunkloaderCoordsResponsePayload> TYPE =
         new Type<>(Identifier.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "update_disabled_chunkloader_coords_response"));
-    
+
     public static final StreamCodec<FriendlyByteBuf, UpdateDisabledChunkloaderCoordsResponsePayload> STREAM_CODEC =
         StreamCodec.of(
             (buf, payload) -> {

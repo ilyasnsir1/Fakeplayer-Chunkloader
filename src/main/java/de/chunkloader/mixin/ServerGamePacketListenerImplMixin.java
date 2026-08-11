@@ -1,6 +1,7 @@
 package de.chunkloader.mixin;
 
 import de.chunkloader.fakeplayer.ChunkloaderFakePlayer;
+import de.chunkloader.fakeplayer.SyntheticPlayerContext;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerGamePacketListenerImpl;
@@ -23,7 +24,7 @@ public abstract class ServerGamePacketListenerImplMixin {
         require = 0
     )
     private void chunkloader$skipSendToFakePlayer(Packet<?> packet, CallbackInfo ci) {
-        if (player instanceof ChunkloaderFakePlayer) {
+        if (shouldSuppress()) {
             ci.cancel();
         }
     }
@@ -35,8 +36,13 @@ public abstract class ServerGamePacketListenerImplMixin {
         require = 0
     )
     private void chunkloader$skipSendToFakePlayer(Packet<?> packet, Object listener, CallbackInfo ci) {
-        if (player instanceof ChunkloaderFakePlayer) {
+        if (shouldSuppress()) {
             ci.cancel();
         }
+    }
+
+    private boolean shouldSuppress() {
+        return player instanceof ChunkloaderFakePlayer
+                || SyntheticPlayerContext.isMarked(player);
     }
 }
