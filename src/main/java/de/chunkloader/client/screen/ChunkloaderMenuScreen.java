@@ -2,10 +2,10 @@ package de.chunkloader.client.screen;
 
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.network.chat.Component;
 
 @Environment(EnvType.CLIENT)
 public class ChunkloaderMenuScreen extends Screen {
@@ -13,68 +13,72 @@ public class ChunkloaderMenuScreen extends Screen {
     private final Screen parent;
 
     public ChunkloaderMenuScreen(Screen parent) {
-        super(Text.literal("Chunkloader Menu"));
+        super(Component.literal("Mod Menu"));
         this.parent = parent;
     }
-    
+
+    public Screen getParentScreen() {
+        return parent;
+    }
+
     @Override
     protected void init() {
         super.init();
-        
+
         int buttonWidth = 200;
         int buttonHeight = 20;
         int buttonSpacing = 30;
         int startY = this.height / 2 - 40;
         int buttonX = (this.width - buttonWidth) / 2;
-        
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.literal("Infos about the mod"),
-                btn -> this.client.setScreen(new ChunkloaderInfoScreen(this)))
-            .dimensions(buttonX, startY, buttonWidth, buttonHeight)
+
+        this.addRenderableWidget(Button.builder(
+                Component.literal("Infos about the mod"),
+                btn -> this.minecraft.gui.setScreen(new ChunkloaderInfoScreen(this)))
+            .bounds(buttonX, startY, buttonWidth, buttonHeight)
             .build()
         );
-        
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.literal("Commands"),
-                btn -> this.client.setScreen(new ChunkloaderCommandsScreen(this)))
-            .dimensions(buttonX, startY + buttonSpacing, buttonWidth, buttonHeight)
+
+        this.addRenderableWidget(Button.builder(
+                Component.literal("Commands"),
+                btn -> this.minecraft.gui.setScreen(new ChunkloaderCommandsScreen(this)))
+            .bounds(buttonX, startY + buttonSpacing, buttonWidth, buttonHeight)
             .build()
         );
-        
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.literal("Contact"),
-                btn -> this.client.setScreen(new ChunkloaderContactScreen(this)))
-            .dimensions(buttonX, startY + buttonSpacing * 2, buttonWidth, buttonHeight)
+
+        this.addRenderableWidget(Button.builder(
+                Component.literal("Contact"),
+                btn -> this.minecraft.gui.setScreen(new ChunkloaderContactScreen(this)))
+            .bounds(buttonX, startY + buttonSpacing * 2, buttonWidth, buttonHeight)
             .build()
         );
-        
+
         int backButtonWidth = 100;
         int backButtonX = (this.width - backButtonWidth) / 2;
         int backButtonY = this.height - 30;
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.literal("Back"),
-                btn -> this.client.setScreen(parent))
-            .dimensions(backButtonX, backButtonY, backButtonWidth, buttonHeight)
+        this.addRenderableWidget(Button.builder(
+                Component.literal("Back"),
+                btn -> this.minecraft.gui.setScreen(parent))
+            .bounds(backButtonX, backButtonY, backButtonWidth, buttonHeight)
             .build()
         );
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
         drawDimBackground(context);
-        super.render(context, mouseX, mouseY, delta);
+        super.extractRenderState(context, mouseX, mouseY, delta);
     }
-    
-    private void drawDimBackground(DrawContext context) {
+
+    private void drawDimBackground(GuiGraphicsExtractor context) {
         context.fill(0, 0, this.width, this.height, 0xC0101010);
     }
-    
+
     @Override
-    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void extractBackground(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
     }
-    
+
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 }

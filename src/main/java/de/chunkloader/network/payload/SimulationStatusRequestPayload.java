@@ -1,28 +1,27 @@
 package de.chunkloader.network.payload;
 
 import de.chunkloader.ChunkloaderMod;
-import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.packet.CustomPayload;
-import net.minecraft.util.Identifier;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.Identifier;
 
-public record SimulationStatusRequestPayload(boolean forceResponse) implements CustomPayload {
+public record SimulationStatusRequestPayload(boolean forceResponse) implements CustomPacketPayload {
 
     public SimulationStatusRequestPayload() {
         this(false);
     }
 
-    public static final CustomPayload.Id<SimulationStatusRequestPayload> ID =
-        new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "simulation_status_request"));
-    public static final PacketCodec<RegistryByteBuf, SimulationStatusRequestPayload> CODEC =
-        PacketCodec.of(
-            (payload, buf) -> buf.writeBoolean(payload.forceResponse()),
+    public static final CustomPacketPayload.Type<SimulationStatusRequestPayload> TYPE =
+        new CustomPacketPayload.Type<>(Identifier.fromNamespaceAndPath(ChunkloaderMod.MOD_ID, "simulation_status_request"));
+    public static final StreamCodec<RegistryFriendlyByteBuf, SimulationStatusRequestPayload> CODEC =
+        StreamCodec.of((buf, payload) -> buf.writeBoolean(payload.forceResponse()),
             buf -> new SimulationStatusRequestPayload(buf.readBoolean())
         );
 
     @Override
-    public Id<SimulationStatusRequestPayload> getId() {
-        return ID;
+    public Type<SimulationStatusRequestPayload> type() {
+        return TYPE;
     }
 }
 

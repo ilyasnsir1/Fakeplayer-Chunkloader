@@ -1,6 +1,6 @@
 package de.chunkloader.network;
 
-import net.minecraft.network.PacketByteBuf;
+import net.minecraft.network.FriendlyByteBuf;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -14,6 +14,9 @@ public record ChunkMapData(
     int centerChunkZ,
     int blockY,
     int chunkRadius,
+    int entityTickRadius,
+    int blockTickRadius,
+    int loadingRadius,
     int mapWidth,
     int mapHeight,
     int topLeftChunkX,
@@ -24,6 +27,8 @@ public record ChunkMapData(
     int fakeplayerChunkZ,
     int fakeplayerBlockX,
     int fakeplayerBlockZ,
+    long mapGeneration,
+    float fakeplayerYaw,
     String fakeplayerName,
     boolean nameVisible,
     boolean visualizeActive,
@@ -31,22 +36,25 @@ public record ChunkMapData(
     boolean canIncreaseRadius,
     List<ChunkloaderPosition> otherChunkloaders,
     String ownerName,
-    boolean hideOtherDots
+    boolean easterEgg
 ) {
 
-    public void write(PacketByteBuf buf) {
-        buf.writeString(displayName);
+    public void write(FriendlyByteBuf buf) {
+        buf.writeUtf(displayName);
         buf.writeBoolean(enabled);
         buf.writeBoolean(allowMobSpawning);
         buf.writeInt(centerChunkX);
         buf.writeInt(centerChunkZ);
         buf.writeInt(blockY);
         buf.writeInt(chunkRadius);
+        buf.writeInt(entityTickRadius);
+        buf.writeInt(blockTickRadius);
+        buf.writeInt(loadingRadius);
         buf.writeVarInt(mapWidth);
         buf.writeVarInt(mapHeight);
         buf.writeInt(topLeftChunkX);
         buf.writeInt(topLeftChunkZ);
-        buf.writeString(dimensionKey);
+        buf.writeUtf(dimensionKey);
         buf.writeVarInt(cells.size());
         for (ChunkMapCell cell : cells) {
             cell.write(buf);
@@ -55,7 +63,9 @@ public record ChunkMapData(
         buf.writeInt(fakeplayerChunkZ);
         buf.writeInt(fakeplayerBlockX);
         buf.writeInt(fakeplayerBlockZ);
-        buf.writeString(fakeplayerName != null ? fakeplayerName : "");
+        buf.writeLong(mapGeneration);
+        buf.writeFloat(fakeplayerYaw);
+        buf.writeUtf(fakeplayerName != null ? fakeplayerName : "");
         buf.writeBoolean(nameVisible);
         buf.writeBoolean(visualizeActive);
         buf.writeBoolean(visualize3DActive);
@@ -64,23 +74,26 @@ public record ChunkMapData(
         for (de.chunkloader.network.ChunkloaderPosition pos : otherChunkloaders) {
             pos.write(buf);
         }
-        buf.writeString(ownerName != null ? ownerName : "");
-        buf.writeBoolean(hideOtherDots);
+        buf.writeUtf(ownerName != null ? ownerName : "");
+        buf.writeBoolean(easterEgg);
     }
 
-    public static ChunkMapData read(PacketByteBuf buf) {
-        String name = buf.readString(32767);
+    public static ChunkMapData read(FriendlyByteBuf buf) {
+        String name = buf.readUtf(32767);
         boolean enabled = buf.readBoolean();
         boolean allowMobSpawning = buf.readBoolean();
         int centerChunkX = buf.readInt();
         int centerChunkZ = buf.readInt();
         int blockY = buf.readInt();
         int chunkRadius = buf.readInt();
+        int entityTickRadius = buf.readInt();
+        int blockTickRadius = buf.readInt();
+        int loadingRadius = buf.readInt();
         int mapWidth = buf.readVarInt();
         int mapHeight = buf.readVarInt();
         int topLeftChunkX = buf.readInt();
         int topLeftChunkZ = buf.readInt();
-        String dimensionKey = buf.readString(32767);
+        String dimensionKey = buf.readUtf(32767);
         int cellCount = buf.readVarInt();
         List<ChunkMapCell> cells = new ArrayList<>(cellCount);
         for (int i = 0; i < cellCount; i++) {
@@ -90,7 +103,9 @@ public record ChunkMapData(
         int fakeplayerChunkZ = buf.readInt();
         int fakeplayerBlockX = buf.readInt();
         int fakeplayerBlockZ = buf.readInt();
-        String fakeplayerName = buf.readString(32767);
+        long mapGeneration = buf.readLong();
+        float fakeplayerYaw = buf.readFloat();
+        String fakeplayerName = buf.readUtf(32767);
         boolean nameVisible = buf.readBoolean();
         boolean visualizeActive = buf.readBoolean();
         boolean visualize3DActive = buf.readBoolean();
@@ -100,8 +115,8 @@ public record ChunkMapData(
         for (int i = 0; i < otherChunkloadersCount; i++) {
             otherChunkloaders.add(de.chunkloader.network.ChunkloaderPosition.read(buf));
         }
-        String ownerName = buf.readString(32767);
-        boolean hideOtherDots = buf.readBoolean();
+        String ownerName = buf.readUtf(32767);
+        boolean easterEgg = buf.readBoolean();
         return new ChunkMapData(
             name,
             enabled,
@@ -110,6 +125,9 @@ public record ChunkMapData(
             centerChunkZ,
             blockY,
             chunkRadius,
+            entityTickRadius,
+            blockTickRadius,
+            loadingRadius,
             mapWidth,
             mapHeight,
             topLeftChunkX,
@@ -120,6 +138,8 @@ public record ChunkMapData(
             fakeplayerChunkZ,
             fakeplayerBlockX,
             fakeplayerBlockZ,
+            mapGeneration,
+            fakeplayerYaw,
             fakeplayerName.isEmpty() ? null : fakeplayerName,
             nameVisible,
             visualizeActive,
@@ -127,8 +147,7 @@ public record ChunkMapData(
             canIncreaseRadius,
             Collections.unmodifiableList(otherChunkloaders),
             ownerName.isEmpty() ? null : ownerName,
-            hideOtherDots
+            easterEgg
         );
     }
 }
-

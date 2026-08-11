@@ -3,34 +3,36 @@ package de.chunkloader.client.screen;
 import de.chunkloader.ChunkloaderMod;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.texture.NativeImageBackedTexture;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.world.Heightmap;
-import net.minecraft.world.World;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.client.Minecraft;
+import com.mojang.blaze3d.platform.NativeImage;
+import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.resources.Identifier;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.Level;
 
 @Environment(EnvType.CLIENT)
 public class ChunkTileImage implements AutoCloseable {
 
-    private final ClientWorld world;
+    private final ClientLevel world;
     private final ChunkPos chunkPos;
     private final int yLevel;
+    private final int rotation;
 
-    private NativeImageBackedTexture texture;
+    private DynamicTexture texture;
     private Identifier textureId;
 
-    public ChunkTileImage(ClientWorld world, ChunkPos chunkPos, int yLevel) {
+    public ChunkTileImage(ClientLevel world, ChunkPos chunkPos, int yLevel, int rotation) {
         this.world = world;
         this.chunkPos = chunkPos;
         this.yLevel = yLevel;
+        this.rotation = Math.floorMod(rotation, 4);
     }
 
     public Identifier getTextureId() {
@@ -38,9 +40,9 @@ public class ChunkTileImage implements AutoCloseable {
             return null;
         }
         if (textureId == null) {
-            texture = new NativeImageBackedTexture(() -> "chunkloader_map_tile", createImage());
-            textureId = Identifier.of(ChunkloaderMod.MOD_ID, "chunkmap/" + chunkPos.x + "_" + chunkPos.z + "_" + yLevel);
-            MinecraftClient.getInstance().getTextureManager().registerTexture(textureId, texture);
+            texture = new DynamicTexture(() -> "chunkloader_map_tile", createImage());
+            textureId = Identifier.fromNamespaceAndPath(ChunkloaderMod.MOD_ID, "chunkmap/" + chunkPos.x() + "_" + chunkPos.z() + "_" + yLevel + "_r" + rotation);
+            Minecraft.getInstance().getTextureManager().register(textureId, texture);
         }
         return textureId;
     }
@@ -48,7 +50,7 @@ public class ChunkTileImage implements AutoCloseable {
     @Override
     public void close() {
         if (textureId != null) {
-            MinecraftClient.getInstance().getTextureManager().destroyTexture(textureId);
+            Minecraft.getInstance().getTextureManager().release(textureId);
             textureId = null;
         }
         if (texture != null) {
@@ -59,12 +61,12 @@ public class ChunkTileImage implements AutoCloseable {
 
     private NativeImage createImage() {
         NativeImage image = new NativeImage(NativeImage.Format.RGBA, 16, 16, false);
-        boolean sampleSameLayer = world.getDimension().hasCeiling();
+        boolean sampleSameLayer = world.dimensionType().hasCeiling();
 
-        if (!world.getChunkManager().isChunkLoaded(chunkPos.x, chunkPos.z)) {
+        if (!world.getChunkSource().hasChunk(chunkPos.x(), chunkPos.z())) {
             for (int localX = 0; localX < 16; localX++) {
                 for (int localZ = 0; localZ < 16; localZ++) {
-                    image.setColor(localX, localZ, 0xFF555555);
+                    setPixelWithRotation(image, localX, localZ, 0xFF555555);
                 }
             }
             return image;
@@ -72,8 +74,8 @@ public class ChunkTileImage implements AutoCloseable {
 
         for (int localX = 0; localX < 16; localX++) {
             for (int localZ = 0; localZ < 16; localZ++) {
-                int worldX = chunkPos.getStartX() + localX;
-                int worldZ = chunkPos.getStartZ() + localZ;
+                int worldX = chunkPos.getMinBlockX() + localX;
+                int worldZ = chunkPos.getMinBlockZ() + localZ;
 
                 BlockPos samplePos;
                 int northY = -1;
@@ -83,35 +85,35 @@ public class ChunkTileImage implements AutoCloseable {
                 try {
                 if (sampleSameLayer) {
                     samplePos = findSurfaceWithFallback(worldX, yLevel + 1, worldZ, 16);
-                    if (world.getChunkManager().isChunkLoaded(chunkPos.x, chunkPos.z - 1)) {
+                    if (world.getChunkSource().hasChunk(chunkPos.x(), chunkPos.z() - 1)) {
                         BlockPos northPos = findSurfaceWithFallback(worldX, yLevel + 1, worldZ - 1, 16);
                         if (!world.getBlockState(northPos).isAir()) {
                             northY = northPos.getY();
                         }
                     }
-                    if (world.getChunkManager().isChunkLoaded(chunkPos.x - 1, chunkPos.z)) {
+                    if (world.getChunkSource().hasChunk(chunkPos.x() - 1, chunkPos.z())) {
                         BlockPos westPos = findSurfaceWithFallback(worldX - 1, yLevel + 1, worldZ, 16);
                         if (!world.getBlockState(westPos).isAir()) {
                             westY = westPos.getY();
                         }
                     }
                 } else {
-                    samplePos = world.getTopPosition(Heightmap.Type.WORLD_SURFACE, new BlockPos(worldX, 0, worldZ)).down();
-                    if (world.isAir(samplePos)) {
+                    samplePos = world.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, new BlockPos(worldX, 0, worldZ)).below();
+                    if (world.isEmptyBlock(samplePos)) {
                         samplePos = firstSolidBlockBelowUnlimited(worldX, samplePos.getY(), worldZ);
                     }
-                    if (world.getChunkManager().isChunkLoaded(chunkPos.x, chunkPos.z - 1)) {
-                        BlockPos northPos = world.getTopPosition(Heightmap.Type.WORLD_SURFACE, new BlockPos(worldX, 0, worldZ - 1)).down();
-                        if (world.isAir(northPos)) {
+                    if (world.getChunkSource().hasChunk(chunkPos.x(), chunkPos.z() - 1)) {
+                        BlockPos northPos = world.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, new BlockPos(worldX, 0, worldZ - 1)).below();
+                        if (world.isEmptyBlock(northPos)) {
                             northPos = firstSolidBlockBelowUnlimited(worldX, northPos.getY(), worldZ - 1);
                         }
                         if (!world.getBlockState(northPos).isAir()) {
                             northY = northPos.getY();
                         }
                     }
-                    if (world.getChunkManager().isChunkLoaded(chunkPos.x - 1, chunkPos.z)) {
-                        BlockPos westPos = world.getTopPosition(Heightmap.Type.WORLD_SURFACE, new BlockPos(worldX - 1, 0, worldZ)).down();
-                        if (world.isAir(westPos)) {
+                    if (world.getChunkSource().hasChunk(chunkPos.x() - 1, chunkPos.z())) {
+                        BlockPos westPos = world.getHeightmapPos(Heightmap.Types.WORLD_SURFACE, new BlockPos(worldX - 1, 0, worldZ)).below();
+                        if (world.isEmptyBlock(westPos)) {
                             westPos = firstSolidBlockBelowUnlimited(worldX - 1, westPos.getY(), worldZ);
                         }
                         if (!world.getBlockState(westPos).isAir()) {
@@ -120,36 +122,32 @@ public class ChunkTileImage implements AutoCloseable {
                     }
                     }
 
-                if (!world.isInBuildLimit(samplePos)) {
-                        image.setColor(localX, localZ, 0xFF555555);
+                if (!world.isInWorldBounds(samplePos)) {
+                        setPixelWithRotation(image, localX, localZ, 0xFF555555);
                         continue;
                     }
 
                 state = world.getBlockState(samplePos);
                 if (state.isAir()) {
-                    image.setColor(localX, localZ, 0xFF000000);
+                    setPixelWithRotation(image, localX, localZ, 0xFF000000);
                     continue;
                 }
-                
+
                 Block block = state.getBlock();
                 boolean isLava = block == Blocks.LAVA || block == Blocks.LAVA_CAULDRON;
-                boolean isNether = world.getRegistryKey() == World.NETHER;
-                
+                boolean isNether = world.dimension() == Level.NETHER;
+
                 var mapColor = state.getMapColor(world, samplePos);
-                int rgb = mapColor != null ? mapColor.color : 0x555555;
+                int rgb = mapColor != null ? mapColor.col : 0x555555;
 
                 int red = ((rgb >> 16) & 255);
                 int green = ((rgb >> 8) & 255);
                 int blue = (rgb & 255);
-                
-                int temp = red;
-                red = blue;
-                blue = temp;
 
                 if (isLava && isNether) {
-                    red = 0;
-                    green = 165;
-                    blue = 255;
+                    red = 255;
+                    green = 100;
+                    blue = 0;
                 }
 
                     if (northY >= 0 || westY >= 0) {
@@ -174,9 +172,9 @@ public class ChunkTileImage implements AutoCloseable {
                         }
                 }
 
-                image.setColor(localX, localZ, (255 << 24) | (red << 16) | (green << 8) | blue);
+                setPixelWithRotation(image, localX, localZ, (255 << 24) | (red << 16) | (green << 8) | blue);
                 } catch (Exception e) {
-                    image.setColor(localX, localZ, 0xFF555555);
+                    setPixelWithRotation(image, localX, localZ, 0xFF555555);
                 }
             }
         }
@@ -184,38 +182,61 @@ public class ChunkTileImage implements AutoCloseable {
         return image;
     }
 
-
+    private void setPixelWithRotation(NativeImage image, int localX, int localZ, int argb) {
+        int n = 15;
+        int pixelX;
+        int pixelY;
+        switch (rotation) {
+            case 1 -> {
+                pixelX = n - localZ;
+                pixelY = localX;
+            }
+            case 2 -> {
+                pixelX = n - localX;
+                pixelY = n - localZ;
+            }
+            case 3 -> {
+                pixelX = localZ;
+                pixelY = n - localX;
+            }
+            default -> {
+                pixelX = localX;
+                pixelY = localZ;
+            }
+        }
+        image.setPixel(pixelX, pixelY, argb);
+    }
     private BlockPos findSurfaceWithFallback(int x, int startY, int z, int maxSteps) {
         BlockPos pos = firstSolidBlockBelow(x, startY, z, maxSteps);
-        if (!world.isInBuildLimit(pos) || world.getBlockState(pos).isAir()) {
+        if (!world.isInWorldBounds(pos) || world.getBlockState(pos).isAir()) {
             pos = firstSolidBlockBelowUnlimited(x, startY, z);
         }
         return pos;
     }
 
     private BlockPos firstSolidBlockBelow(int x, int y, int z, int maxSteps) {
-        BlockPos.Mutable mutable = new BlockPos.Mutable(x, y, z);
+        BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos(x, y, z);
         int steps = 0;
-        int bottomY = world.getBottomY();
-        while (mutable.getY() > bottomY && world.isAir(mutable) && steps++ < maxSteps) {
+        int bottomY = world.getMinY();
+        while (mutable.getY() > bottomY && world.isEmptyBlock(mutable) && steps++ < maxSteps) {
             mutable.move(Direction.DOWN);
         }
         if (mutable.getY() < bottomY) {
             mutable.setY(bottomY);
         }
-        return mutable.toImmutable();
+        return mutable.immutable();
     }
 
     private BlockPos firstSolidBlockBelowUnlimited(int x, int y, int z) {
-        BlockPos.Mutable mutable = new BlockPos.Mutable(x, y, z);
-        int bottomY = world.getBottomY();
-        while (mutable.getY() > bottomY && world.isAir(mutable)) {
+        BlockPos.MutableBlockPos mutable = new BlockPos.MutableBlockPos(x, y, z);
+        int bottomY = world.getMinY();
+        while (mutable.getY() > bottomY && world.isEmptyBlock(mutable)) {
             mutable.move(Direction.DOWN);
         }
         if (mutable.getY() < bottomY) {
             mutable.setY(bottomY);
         }
-        return mutable.toImmutable();
+        return mutable.immutable();
     }
 }
 
