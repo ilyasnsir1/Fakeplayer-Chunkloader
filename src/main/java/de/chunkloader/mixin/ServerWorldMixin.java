@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
 
 @Mixin(ServerWorld.class)
 public class ServerWorldMixin {
-    
+
     @Inject(
         method = "getPlayers()Ljava/util/List;",
         at = @At("RETURN"),
@@ -22,26 +22,26 @@ public class ServerWorldMixin {
     )
     private void filterFakePlayersWithoutMobSpawning(CallbackInfoReturnable<List<ServerPlayerEntity>> cir) {
         List<ServerPlayerEntity> players = cir.getReturnValue();
-        
+
         if (players == null || players.isEmpty()) {
             return;
         }
-        
+
         var manager = ChunkloaderMod.getChunkloaderManager();
         if (manager == null) {
             return;
         }
-        
+
         List<ServerPlayerEntity> filtered = players.stream()
             .filter(player -> {
                 if (!(player instanceof ChunkloaderFakePlayer fakePlayer)) {
                     return true;
                 }
-                
+
                 return manager.allowsMobSpawning(fakePlayer);
             })
             .collect(Collectors.toList());
-        
+
         cir.setReturnValue(filtered);
     }
 }

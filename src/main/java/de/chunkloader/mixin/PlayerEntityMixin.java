@@ -21,39 +21,36 @@ import java.util.Map;
 public class PlayerEntityMixin {
     private static final Map<UUID, Long> lastPermissionMessageTime = new ConcurrentHashMap<>();
     private static final long PERMISSION_MESSAGE_COOLDOWN_MS = 500;
-    
+
     @Inject(method = "interact(Lnet/minecraft/entity/Entity;Lnet/minecraft/util/Hand;)Lnet/minecraft/util/ActionResult;", at = @At("HEAD"), cancellable = true)
     private void onInteract(Entity target, Hand hand, CallbackInfoReturnable<ActionResult> cir) {
         PlayerEntity self = (PlayerEntity)(Object)this;
-        if (self instanceof ServerPlayerEntity serverPlayer && target instanceof ChunkloaderFakePlayer fakePlayer && 
+        if (self instanceof ServerPlayerEntity serverPlayer && target instanceof ChunkloaderFakePlayer fakePlayer &&
             hand == Hand.MAIN_HAND &&
-            ChunkloaderMod.getChunkloaderManager() != null && 
+            ChunkloaderMod.getChunkloaderManager() != null &&
             fakePlayer.isVisibleAsMarker() && ChunkloaderMod.getChunkloaderManager().isChunkloaderMarker(target.getUuid())) {
             try {
                 var manager = ChunkloaderMod.getChunkloaderManager();
                 if (manager != null) {
-                    de.chunkloader.config.ChunkloaderTarget entry = manager.getEntryByMarkerUuid(target.getUuid());
-                    String entityTypeName = (entry != null && entry.allowMobSpawning()) ? "fakeplayers" : "chunkplayers";
-                    
                     if (!PermissionManager.canUse(serverPlayer)) {
                         UUID playerUuid = serverPlayer.getUuid();
                         long currentTime = System.currentTimeMillis();
                         Long lastMessageTime = lastPermissionMessageTime.get(playerUuid);
-                        
+
                         if (lastMessageTime == null || (currentTime - lastMessageTime) >= PERMISSION_MESSAGE_COOLDOWN_MS) {
-                            serverPlayer.sendMessage(Text.literal("You don't have permission to interact with " + entityTypeName + "."), false);
+                            serverPlayer.sendMessage(Text.translatable("message.chunkloader.no_permission_interact"), false);
                             lastPermissionMessageTime.put(playerUuid, currentTime);
                         }
                         cir.setReturnValue(ActionResult.FAIL);
                         cir.cancel();
                         return;
                     }
-                    
+
                     if (self.isSneaking()) {
                         de.chunkloader.config.ChunkloaderTarget entryToDelete = manager.getEntryByMarkerUuid(target.getUuid());
                         if (entryToDelete != null) {
-                            manager.removeChunkloader(entryToDelete.chunkX(), entryToDelete.chunkZ());
-                            serverPlayer.sendMessage(Text.literal("Chunkloader deleted"), false);
+                            manager.removeChunkloader(entryToDelete.chunkX(), entryToDelete.chunkZ(), entryToDelete.dimension());
+                            serverPlayer.sendMessage(Text.literal("Player deleted"), false);
                         }
                         cir.setReturnValue(ActionResult.SUCCESS);
                         cir.cancel();
@@ -70,7 +67,7 @@ public class PlayerEntityMixin {
             }
         }
     }
-    
+
     @Inject(method = "getName()Lnet/minecraft/text/Text;", at = @At("RETURN"), cancellable = true)
     private void onGetName(CallbackInfoReturnable<Text> cir) {
         PlayerEntity self = (PlayerEntity)(Object)this;

@@ -23,14 +23,20 @@ public class ChunkTileImage implements AutoCloseable {
     private final ClientWorld world;
     private final ChunkPos chunkPos;
     private final int yLevel;
+    private final int rotation;
 
     private NativeImageBackedTexture texture;
     private Identifier textureId;
 
     public ChunkTileImage(ClientWorld world, ChunkPos chunkPos, int yLevel) {
+        this(world, chunkPos, yLevel, 0);
+    }
+
+    public ChunkTileImage(ClientWorld world, ChunkPos chunkPos, int yLevel, int rotation) {
         this.world = world;
         this.chunkPos = chunkPos;
         this.yLevel = yLevel;
+        this.rotation = Math.floorMod(rotation, 4);
     }
 
     public Identifier getTextureId() {
@@ -39,8 +45,7 @@ public class ChunkTileImage implements AutoCloseable {
         }
         if (textureId == null) {
             texture = new NativeImageBackedTexture(() -> "chunkloader_map_tile", createImage());
-            texture.setFilter(false, false);
-            textureId = Identifier.of(ChunkloaderMod.MOD_ID, "chunkmap/" + chunkPos.x + "_" + chunkPos.z + "_" + yLevel);
+            textureId = Identifier.of(ChunkloaderMod.MOD_ID, "chunkmap/" + chunkPos.x + "_" + chunkPos.z + "_" + yLevel + "_r" + rotation);
             MinecraftClient.getInstance().getTextureManager().registerTexture(textureId, texture);
         }
         return textureId;
@@ -65,7 +70,7 @@ public class ChunkTileImage implements AutoCloseable {
         if (!world.getChunkManager().isChunkLoaded(chunkPos.x, chunkPos.z)) {
             for (int localX = 0; localX < 16; localX++) {
                 for (int localZ = 0; localZ < 16; localZ++) {
-                    image.setColor(localX, localZ, 0xFF555555);
+                    setPixelWithRotation(image, localX, localZ, 0xFF555555);
                 }
             }
             return image;
@@ -122,35 +127,31 @@ public class ChunkTileImage implements AutoCloseable {
                     }
 
                 if (!world.isInBuildLimit(samplePos)) {
-                        image.setColor(localX, localZ, 0xFF555555);
+                        setPixelWithRotation(image, localX, localZ, 0xFF555555);
                         continue;
                     }
 
                 state = world.getBlockState(samplePos);
                 if (state.isAir()) {
-                    image.setColor(localX, localZ, 0xFF000000);
+                    setPixelWithRotation(image, localX, localZ, 0xFF000000);
                     continue;
                 }
-                
+
                 Block block = state.getBlock();
                 boolean isLava = block == Blocks.LAVA || block == Blocks.LAVA_CAULDRON;
                 boolean isNether = world.getRegistryKey() == World.NETHER;
-                
+
                 var mapColor = state.getMapColor(world, samplePos);
                 int rgb = mapColor != null ? mapColor.color : 0x555555;
 
                 int red = ((rgb >> 16) & 255);
                 int green = ((rgb >> 8) & 255);
                 int blue = (rgb & 255);
-                
-                int temp = red;
-                red = blue;
-                blue = temp;
 
                 if (isLava && isNether) {
-                    red = 0;
-                    green = 165;
-                    blue = 255;
+                    red = 255;
+                    green = 100;
+                    blue = 0;
                 }
 
                     if (northY >= 0 || westY >= 0) {
@@ -175,16 +176,15 @@ public class ChunkTileImage implements AutoCloseable {
                         }
                 }
 
-                image.setColor(localX, localZ, (255 << 24) | (red << 16) | (green << 8) | blue);
+                setPixelWithRotation(image, localX, localZ, (255 << 24) | (red << 16) | (green << 8) | blue);
                 } catch (Exception e) {
-                    image.setColor(localX, localZ, 0xFF555555);
+                    setPixelWithRotation(image, localX, localZ, 0xFF555555);
                 }
             }
         }
 
         return image;
     }
-
 
     private BlockPos findSurfaceWithFallback(int x, int startY, int z, int maxSteps) {
         BlockPos pos = firstSolidBlockBelow(x, startY, z, maxSteps);
@@ -218,5 +218,31 @@ public class ChunkTileImage implements AutoCloseable {
         }
         return mutable.toImmutable();
     }
+
+    private void setPixelWithRotation(NativeImage image, int localX, int localZ, int argb) {
+        int n = 15;
+        int pixelX;
+        int pixelY;
+        switch (rotation) {
+            case 1 -> {
+                pixelX = n - localZ;
+                pixelY = localX;
+            }
+            case 2 -> {
+                pixelX = n - localX;
+                pixelY = n - localZ;
+            }
+            case 3 -> {
+                pixelX = localZ;
+                pixelY = n - localX;
+            }
+            default -> {
+                pixelX = localX;
+                pixelY = localZ;
+            }
+        }
+        image.setColorArgb(pixelX, pixelY, argb);
+    }
+
 }
 

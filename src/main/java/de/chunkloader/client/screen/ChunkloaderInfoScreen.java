@@ -61,18 +61,22 @@ public class ChunkloaderInfoScreen extends Screen {
     }
 
     public ChunkloaderInfoScreen(Screen parent) {
-        super(Text.literal("Chunkloader Information"));
+        super(Text.literal("Mod Information"));
         this.parent = parent;
     }
-    
+
+    public Screen getParentScreen() {
+        return parent;
+    }
+
     @Override
     protected void init() {
         super.init();
-        
+
         contentTop = 20;
         contentBottom = this.height - 60;
         totalContentHeight = 0;
-        
+
         int buttonWidth = 100;
         int buttonX = (this.width - buttonWidth) / 2;
         int buttonY = this.height - 30;
@@ -85,26 +89,25 @@ public class ChunkloaderInfoScreen extends Screen {
         );
     }
 
-
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         drawDimBackground(context);
-        
+
         context.enableScissor(0, contentTop, this.width, contentBottom);
         renderText(context);
         context.disableScissor();
-        
+
         drawScrollbar(context);
-        
+
         super.render(context, mouseX, mouseY, delta);
     }
-    
+
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
         int availableHeight = contentBottom - contentTop;
         int maxScroll = Math.max(0, totalContentHeight + 40 - availableHeight);
-        
-        scrollOffset = (int) Math.max(0, Math.min(maxScroll, 
+
+        scrollOffset = (int) Math.max(0, Math.min(maxScroll,
             scrollOffset - (int)(verticalAmount * 20)));
         return true;
     }
@@ -159,34 +162,34 @@ public class ChunkloaderInfoScreen extends Screen {
         }
         return super.mouseReleased(click);
     }
-    
+
     private void drawScrollbar(DrawContext context) {
         int availableHeight = contentBottom - contentTop;
         int totalHeightWithPadding = totalContentHeight + 40;
-        
+
         if (totalHeightWithPadding <= availableHeight) {
             return;
         }
-        
+
         int scrollbarWidth = 3;
         int scrollbarX = this.width - scrollbarWidth - 2;
         int scrollbarHeight = (int)((double)availableHeight / totalHeightWithPadding * availableHeight);
         int maxScroll = totalHeightWithPadding - availableHeight;
         if (maxScroll > 0) {
             int scrollbarY = contentTop + (int)((double)scrollOffset / maxScroll * (availableHeight - scrollbarHeight));
-            
+
             context.fill(scrollbarX, contentTop, scrollbarX + scrollbarWidth, contentBottom, 0x33000000);
             context.fill(scrollbarX, scrollbarY, scrollbarX + scrollbarWidth, scrollbarY + scrollbarHeight, 0xFFAAAAAA);
         }
     }
-    
+
     private void renderText(DrawContext context) {
         TextRenderer renderer = this.textRenderer;
         int lineHeight = 12;
         int sectionSpacing = 20;
         int y = contentTop + 20 - scrollOffset;
-        
-        Text title = Text.literal("Chunkloader Information").formatted(Formatting.BOLD);
+
+        Text title = Text.literal("Mod Information").formatted(Formatting.BOLD);
         int titleWidth = renderer.getWidth(title);
         context.drawText(renderer, title, (this.width - titleWidth) / 2, y, 0xFFFFFFFF, false);
         y += 30;
@@ -197,25 +200,29 @@ public class ChunkloaderInfoScreen extends Screen {
             "SD (Simulation Distance) can be set from 0 to 3.",
             "SD 0 = 1 chunk, SD 1 = 3x3, SD 2 = 5x5, SD 3 = 7x7 chunks.",
             "Great for redstone, mob, and plant farms that need entity ticking.",
-            "SD controls both chunk loading and simulation area."
+            "SD controls chunk loading and simulation area (0-3).",
+            "Mob spawning works independently with SD 5 (24-128 blocks away).",
+            "Ideal for farms with mobs (hostile, passive, villagers, golems, etc.)."
         };
         y = drawInfoSection(context, renderer, y, fakePlayerTitle, fakePlayerLines, lineHeight, sectionSpacing, false);
 
         Text chunkplayerTitle = Text.literal("Chunkplayer Mode").formatted(Formatting.BOLD, Formatting.BLUE);
         String[] chunkplayerLines = {
             "Keeps chunks loaded without entity ticking or mob spawning.",
-            "Ideal for portals, passive storage, and plant farms.",
+            "Ideal for portals, passive storage, and non-mob farms (e.g., minecarts).",
             "Radius can be set from 0 to 3.",
             "Radius 0 = 1 chunk, Radius 1 = 3x3, Radius 2 = 5x5, Radius 3 = 7x7 chunks.",
-            "Only the central chunk receives random ticks (crop growth)."
+            "Only the central chunk receives random ticks (crop growth).",
+            "Mobs in chunkplayer areas will despawn if no real player is nearby."
         };
         y = drawInfoSection(context, renderer, y, chunkplayerTitle, chunkplayerLines, lineHeight, sectionSpacing, true);
 
         Text simDistTitle = Text.literal("Simulation Distance (SD)").formatted(Formatting.BOLD, Formatting.YELLOW);
         String[] simDistLines = {
-            "For Fakeplayer: Controls how far mobs and entities are simulated.",
+            "For Fakeplayer: Controls how far entities are simulated (0-3).",
             "SD can be adjusted from 0 to 3 using SD +1 / SD -1 buttons.",
             "New Fakeplayers default to SD 0.",
+            "Mob spawning works independently with SD 5 (24-128 blocks away).",
             "The mod respects the server-defined simulation distance."
         };
         y = drawInfoSection(context, renderer, y, simDistTitle, simDistLines, lineHeight, sectionSpacing, true);
@@ -231,18 +238,42 @@ public class ChunkloaderInfoScreen extends Screen {
 
         Text permissionsTitle = Text.literal("Permissions").formatted(Formatting.BOLD, Formatting.YELLOW);
         String[] permissionsLines = {
-            "Uses chunkloader_permissions.json with OP fallback when needed.",
+            "Uses the permissions config (OP fallback when needed).",
             "Grant/revoke access via /fakeplayer permission grant|revoke."
         };
         y = drawInfoSection(context, renderer, y, permissionsTitle, permissionsLines, lineHeight, sectionSpacing, true);
 
         Text configTitle = Text.literal("Configuration").formatted(Formatting.BOLD, Formatting.YELLOW);
         String[] configLines = {
-            "Per-world chunkloader_config.json stores block offsets and modes.",
-            "Up to five timestamped backups plus a latest alias can auto-restore.",
-            "ChunkloaderConfig enforces limits and rejects duplicate names."
+            "Per-world config stores block offsets and modes.",
+            "Up to two timestamped backups in chunkloader/backups/ plus a latest alias can auto-restore.",
+            "Config enforces limits and rejects duplicate names.",
+            "Fakeplayers cannot be renamed to real player names.",
+            "If a real player joins with the same name, the fakeplayer/chunkplayer",
+            "will be automatically renamed (e.g., 'Player_Fakeplayer' or 'Player_Chunkplayer')."
         };
         y = drawInfoSection(context, renderer, y, configTitle, configLines, lineHeight, sectionSpacing, true);
+
+        Text tablistTitle = Text.literal("Tab List Visibility").formatted(Formatting.BOLD, Formatting.YELLOW);
+        String[] tablistLines = {
+            "Players can be hidden from the tab list.",
+            "Use /fp tablist <true/false> to show/hide all players.",
+            "New players respect the current tablist visibility setting."
+        };
+        y = drawInfoSection(context, renderer, y, tablistTitle, tablistLines, lineHeight, sectionSpacing, true);
+
+        Text chunkMapTitle = Text.literal("Chunk Map").formatted(Formatting.BOLD, Formatting.YELLOW);
+        String[] chunkMapLines = {
+            "Spawn Direction: when you run /fp add, the fakeplayer",
+            "spawns facing the cardinal direction (N/S/E/W) you were looking.",
+            "Map Rotation: click on the map grid to rotate the view 90° clockwise.",
+            "The compass (N/W/S/E) above the map updates as you rotate.",
+            "Opening Direction: clicking a fake/chunkplayer opens the map",
+            "already oriented toward the cardinal direction you are facing.",
+            "Live markers: other player dots and occupied areas update on",
+            "create/delete/radius/disable while maps stay open; terrain is not live."
+        };
+        y = drawInfoSection(context, renderer, y, chunkMapTitle, chunkMapLines, lineHeight, sectionSpacing, true);
 
         totalContentHeight = y - contentTop - 20 + scrollOffset;
     }
@@ -254,7 +285,7 @@ public class ChunkloaderInfoScreen extends Screen {
             int separatorX = (this.width - separatorWidth) / 2;
             drawSeparator(context, separatorX, separatorY, separatorWidth);
         }
-        
+
         int titleWidth = renderer.getWidth(title);
         context.drawText(renderer, title, (this.width - titleWidth) / 2, y, 0xFFFFFFFF, false);
         y += lineHeight + 4;
@@ -274,12 +305,12 @@ public class ChunkloaderInfoScreen extends Screen {
     private void drawDimBackground(DrawContext context) {
         context.fill(0, 0, this.width, this.height, 0xC0101010);
     }
-    
+
     @Override
     public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
         super.renderBackground(context, mouseX, mouseY, delta);
     }
-    
+
     @Override
     public boolean shouldPause() {
         return false;

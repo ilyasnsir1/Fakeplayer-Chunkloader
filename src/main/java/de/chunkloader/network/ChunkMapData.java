@@ -14,6 +14,9 @@ public record ChunkMapData(
     int centerChunkZ,
     int blockY,
     int chunkRadius,
+    int entityTickRadius,
+    int blockTickRadius,
+    int loadingRadius,
     int mapWidth,
     int mapHeight,
     int topLeftChunkX,
@@ -24,6 +27,7 @@ public record ChunkMapData(
     int fakeplayerChunkZ,
     int fakeplayerBlockX,
     int fakeplayerBlockZ,
+    float fakeplayerYaw,
     String fakeplayerName,
     boolean nameVisible,
     boolean visualizeActive,
@@ -31,7 +35,7 @@ public record ChunkMapData(
     boolean canIncreaseRadius,
     List<ChunkloaderPosition> otherChunkloaders,
     String ownerName,
-    boolean hideOtherDots
+    boolean easterEgg
 ) {
 
     public void write(PacketByteBuf buf) {
@@ -42,6 +46,9 @@ public record ChunkMapData(
         buf.writeInt(centerChunkZ);
         buf.writeInt(blockY);
         buf.writeInt(chunkRadius);
+        buf.writeInt(entityTickRadius);
+        buf.writeInt(blockTickRadius);
+        buf.writeInt(loadingRadius);
         buf.writeVarInt(mapWidth);
         buf.writeVarInt(mapHeight);
         buf.writeInt(topLeftChunkX);
@@ -55,6 +62,7 @@ public record ChunkMapData(
         buf.writeInt(fakeplayerChunkZ);
         buf.writeInt(fakeplayerBlockX);
         buf.writeInt(fakeplayerBlockZ);
+        buf.writeFloat(fakeplayerYaw);
         buf.writeString(fakeplayerName != null ? fakeplayerName : "");
         buf.writeBoolean(nameVisible);
         buf.writeBoolean(visualizeActive);
@@ -65,7 +73,7 @@ public record ChunkMapData(
             pos.write(buf);
         }
         buf.writeString(ownerName != null ? ownerName : "");
-        buf.writeBoolean(hideOtherDots);
+        buf.writeBoolean(easterEgg);
     }
 
     public static ChunkMapData read(PacketByteBuf buf) {
@@ -76,6 +84,9 @@ public record ChunkMapData(
         int centerChunkZ = buf.readInt();
         int blockY = buf.readInt();
         int chunkRadius = buf.readInt();
+        int entityTickRadius = buf.readInt();
+        int blockTickRadius = buf.readInt();
+        int loadingRadius = buf.readInt();
         int mapWidth = buf.readVarInt();
         int mapHeight = buf.readVarInt();
         int topLeftChunkX = buf.readInt();
@@ -90,6 +101,7 @@ public record ChunkMapData(
         int fakeplayerChunkZ = buf.readInt();
         int fakeplayerBlockX = buf.readInt();
         int fakeplayerBlockZ = buf.readInt();
+        float fakeplayerYaw = buf.readFloat();
         String fakeplayerName = buf.readString(32767);
         boolean nameVisible = buf.readBoolean();
         boolean visualizeActive = buf.readBoolean();
@@ -101,7 +113,7 @@ public record ChunkMapData(
             otherChunkloaders.add(de.chunkloader.network.ChunkloaderPosition.read(buf));
         }
         String ownerName = buf.readString(32767);
-        boolean hideOtherDots = buf.readBoolean();
+        boolean easterEgg = buf.readBoolean();
         return new ChunkMapData(
             name,
             enabled,
@@ -110,6 +122,9 @@ public record ChunkMapData(
             centerChunkZ,
             blockY,
             chunkRadius,
+            entityTickRadius,
+            blockTickRadius,
+            loadingRadius,
             mapWidth,
             mapHeight,
             topLeftChunkX,
@@ -120,6 +135,7 @@ public record ChunkMapData(
             fakeplayerChunkZ,
             fakeplayerBlockX,
             fakeplayerBlockZ,
+            fakeplayerYaw,
             fakeplayerName.isEmpty() ? null : fakeplayerName,
             nameVisible,
             visualizeActive,
@@ -127,7 +143,7 @@ public record ChunkMapData(
             canIncreaseRadius,
             Collections.unmodifiableList(otherChunkloaders),
             ownerName.isEmpty() ? null : ownerName,
-            hideOtherDots
+            easterEgg
         );
     }
 }

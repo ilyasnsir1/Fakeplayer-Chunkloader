@@ -20,10 +20,10 @@ import java.util.concurrent.ConcurrentHashMap;
 public class PermissionConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String CONFIG_FILE = "chunkloader_permissions.json";
-    
+
     private final Map<UUID, Set<String>> playerPermissions = new ConcurrentHashMap<>();
     private final Path configPath;
-    
+
     public PermissionConfig(MinecraftServer server) {
         Path path;
         try {
@@ -39,10 +39,10 @@ public class PermissionConfig {
                                 long mostRecentTime = 0;
                                 try {
                                     java.nio.file.DirectoryStream.Filter<java.nio.file.Path> filter = entry -> {
-                                        return java.nio.file.Files.isDirectory(entry) && 
+                                        return java.nio.file.Files.isDirectory(entry) &&
                                                java.nio.file.Files.exists(entry.resolve("level.dat"));
                                     };
-                                    try (java.nio.file.DirectoryStream<java.nio.file.Path> stream = 
+                                    try (java.nio.file.DirectoryStream<java.nio.file.Path> stream =
                                          java.nio.file.Files.newDirectoryStream(savesDir, filter)) {
                                         for (java.nio.file.Path worldDir : stream) {
                                             try {
@@ -61,7 +61,7 @@ public class PermissionConfig {
                                 } catch (Exception e) {
                                     ChunkloaderMod.LOGGER.warn("Error searching for world directory: {}", e.getMessage());
                                 }
-                                
+
                                 if (mostRecentWorldDir != null) {
                                     path = mostRecentWorldDir.resolve(CONFIG_FILE);
                                 } else {
@@ -99,15 +99,15 @@ public class PermissionConfig {
         this.configPath = path;
         ChunkloaderMod.LOGGER.info("Permission config path: {}", path);
     }
-    
+
     public static PermissionConfig load(MinecraftServer server) {
         PermissionConfig config = new PermissionConfig(server);
         File configFile = config.configPath.toFile();
-        
+
         if (configFile.exists()) {
             try (FileReader reader = new FileReader(configFile)) {
                 JsonObject json = JsonParser.parseReader(reader).getAsJsonObject();
-                
+
                 if (json.has("permissions")) {
                     JsonObject permissionsObj = json.getAsJsonObject("permissions");
                     for (Map.Entry<String, JsonElement> entry : permissionsObj.entrySet()) {
@@ -124,7 +124,7 @@ public class PermissionConfig {
                         }
                     }
                 }
-                
+
                 ChunkloaderMod.LOGGER.info("Loaded permissions for {} players", config.playerPermissions.size());
             } catch (Exception e) {
                 ChunkloaderMod.LOGGER.error("Failed to load permission config", e);
@@ -136,25 +136,25 @@ public class PermissionConfig {
                 ChunkloaderMod.LOGGER.error("Failed to create default permission config", e);
             }
         }
-        
+
         return config;
     }
-    
+
     public void save() throws IOException {
         File configFile = configPath.toFile();
         File parentDir = configFile.getParentFile();
         if (parentDir != null && !parentDir.exists()) {
             parentDir.mkdirs();
         }
-        
+
         if (parentDir == null) {
             ChunkloaderMod.LOGGER.warn("Permission config path has no parent directory, using current directory");
             configFile = new File(CONFIG_FILE);
         }
-        
+
         JsonObject json = new JsonObject();
         JsonObject permissionsObj = new JsonObject();
-        
+
         for (Map.Entry<UUID, Set<String>> entry : playerPermissions.entrySet()) {
             JsonArray permissionsArray = new JsonArray();
             for (String permission : entry.getValue()) {
@@ -162,14 +162,14 @@ public class PermissionConfig {
             }
             permissionsObj.add(entry.getKey().toString(), permissionsArray);
         }
-        
+
         json.add("permissions", permissionsObj);
-        
+
         try (FileWriter writer = new FileWriter(configFile)) {
             GSON.toJson(json, writer);
         }
     }
-    
+
     public void grantPermission(UUID playerUuid, String permission) {
         playerPermissions.computeIfAbsent(playerUuid, k -> new HashSet<>()).add(permission);
         try {
@@ -178,7 +178,7 @@ public class PermissionConfig {
             ChunkloaderMod.LOGGER.error("Failed to save permission config", e);
         }
     }
-    
+
     public void revokePermission(UUID playerUuid, String permission) {
         Set<String> permissions = playerPermissions.get(playerUuid);
         if (permissions != null) {
@@ -193,32 +193,32 @@ public class PermissionConfig {
             }
         }
     }
-    
+
     public boolean hasPermission(UUID playerUuid, String permission) {
         Set<String> permissions = playerPermissions.get(playerUuid);
         if (permissions == null) {
             return false;
         }
-        
+
         if (permissions.contains(permission)) {
             return true;
         }
-        
+
         if (permissions.contains("chunkloader.*")) {
             return permission.startsWith("chunkloader.");
         }
-        
+
         if (permissions.contains(PermissionManager.PERMISSION_ADMIN)) {
             return true;
         }
-        
+
         return false;
     }
-    
+
     public Set<String> getPlayerPermissions(UUID playerUuid) {
         return new HashSet<>(playerPermissions.getOrDefault(playerUuid, Collections.emptySet()));
     }
-    
+
     public Map<UUID, Set<String>> getAllPermissions() {
         Map<UUID, Set<String>> result = new HashMap<>();
         for (Map.Entry<UUID, Set<String>> entry : playerPermissions.entrySet()) {
@@ -226,7 +226,7 @@ public class PermissionConfig {
         }
         return result;
     }
-    
+
     public void clearPlayerPermissions(UUID playerUuid) {
         playerPermissions.remove(playerUuid);
         try {

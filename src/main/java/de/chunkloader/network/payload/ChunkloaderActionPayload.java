@@ -6,7 +6,7 @@ import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.util.Identifier;
 
-public record ChunkloaderActionPayload(int chunkX, int chunkZ, Action action, int value) implements CustomPayload {
+public record ChunkloaderActionPayload(int chunkX, int chunkZ, String dimension, Action action, int value) implements CustomPayload {
 
     public static final CustomPayload.Id<ChunkloaderActionPayload> ID =
         new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "chunkloader_action"));
@@ -14,14 +14,16 @@ public record ChunkloaderActionPayload(int chunkX, int chunkZ, Action action, in
         PacketCodec.of((payload, buf) -> {
             buf.writeInt(payload.chunkX());
             buf.writeInt(payload.chunkZ());
+            buf.writeString(payload.dimension() != null ? payload.dimension() : "minecraft:overworld", 256);
             buf.writeEnumConstant(payload.action());
             buf.writeInt(payload.value());
         }, buf -> {
             int chunkX = buf.readInt();
             int chunkZ = buf.readInt();
+            String dimension = buf.readString(256);
             Action action = buf.readEnumConstant(Action.class);
             int value = buf.readInt();
-            return new ChunkloaderActionPayload(chunkX, chunkZ, action, value);
+            return new ChunkloaderActionPayload(chunkX, chunkZ, dimension, action, value);
         });
 
     @Override
@@ -42,4 +44,3 @@ public record ChunkloaderActionPayload(int chunkX, int chunkZ, Action action, in
         DELETE
     }
 }
-

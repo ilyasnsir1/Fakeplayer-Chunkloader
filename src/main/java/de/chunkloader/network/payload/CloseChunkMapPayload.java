@@ -10,7 +10,7 @@ public record CloseChunkMapPayload() implements CustomPayload {
 
     public static final CustomPayload.Id<CloseChunkMapPayload> ID =
         new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "close_chunk_map"));
-    
+
     public static final PacketCodec<RegistryByteBuf, CloseChunkMapPayload> CODEC =
         PacketCodec.of((payload, buf) -> {
         }, buf -> {
