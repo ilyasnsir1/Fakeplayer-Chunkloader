@@ -10,7 +10,7 @@ public record DisabledChunkloadersListRequestPayload() implements CustomPayload 
 
     public static final CustomPayload.Id<DisabledChunkloadersListRequestPayload> ID =
         new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "disabled_chunkloaders_list_request"));
-    
+
     public static final PacketCodec<RegistryByteBuf, DisabledChunkloadersListRequestPayload> CODEC =
         PacketCodec.of((payload, buf) -> {
         }, buf -> {

@@ -2,6 +2,7 @@ package de.chunkloader.mixin;
 
 import de.chunkloader.ChunkloaderMod;
 import de.chunkloader.fakeplayer.ChunkloaderFakePlayer;
+import de.chunkloader.permissions.PermissionManager;
 import net.minecraft.entity.Entity;
 import net.minecraft.server.network.ServerPlayerEntity;
 import org.spongepowered.asm.mixin.Mixin;
@@ -11,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(ServerPlayerEntity.class)
 public class ServerPlayerEntityMixin {
-    
+
     @Inject(method = "damage(Lnet/minecraft/server/world/ServerWorld;Lnet/minecraft/entity/damage/DamageSource;F)Z", at = @At("HEAD"), cancellable = true)
     private void onDamage(net.minecraft.server.world.ServerWorld world, net.minecraft.entity.damage.DamageSource source, float amount, CallbackInfoReturnable<Boolean> cir) {
         ServerPlayerEntity self = (ServerPlayerEntity)(Object)this;
@@ -20,9 +21,14 @@ public class ServerPlayerEntityMixin {
                 if (fakePlayer.isVisibleAsMarker() && ChunkloaderMod.getChunkloaderManager().isChunkloaderMarker(self.getUuid())) {
                     Entity attacker = source.getAttacker();
                     if (attacker instanceof net.minecraft.entity.player.PlayerEntity) {
-                    ChunkloaderMod.getChunkloaderManager().handleMarkerDestroyed(self.getUuid());
-                    self.remove(Entity.RemovalReason.KILLED);
-                    cir.setReturnValue(true);
+                        if (attacker instanceof ServerPlayerEntity serverPlayer && !PermissionManager.canUse(serverPlayer)) {
+                            serverPlayer.sendMessage(net.minecraft.text.Text.translatable("message.chunkloader.no_permission_interact"), false);
+                            cir.setReturnValue(false);
+                            return;
+                        }
+                        ChunkloaderMod.getChunkloaderManager().handleMarkerDestroyed(self.getUuid());
+                        self.remove(Entity.RemovalReason.KILLED);
+                        cir.setReturnValue(true);
                     } else {
                         cir.setReturnValue(false);
                     }

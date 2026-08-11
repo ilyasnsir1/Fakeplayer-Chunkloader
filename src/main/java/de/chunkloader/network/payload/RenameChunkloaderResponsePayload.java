@@ -13,7 +13,7 @@ public record RenameChunkloaderResponsePayload(
 
     public static final CustomPayload.Id<RenameChunkloaderResponsePayload> ID =
         new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "rename_chunkloader_response"));
-    
+
     public static final PacketCodec<RegistryByteBuf, RenameChunkloaderResponsePayload> CODEC =
         PacketCodec.of((payload, buf) -> {
             buf.writeBoolean(payload.success());

@@ -13,7 +13,7 @@ public record UpdateDisabledChunkloaderCoordsResponsePayload(
 
     public static final CustomPayload.Id<UpdateDisabledChunkloaderCoordsResponsePayload> ID =
         new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "update_disabled_chunkloader_coords_response"));
-    
+
     public static final PacketCodec<RegistryByteBuf, UpdateDisabledChunkloaderCoordsResponsePayload> CODEC =
         PacketCodec.of((payload, buf) -> {
             buf.writeBoolean(payload.success());

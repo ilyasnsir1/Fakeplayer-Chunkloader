@@ -15,7 +15,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Environment(EnvType.CLIENT)
 @Mixin(InGameHud.class)
 public class InGameHudMixin {
-    
+
     @Inject(
         method = "render",
         at = @At("TAIL")
@@ -25,9 +25,9 @@ public class InGameHudMixin {
         if (client == null || client.textRenderer == null || client.player == null || client.currentScreen != null) {
             return;
         }
-        
+
         int offsetY = 0;
-        
+
         if (SimulationStatusHUD.isEnabled()) {
             SimulationStatusHUD.render(
                 context,
@@ -37,7 +37,7 @@ public class InGameHudMixin {
             );
             offsetY = SimulationStatusHUD.getHeight() + 5;
         }
-        
+
         if (ChunkplayerStatusHUD.isEnabled()) {
             ChunkplayerStatusHUD.render(
                 context,

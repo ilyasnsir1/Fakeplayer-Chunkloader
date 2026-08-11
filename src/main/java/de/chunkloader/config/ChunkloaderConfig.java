@@ -9,124 +9,80 @@ import com.google.gson.JsonParser;
 import de.chunkloader.ChunkloaderMod;
 import de.chunkloader.ChunkloaderConstants;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.world.ServerWorld;
 
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Objects;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class ChunkloaderConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final String BACKUPS_SUBFOLDER = "backups";
     private static final String CONFIG_FILE = "chunkloader_config.json";
     private static final String BACKUP_PREFIX = "chunkloader_config_backup_";
-    private static final int MAX_BACKUPS = 5;
-private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
-    
+    private static final int MAX_BACKUPS = 2;
+    private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
+    private static final long BACKUP_COOLDOWN_MS = Long.getLong("chunkloader.backupCooldownMs", 5L * 60L * 1000L);
+    private static final long SAVE_DEBOUNCE_MS = Long.getLong("chunkloader.saveDebounceMs", 3000L);
+    private static final int CONFIG_VERSION = 2;
+
     private final List<ChunkloaderTarget> chunkEntries = new ArrayList<>();
+    private volatile List<ChunkloaderTarget> cachedChunkEntries = null;
+    private volatile long cacheVersion = 0;
+    private volatile long cachedVersion = -1;
+
+    private boolean tabListVisibleAll = true;
     private final Path configPath;
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-    
+    private long lastBackupTimeMs = 0L;
+    private final Object saveScheduleLock = new Object();
+    private Timer saveTimer;
+    private TimerTask pendingSaveTask;
+    private volatile boolean savePending = false;
+
     public Path getConfigPath() {
         return configPath;
     }
-    
+
     public ChunkloaderConfig(MinecraftServer server) {
-        Path path;
-        try {
-            if (server != null) {
-                ServerWorld overworld = server.getOverworld();
-                if (overworld != null) {
-                    Path serverPath = server.getRunDirectory();
-                    if (serverPath != null) {
-                        Path savesDir = serverPath.resolve("saves");
-                        if (java.nio.file.Files.exists(savesDir)) {
-                            try {
-                                java.nio.file.Path mostRecentWorldDir = null;
-                                long mostRecentTime = 0;
-                                try {
-                                    java.nio.file.DirectoryStream.Filter<java.nio.file.Path> filter = entry -> {
-                                        return java.nio.file.Files.isDirectory(entry) && 
-                                               java.nio.file.Files.exists(entry.resolve("level.dat"));
-                                    };
-                                    try (java.nio.file.DirectoryStream<java.nio.file.Path> stream = 
-                                         java.nio.file.Files.newDirectoryStream(savesDir, filter)) {
-                                        for (java.nio.file.Path worldDir : stream) {
-                                            try {
-                                                Path levelDat = worldDir.resolve("level.dat");
-                                                if (java.nio.file.Files.exists(levelDat)) {
-                                                    long levelDatTime = java.nio.file.Files.getLastModifiedTime(levelDat).toMillis();
-                                                    if (levelDatTime > mostRecentTime) {
-                                                        mostRecentTime = levelDatTime;
-                                                        mostRecentWorldDir = worldDir;
-                                                    }
-                                                }
-                                            } catch (Exception e) {
-                                            }
-                                        }
-                                    }
-                                } catch (Exception e) {
-                                    ChunkloaderMod.LOGGER.warn("Error searching for world directory: {}", e.getMessage());
-                                }
-                                
-                                if (mostRecentWorldDir != null) {
-                                    path = mostRecentWorldDir.resolve(CONFIG_FILE);
-                                } else {
-                                    String levelName = server.getSaveProperties().getLevelName();
-                                    if (levelName != null && !levelName.isEmpty()) {
-                                        path = savesDir.resolve(levelName).resolve(CONFIG_FILE);
-                                        ChunkloaderMod.LOGGER.warn("Could not find world directory by modification time, using level name: {}", levelName);
-                                    } else {
-                                        path = serverPath.resolve(CONFIG_FILE);
-                                    }
-                                }
-                            } catch (Exception e) {
-                                path = serverPath.resolve(CONFIG_FILE);
-                            }
-                        } else {
-                            path = serverPath.resolve("world").resolve(CONFIG_FILE);
-                        }
-                    } else {
-                        path = new File(".").toPath().resolve(CONFIG_FILE);
-                    }
-                } else {
-                    Path serverPath = server.getRunDirectory();
-                    if (serverPath != null) {
-                        path = serverPath.resolve(CONFIG_FILE);
-                    } else {
-                        path = new File(".").toPath().resolve(CONFIG_FILE);
-                    }
-                }
-            } else {
-                path = new File(".").toPath().resolve(CONFIG_FILE);
-            }
-        } catch (Exception e) {
-            ChunkloaderMod.LOGGER.error("Error determining config path", e);
-            path = new File(".").toPath().resolve(CONFIG_FILE);
-        }
-        this.configPath = path;
-        ChunkloaderMod.LOGGER.info("Config path determined: {}", path);
+        this.configPath = ChunkloaderPaths.getChunkloaderDir(server).resolve(CONFIG_FILE);
+        ChunkloaderMod.LOGGER.info("Config path determined: {}", configPath);
     }
-    
+
     public static ChunkloaderConfig load(MinecraftServer server) {
         ChunkloaderConfig config = new ChunkloaderConfig(server);
         File configFile = config.configPath.toFile();
-        
+        migrateFromLegacyPathIfNeeded(config);
+
         if (configFile.exists()) {
+            boolean needsSave = false;
             try (FileReader reader = new FileReader(configFile)) {
                 JsonObject json = JsonParser.parseReader(reader).getAsJsonObject();
-                
+                int configVersion = getConfigVersion(json);
+                if (configVersion != CONFIG_VERSION) {
+                    migrateConfig(json, configVersion);
+                    needsSave = true;
+                }
+
+                if (json.has("tabListVisibleAll")) {
+                    config.tabListVisibleAll = json.get("tabListVisibleAll").getAsBoolean();
+                }
+
                 if (json.has("chunkloaders")) {
                     JsonArray chunkloaders = json.getAsJsonArray("chunkloaders");
                     for (JsonElement element : chunkloaders) {
@@ -134,40 +90,141 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                             JsonObject chunkObj = element.getAsJsonObject();
                             int chunkX = chunkObj.get("x").getAsInt();
                             int chunkZ = chunkObj.get("z").getAsInt();
-                            int blockX = chunkObj.has("blockX") ? chunkObj.get("blockX").getAsInt() : chunkX * ChunkloaderConstants.CHUNK_SIZE + ChunkloaderConstants.CHUNK_CENTER_OFFSET;
-                            int blockY = chunkObj.has("blockY") ? chunkObj.get("blockY").getAsInt() : ChunkloaderConstants.DEFAULT_BLOCK_Y;
-                            int blockZ = chunkObj.has("blockZ") ? chunkObj.get("blockZ").getAsInt() : chunkZ * ChunkloaderConstants.CHUNK_SIZE + ChunkloaderConstants.CHUNK_CENTER_OFFSET;
+                            int blockX = chunkObj.has("blockX") ? chunkObj.get("blockX").getAsInt()
+                                    : chunkX * ChunkloaderConstants.CHUNK_SIZE
+                                            + ChunkloaderConstants.CHUNK_CENTER_OFFSET;
+                            int blockY = chunkObj.has("blockY") ? chunkObj.get("blockY").getAsInt()
+                                    : ChunkloaderConstants.DEFAULT_BLOCK_Y;
+                            int blockZ = chunkObj.has("blockZ") ? chunkObj.get("blockZ").getAsInt()
+                                    : chunkZ * ChunkloaderConstants.CHUNK_SIZE
+                                            + ChunkloaderConstants.CHUNK_CENTER_OFFSET;
                             String name = chunkObj.has("name") ? chunkObj.get("name").getAsString() : null;
                             boolean enabled = chunkObj.has("enabled") ? chunkObj.get("enabled").getAsBoolean() : true;
-                            boolean nameVisible = chunkObj.has("nameVisible") ? chunkObj.get("nameVisible").getAsBoolean() : true;
-                            int chunkRadius = chunkObj.has("chunkRadius") ? chunkObj.get("chunkRadius").getAsInt() : ChunkloaderConstants.DEFAULT_RADIUS;
-                            boolean allowMobSpawning = chunkObj.has("allowMobSpawning") ? chunkObj.get("allowMobSpawning").getAsBoolean() : true;
-                            String dimension = chunkObj.has("dimension") ? chunkObj.get("dimension").getAsString() : "minecraft:overworld";
-                            String ownerName = chunkObj.has("ownerName") ? chunkObj.get("ownerName").getAsString() : null;
-                            boolean hideOtherDots = chunkObj.has("hideOtherDots") ? chunkObj.get("hideOtherDots").getAsBoolean() : false;
-                            
-                            chunkRadius = Math.max(ChunkloaderConstants.MIN_RADIUS, Math.min(ChunkloaderConstants.MAX_RADIUS, chunkRadius));
-                            blockY = Math.max(ChunkloaderConstants.MIN_BLOCK_Y, Math.min(ChunkloaderConstants.MAX_BLOCK_Y, blockY));
-                            
+                            boolean nameVisible = chunkObj.has("nameVisible")
+                                    ? chunkObj.get("nameVisible").getAsBoolean()
+                                    : true;
+                            int chunkRadius = chunkObj.has("chunkRadius") ? chunkObj.get("chunkRadius").getAsInt()
+                                    : ChunkloaderConstants.DEFAULT_RADIUS;
+                            boolean allowMobSpawning = chunkObj.has("allowMobSpawning")
+                                    ? chunkObj.get("allowMobSpawning").getAsBoolean()
+                                    : true;
+                            String dimension = chunkObj.has("dimension") ? chunkObj.get("dimension").getAsString()
+                                    : "minecraft:overworld";
+                            String ownerName = chunkObj.has("ownerName") ? chunkObj.get("ownerName").getAsString()
+                                    : null;
+                            Integer easterEggSkinIndex = EasterEggSkinGuard.readVerifiedIndex(
+                                    chunkObj, dimension, chunkX, chunkZ);
+                            float spawnYaw = chunkObj.has("spawnYaw") ? chunkObj.get("spawnYaw").getAsFloat() : 0.0f;
+
+                            chunkRadius = Math.max(ChunkloaderConstants.MIN_RADIUS,
+                                    Math.min(ChunkloaderConstants.MAX_RADIUS, chunkRadius));
+                            blockY = Math.max(ChunkloaderConstants.MIN_BLOCK_Y,
+                                    Math.min(ChunkloaderConstants.MAX_BLOCK_Y, blockY));
+
                             if (name != null && config.hasEntryByName(name)) {
-                                ChunkloaderMod.LOGGER.warn("Duplicate name '{}' found in config, skipping entry at chunk ({}, {})", name, chunkX, chunkZ);
+                                ChunkloaderMod.LOGGER.warn(
+                                        "Duplicate name '{}' found in config, skipping entry at chunk ({}, {})", name,
+                                        chunkX, chunkZ);
                                 continue;
                             }
-                            
-                            config.chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name, enabled, nameVisible, chunkRadius, allowMobSpawning, dimension, ownerName, hideOtherDots));
+
+                            config.chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name,
+                                    enabled, nameVisible, chunkRadius, allowMobSpawning, dimension, ownerName,
+                                    easterEggSkinIndex, spawnYaw));
                         } catch (Exception e) {
                             ChunkloaderMod.LOGGER.warn("Failed to load chunkloader entry, skipping", e);
                         }
                     }
                 }
-                
+
                 ChunkloaderMod.LOGGER.info("Loaded {} chunkloaders from config", config.chunkEntries.size());
             } catch (Exception e) {
                 ChunkloaderMod.LOGGER.error("Failed to load config file", e);
+                boolean restored = config.restoreFromBackup();
+                if (restored) {
+                    try {
+                        try (FileReader restoredReader = new FileReader(configFile)) {
+                            JsonObject restoredJson = JsonParser.parseReader(restoredReader).getAsJsonObject();
+                            config.chunkEntries.clear();
+                            if (restoredJson.has("tabListVisibleAll")) {
+                                config.tabListVisibleAll = restoredJson.get("tabListVisibleAll").getAsBoolean();
+                            }
+                            if (restoredJson.has("chunkloaders")) {
+                                JsonArray chunkloaders = restoredJson.getAsJsonArray("chunkloaders");
+                                for (JsonElement element : chunkloaders) {
+                                    try {
+                                        JsonObject chunkObj = element.getAsJsonObject();
+                                        int chunkX = chunkObj.get("x").getAsInt();
+                                        int chunkZ = chunkObj.get("z").getAsInt();
+                                        int blockX = chunkObj.has("blockX") ? chunkObj.get("blockX").getAsInt()
+                                                : chunkX * ChunkloaderConstants.CHUNK_SIZE
+                                                        + ChunkloaderConstants.CHUNK_CENTER_OFFSET;
+                                        int blockY = chunkObj.has("blockY") ? chunkObj.get("blockY").getAsInt()
+                                                : ChunkloaderConstants.DEFAULT_BLOCK_Y;
+                                        int blockZ = chunkObj.has("blockZ") ? chunkObj.get("blockZ").getAsInt()
+                                                : chunkZ * ChunkloaderConstants.CHUNK_SIZE
+                                                        + ChunkloaderConstants.CHUNK_CENTER_OFFSET;
+                                        String name = chunkObj.has("name") ? chunkObj.get("name").getAsString() : null;
+                                        boolean enabled = chunkObj.has("enabled") ? chunkObj.get("enabled").getAsBoolean() : true;
+                                        boolean nameVisible = chunkObj.has("nameVisible")
+                                                ? chunkObj.get("nameVisible").getAsBoolean()
+                                                : true;
+                                        int chunkRadius = chunkObj.has("chunkRadius") ? chunkObj.get("chunkRadius").getAsInt()
+                                                : ChunkloaderConstants.DEFAULT_RADIUS;
+                                        boolean allowMobSpawning = chunkObj.has("allowMobSpawning")
+                                                ? chunkObj.get("allowMobSpawning").getAsBoolean()
+                                                : true;
+                                        String dimension = chunkObj.has("dimension") ? chunkObj.get("dimension").getAsString()
+                                                : "minecraft:overworld";
+                                        String ownerName = chunkObj.has("ownerName") ? chunkObj.get("ownerName").getAsString()
+                                                : null;
+                                        Integer easterEggSkinIndex = EasterEggSkinGuard.readVerifiedIndex(
+                                    chunkObj, dimension, chunkX, chunkZ);
+                            float spawnYaw = chunkObj.has("spawnYaw") ? chunkObj.get("spawnYaw").getAsFloat() : 0.0f;
+
+                                        chunkRadius = Math.max(ChunkloaderConstants.MIN_RADIUS,
+                                                Math.min(ChunkloaderConstants.MAX_RADIUS, chunkRadius));
+                                        blockY = Math.max(ChunkloaderConstants.MIN_BLOCK_Y,
+                                                Math.min(ChunkloaderConstants.MAX_BLOCK_Y, blockY));
+
+                                        if (name != null && config.hasEntryByName(name)) {
+                                            continue;
+                                        }
+
+                                        config.chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name,
+                                                enabled, nameVisible, chunkRadius, allowMobSpawning, dimension, ownerName,
+                                                easterEggSkinIndex, spawnYaw));
+                                    } catch (Exception entryEx) {
+                                        ChunkloaderMod.LOGGER.warn("Failed to load restored chunkloader entry, skipping", entryEx);
+                                    }
+                                }
+                            }
+                            ChunkloaderMod.LOGGER.warn("Successfully reloaded config from backup ({} entries)", config.chunkEntries.size());
+                        }
+                    } catch (Exception reloadEx) {
+                        ChunkloaderMod.LOGGER.error("CRITICAL: Config backup restore succeeded but reload failed. Saving empty default config.", reloadEx);
+                        config.chunkEntries.clear();
+                        try {
+                            config.save();
+                        } catch (Exception saveEx) {
+                            ChunkloaderMod.LOGGER.error("Failed to create default config", saveEx);
+                        }
+                    }
+                } else {
+                    ChunkloaderMod.LOGGER.error("CRITICAL: Config load failed and no valid backup could be restored. Saving empty default config.");
+                    try {
+                        config.save();
+                    } catch (Exception saveEx) {
+                        ChunkloaderMod.LOGGER.error("Failed to create default config", saveEx);
+                    }
+                }
+            }
+            if (needsSave) {
                 try {
                     config.save();
-                } catch (Exception saveEx) {
-                    ChunkloaderMod.LOGGER.error("Failed to create default config", saveEx);
+                    ChunkloaderMod.LOGGER.info("Config migrated to version {}", CONFIG_VERSION);
+                } catch (Exception e) {
+                    ChunkloaderMod.LOGGER.warn("Failed to persist migrated config", e);
                 }
             }
         } else {
@@ -177,18 +234,50 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                 ChunkloaderMod.LOGGER.error("Failed to create default config file", e);
             }
         }
-        
+
         return config;
     }
-    
+
     public void save() {
+        invalidateCache();
+        if (SAVE_DEBOUNCE_MS <= 0L) {
+            saveImmediate();
+            return;
+        }
+        scheduleSave();
+    }
+
+    public void flushPendingSave() {
+        if (savePending) {
+            saveImmediate();
+        }
+    }
+
+    public void saveImmediate() {
+        synchronized (saveScheduleLock) {
+            if (pendingSaveTask != null) {
+                pendingSaveTask.cancel();
+                pendingSaveTask = null;
+            }
+            savePending = false;
+        }
         lock.writeLock().lock();
         try {
+            Path parent = configPath.getParent();
+            if (parent != null) {
+                try {
+                    Files.createDirectories(parent);
+                } catch (IOException e) {
+                    ChunkloaderMod.LOGGER.warn("Could not create config directory", e);
+                }
+            }
             createBackup();
-            
+
             JsonObject json = new JsonObject();
             JsonArray chunkloaders = new JsonArray();
-            
+            json.addProperty("configVersion", CONFIG_VERSION);
+            json.addProperty("tabListVisibleAll", tabListVisibleAll);
+
             for (ChunkloaderTarget entry : chunkEntries) {
                 JsonObject chunkObj = new JsonObject();
                 chunkObj.addProperty("x", entry.chunkX());
@@ -207,62 +296,167 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                 if (entry.ownerName() != null) {
                     chunkObj.addProperty("ownerName", entry.ownerName());
                 }
-                chunkObj.addProperty("hideOtherDots", entry.hideOtherDots());
+                                if (entry.easterEggSkinIndex() != null) {
+                    EasterEggSkinGuard.writeSignedIndex(
+                            chunkObj,
+                            entry.dimension(),
+                            entry.chunkX(),
+                            entry.chunkZ(),
+                            entry.easterEggSkinIndex());
+                }
+                if (entry.spawnYaw() != 0.0f) {
+                    chunkObj.addProperty("spawnYaw", entry.spawnYaw());
+                }
                 chunkloaders.add(chunkObj);
             }
-            
+
             json.add("chunkloaders", chunkloaders);
-            
-            try (FileWriter writer = new FileWriter(configPath.toFile())) {
-                GSON.toJson(json, writer);
-                ChunkloaderMod.LOGGER.info("Saved {} chunkloaders to config", chunkEntries.size());
+
+            Path tempPath = configPath.resolveSibling(CONFIG_FILE + ".tmp");
+            try {
+                try (FileWriter writer = new FileWriter(tempPath.toFile())) {
+                    GSON.toJson(json, writer);
+                }
+                try {
+                    Files.move(tempPath, configPath, StandardCopyOption.REPLACE_EXISTING,
+                            StandardCopyOption.ATOMIC_MOVE);
+                    ChunkloaderMod.LOGGER.info("Saved {} chunkloaders to config", chunkEntries.size());
+                } catch (AtomicMoveNotSupportedException e) {
+                    Files.move(tempPath, configPath, StandardCopyOption.REPLACE_EXISTING);
+                    ChunkloaderMod.LOGGER.info("Saved {} chunkloaders to config", chunkEntries.size());
+                }
             } catch (IOException e) {
                 ChunkloaderMod.LOGGER.error("Failed to save config file", e);
+                try {
+                    Files.deleteIfExists(tempPath);
+                } catch (IOException ignored) {
+                }
                 restoreFromBackup();
             }
         } finally {
             lock.writeLock().unlock();
         }
     }
-    
+
+    private static int getConfigVersion(JsonObject json) {
+        if (json.has("configVersion")) {
+            try {
+                return json.get("configVersion").getAsInt();
+            } catch (Exception ignored) {
+            }
+        }
+        return 0;
+    }
+
+    private static void migrateConfig(JsonObject json, int version) {
+        if (version < 1) {
+        }
+        if (version < 2) {
+
+            EasterEggSkinGuard.migrateUnsignedProofs(json);
+        }
+        json.addProperty("configVersion", CONFIG_VERSION);
+    }
+
+    public boolean isTabListVisibleAll() {
+        return tabListVisibleAll;
+    }
+
+    private void scheduleSave() {
+        synchronized (saveScheduleLock) {
+            savePending = true;
+            if (saveTimer == null) {
+                saveTimer = new Timer("chunkloader-config-save", true);
+            }
+            if (pendingSaveTask != null) {
+                pendingSaveTask.cancel();
+            }
+            pendingSaveTask = new TimerTask() {
+                @Override
+                public void run() {
+                    saveImmediate();
+                }
+            };
+            saveTimer.schedule(pendingSaveTask, SAVE_DEBOUNCE_MS);
+        }
+    }
+
+    public void setTabListVisibleAll(boolean visible) {
+        this.tabListVisibleAll = visible;
+    }
+
+    private static void migrateFromLegacyPathIfNeeded(ChunkloaderConfig config) {
+        if (config.configPath.toFile().exists()) {
+            return;
+        }
+        Path parent = config.configPath.getParent();
+        if (parent == null) {
+            return;
+        }
+        Path grandparent = parent.getParent();
+        if (grandparent == null) {
+            return;
+        }
+        Path legacyPath = grandparent.resolve(CONFIG_FILE);
+        if (!Files.exists(legacyPath)) {
+            return;
+        }
+        try {
+            Files.createDirectories(parent);
+            Files.copy(legacyPath, config.configPath, StandardCopyOption.REPLACE_EXISTING);
+            Files.delete(legacyPath);
+            ChunkloaderMod.LOGGER.info("Migrated config from legacy path to {}", config.configPath);
+        } catch (IOException e) {
+            ChunkloaderMod.LOGGER.warn("Could not migrate config from legacy path: {}", e.getMessage());
+        }
+    }
+
     private void createBackup() {
         File configFile = configPath.toFile();
         if (!configFile.exists()) {
             return;
         }
-        
+
+        long now = System.currentTimeMillis();
+        if (BACKUP_COOLDOWN_MS > 0 && (now - lastBackupTimeMs) < BACKUP_COOLDOWN_MS) {
+            return;
+        }
+
         try {
-            Path backupDir = configPath.getParent();
-            if (backupDir == null) {
+            Path configDir = configPath.getParent();
+            if (configDir == null) {
                 return;
             }
-            
+            Path backupDir = configDir.resolve(BACKUPS_SUBFOLDER);
+            Files.createDirectories(backupDir);
             cleanupOldBackups(backupDir);
-            
+
             String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
             Path backupPath = backupDir.resolve(BACKUP_PREFIX + timestamp + ".json");
             Files.copy(configPath, backupPath, StandardCopyOption.REPLACE_EXISTING);
             updateLatestBackup(backupDir, backupPath);
+            lastBackupTimeMs = now;
         } catch (IOException e) {
             ChunkloaderMod.LOGGER.warn("Failed to create backup", e);
         }
     }
-    
+
     private void cleanupOldBackups(Path backupDir) {
         try {
             List<Path> backups = new ArrayList<>();
-            Files.list(backupDir)
-                .filter(path -> path.getFileName().toString().startsWith(BACKUP_PREFIX) &&
-                    !path.getFileName().toString().equals(LATEST_BACKUP_NAME))
-                .sorted((a, b) -> {
-                    try {
-                        return Files.getLastModifiedTime(b).compareTo(Files.getLastModifiedTime(a));
-                    } catch (IOException e) {
-                        return 0;
-                    }
-                })
-                .forEach(backups::add);
-            
+            try (var stream = Files.list(backupDir)) {
+                stream.filter(path -> path.getFileName().toString().startsWith(BACKUP_PREFIX) &&
+                                !path.getFileName().toString().equals(LATEST_BACKUP_NAME))
+                        .sorted((a, b) -> {
+                            try {
+                                return Files.getLastModifiedTime(b).compareTo(Files.getLastModifiedTime(a));
+                            } catch (IOException e) {
+                                return 0;
+                            }
+                        })
+                        .forEach(backups::add);
+            }
+
             for (int i = MAX_BACKUPS; i < backups.size(); i++) {
                 try {
                     Files.delete(backups.get(i));
@@ -274,7 +468,7 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
             ChunkloaderMod.LOGGER.warn("Failed to cleanup old backups", e);
         }
     }
-    
+
     private void updateLatestBackup(Path backupDir, Path latest) {
         try {
             Path latestLink = backupDir.resolve(LATEST_BACKUP_NAME);
@@ -283,65 +477,100 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
             ChunkloaderMod.LOGGER.warn("Failed to update latest backup reference", e);
         }
     }
-    
-    private void restoreFromBackup() {
+
+    private boolean restoreFromBackup() {
         try {
-            Path backupDir = configPath.getParent();
-            if (backupDir == null) {
-                return;
+            Path configDir = configPath.getParent();
+            if (configDir == null) {
+                return false;
             }
-            
-            Path latestBackup = Files.list(backupDir)
-                .filter(path -> path.getFileName().toString().startsWith(BACKUP_PREFIX))
-                .max((a, b) -> {
-                    try {
-                        return Files.getLastModifiedTime(a).compareTo(Files.getLastModifiedTime(b));
-                    } catch (IOException e) {
-                        return 0;
+            Path backupDir = configDir.resolve(BACKUPS_SUBFOLDER);
+            if (!Files.exists(backupDir)) {
+                return false;
+            }
+            List<Path> backups = new ArrayList<>();
+            try (var stream = Files.list(backupDir)) {
+                stream.filter(path -> path.getFileName().toString().startsWith(BACKUP_PREFIX))
+                        .sorted((a, b) -> {
+                            try {
+                                return Files.getLastModifiedTime(b).compareTo(Files.getLastModifiedTime(a));
+                            } catch (IOException e) {
+                                return 0;
+                            }
+                        })
+                        .forEach(backups::add);
+            }
+
+            for (Path backup : backups) {
+                try {
+
+                    try (FileReader reader = new FileReader(backup.toFile())) {
+                        JsonObject json = JsonParser.parseReader(reader).getAsJsonObject();
+                        if (json == null) {
+                            continue;
+                        }
                     }
-                })
-                .orElse(null);
-            
-            if (latestBackup != null) {
-                Files.copy(latestBackup, configPath, StandardCopyOption.REPLACE_EXISTING);
-                ChunkloaderMod.LOGGER.warn("Restored config from backup: {}", latestBackup.getFileName());
+                    Files.copy(backup, configPath, StandardCopyOption.REPLACE_EXISTING);
+                    ChunkloaderMod.LOGGER.warn("Restored config from backup: {}", backup.getFileName());
+                    return true;
+                } catch (Exception e) {
+                    ChunkloaderMod.LOGGER.warn("Skipping invalid backup: {}", backup.getFileName(), e);
+                }
             }
+            return false;
         } catch (IOException e) {
             ChunkloaderMod.LOGGER.error("Failed to restore from backup", e);
+            return false;
         }
     }
-    
+
     public List<ChunkloaderTarget> getChunkEntries() {
+        if (cachedVersion == cacheVersion && cachedChunkEntries != null) {
+            return cachedChunkEntries;
+        }
+
         lock.readLock().lock();
         try {
-            return Collections.unmodifiableList(new ArrayList<>(chunkEntries));
+            if (cachedVersion == cacheVersion && cachedChunkEntries != null) {
+                return cachedChunkEntries;
+            }
+            List<ChunkloaderTarget> snapshot = Collections.unmodifiableList(new ArrayList<>(chunkEntries));
+            cachedChunkEntries = snapshot;
+            cachedVersion = cacheVersion;
+            return snapshot;
         } finally {
             lock.readLock().unlock();
         }
     }
-    
+
+    private void invalidateCache() {
+        cacheVersion++;
+    }
+
     public void replaceAllEntries(List<ChunkloaderTarget> newEntries) {
         lock.writeLock().lock();
         try {
             chunkEntries.clear();
             chunkEntries.addAll(newEntries);
+            invalidateCache();
             save();
         } finally {
             lock.writeLock().unlock();
         }
     }
-    
-    public boolean hasEntry(int chunkX, int chunkZ) {
+
+    public boolean hasEntry(int chunkX, int chunkZ, String dimension) {
         lock.readLock().lock();
         try {
-            return chunkEntries.stream().anyMatch(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ);
+            return chunkEntries.stream().anyMatch(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ && Objects.equals(entry.dimension(), dimension));
         } finally {
             lock.readLock().unlock();
         }
     }
-    
+
     public boolean hasEntryByName(String name) {
-        if (name == null) return false;
+        if (name == null)
+            return false;
         lock.readLock().lock();
         try {
             return chunkEntries.stream().anyMatch(entry -> entry.name() != null && name.equalsIgnoreCase(entry.name()));
@@ -349,323 +578,304 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
             lock.readLock().unlock();
         }
     }
-    
-    public ChunkloaderTarget getEntry(int chunkX, int chunkZ) {
+
+    public ChunkloaderTarget getEntry(int chunkX, int chunkZ, String dimension) {
         lock.readLock().lock();
         try {
             return chunkEntries.stream()
-                .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ)
-                .findFirst()
-                .orElse(null);
+                    .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ && Objects.equals(entry.dimension(), dimension))
+                    .findFirst()
+                    .orElse(null);
         } finally {
             lock.readLock().unlock();
         }
     }
-    
+
     public int getMaxChunkloaders() {
         return ChunkloaderConstants.MAX_CHUNKLOADERS;
     }
-    
+
     public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name) {
         return addOrUpdateEntry(chunkX, chunkZ, blockX, blockY, blockZ, name, "minecraft:overworld");
     }
-    
-    public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name, String dimension) {
+
+    public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name,
+            String dimension) {
         return addOrUpdateEntry(chunkX, chunkZ, blockX, blockY, blockZ, name, dimension, null);
     }
-    
-    public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name, String dimension, ChunkloaderTarget excludeEntry) {
+
+    public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name,
+            String dimension, ChunkloaderTarget excludeEntry) {
         return addOrUpdateEntry(chunkX, chunkZ, blockX, blockY, blockZ, name, dimension, excludeEntry, null);
     }
-    
-    public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name, String dimension, ChunkloaderTarget excludeEntry, Boolean forceEnabled) {
-        return addOrUpdateEntry(chunkX, chunkZ, blockX, blockY, blockZ, name, dimension, excludeEntry, forceEnabled, null);
+
+    public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name,
+            String dimension, ChunkloaderTarget excludeEntry, Boolean forceEnabled) {
+        return addOrUpdateEntry(chunkX, chunkZ, blockX, blockY, blockZ, name, dimension, excludeEntry, forceEnabled,
+                null);
     }
-    
-    public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name, String dimension, ChunkloaderTarget excludeEntry, Boolean forceEnabled, String ownerName) {
+
+    public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name,
+            String dimension, ChunkloaderTarget excludeEntry, Boolean forceEnabled, String ownerName) {
+        return addOrUpdateEntry(chunkX, chunkZ, blockX, blockY, blockZ, name, dimension, excludeEntry, forceEnabled, ownerName, 0.0f);
+    }
+
+    public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name,
+            String dimension, ChunkloaderTarget excludeEntry, Boolean forceEnabled, String ownerName, float spawnYaw) {
         lock.writeLock().lock();
         try {
-            boolean entryExists = chunkEntries.stream().anyMatch(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ && entry.dimension().equals(dimension));
+            boolean entryExists = chunkEntries.stream().anyMatch(entry -> entry.chunkX() == chunkX
+                    && entry.chunkZ() == chunkZ && entry.dimension().equals(dimension));
             if (!entryExists && chunkEntries.size() >= ChunkloaderConstants.MAX_CHUNKLOADERS) {
-                ChunkloaderMod.LOGGER.warn("Maximum chunkloader limit ({}) reached", ChunkloaderConstants.MAX_CHUNKLOADERS);
+                ChunkloaderMod.LOGGER.warn("Maximum chunkloader limit ({}) reached",
+                        ChunkloaderConstants.MAX_CHUNKLOADERS);
                 return false;
             }
-            
+
             if (name != null && !entryExists) {
                 boolean nameExists = chunkEntries.stream()
-                    .anyMatch(entry -> entry.name() != null
-                        && name.equalsIgnoreCase(entry.name())
-                        && (excludeEntry == null || entry != excludeEntry));
+                        .anyMatch(entry -> entry.name() != null
+                                && name.equalsIgnoreCase(entry.name())
+                                && (excludeEntry == null || entry != excludeEntry));
                 if (nameExists) {
                     ChunkloaderMod.LOGGER.warn("Name '{}' already exists", name);
                     return false;
                 }
             }
-            
+
             blockY = Math.max(ChunkloaderConstants.MIN_BLOCK_Y, Math.min(ChunkloaderConstants.MAX_BLOCK_Y, blockY));
-            
+
             ChunkloaderTarget existing = chunkEntries.stream()
-                .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ && entry.dimension().equals(dimension))
-                .findFirst()
-                .orElse(null);
-            
+                    .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ
+                            && entry.dimension().equals(dimension))
+                    .findFirst()
+                    .orElse(null);
+
+            ChunkloaderTarget base = existing != null ? existing : excludeEntry;
+
             boolean enabled;
             if (forceEnabled != null) {
                 enabled = forceEnabled;
             } else {
-                enabled = existing != null ? existing.enabled() : true;
+                enabled = base != null ? base.enabled() : true;
             }
-            
-            boolean nameVisible = existing != null ? existing.nameVisible() : true;
-            boolean allowMobSpawning = existing != null ? existing.allowMobSpawning() : true;
-            int chunkRadius = existing != null ? existing.chunkRadius() : 0;
-            String finalOwnerName = ownerName != null ? ownerName : (existing != null ? existing.ownerName() : null);
-            boolean hideOtherDots = existing != null ? existing.hideOtherDots() : false;
+
+            boolean nameVisible = base != null ? base.nameVisible() : true;
+            boolean allowMobSpawning = base != null ? base.allowMobSpawning() : true;
+            int chunkRadius = base != null ? base.chunkRadius() : 0;
+            String finalOwnerName = ownerName != null ? ownerName : (base != null ? base.ownerName() : null);
             if (existing != null) {
                 chunkEntries.remove(existing);
             }
-            chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name, enabled, nameVisible, chunkRadius, allowMobSpawning, dimension, finalOwnerName, hideOtherDots));
+            chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name, enabled, nameVisible,
+                    chunkRadius, allowMobSpawning, dimension, finalOwnerName, null));
             save();
             return true;
         } finally {
             lock.writeLock().unlock();
         }
     }
-    
-    public void updateEntryEnabled(int chunkX, int chunkZ, boolean enabled) {
+
+    public void updateEntryEnabled(int chunkX, int chunkZ, String dimension, boolean enabled) {
         lock.writeLock().lock();
         try {
             ChunkloaderTarget existing = chunkEntries.stream()
-                .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ)
-                .findFirst()
-                .orElse(null);
+                    .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ && Objects.equals(entry.dimension(), dimension))
+                    .findFirst()
+                    .orElse(null);
             if (existing != null) {
                 chunkEntries.remove(existing);
-                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), 
-                    existing.blockX(), existing.blockY(), existing.blockZ(), 
-                    existing.name(), enabled, existing.nameVisible(), existing.chunkRadius(), existing.allowMobSpawning(), existing.dimension(), existing.ownerName(), existing.hideOtherDots()));
+                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(),
+                        existing.blockX(), existing.blockY(), existing.blockZ(),
+                        existing.name(), enabled, existing.nameVisible(), existing.chunkRadius(),
+                        existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
+                        existing.easterEggSkinIndex(), existing.spawnYaw()));
                 save();
             }
         } finally {
             lock.writeLock().unlock();
         }
     }
-    
-    public void updateEntryNameVisible(int chunkX, int chunkZ, boolean nameVisible) {
+
+    public void updateEntryNameVisible(int chunkX, int chunkZ, String dimension, boolean nameVisible) {
         lock.writeLock().lock();
         try {
             ChunkloaderTarget existing = chunkEntries.stream()
-                .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ)
-                .findFirst()
-                .orElse(null);
+                    .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ && Objects.equals(entry.dimension(), dimension))
+                    .findFirst()
+                    .orElse(null);
             if (existing != null) {
                 chunkEntries.remove(existing);
-                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), 
-                    existing.blockX(), existing.blockY(), existing.blockZ(), 
-                    existing.name(), existing.enabled(), nameVisible, existing.chunkRadius(), existing.allowMobSpawning(), existing.dimension(), existing.ownerName(), existing.hideOtherDots()));
+                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(),
+                        existing.blockX(), existing.blockY(), existing.blockZ(),
+                        existing.name(), existing.enabled(), nameVisible, existing.chunkRadius(),
+                        existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
+                        existing.easterEggSkinIndex(), existing.spawnYaw()));
                 save();
             }
         } finally {
             lock.writeLock().unlock();
         }
     }
-    
-    public void updateEntryHideOtherDots(int chunkX, int chunkZ, boolean hideOtherDots) {
+
+    public void updateEntryEasterEggSkinIndex(int chunkX, int chunkZ, String dimension, Integer easterEggSkinIndex) {
         lock.writeLock().lock();
         try {
             ChunkloaderTarget existing = chunkEntries.stream()
-                .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ)
-                .findFirst()
-                .orElse(null);
+                    .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ && Objects.equals(entry.dimension(), dimension))
+                    .findFirst()
+                    .orElse(null);
             if (existing != null) {
                 chunkEntries.remove(existing);
-                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), 
-                    existing.blockX(), existing.blockY(), existing.blockZ(), 
-                    existing.name(), existing.enabled(), existing.nameVisible(), existing.chunkRadius(), existing.allowMobSpawning(), existing.dimension(), existing.ownerName(), hideOtherDots));
+                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(),
+                        existing.blockX(), existing.blockY(), existing.blockZ(),
+                        existing.name(), existing.enabled(), existing.nameVisible(), existing.chunkRadius(),
+                        existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
+                        easterEggSkinIndex, existing.spawnYaw()));
                 save();
             }
         } finally {
             lock.writeLock().unlock();
         }
     }
-    
+
     private boolean isValidName(String name) {
         if (name == null || name.isEmpty()) {
             return false;
         }
         return name.matches("^[a-zA-Z0-9]+$");
     }
-    
-    public boolean updateEntryName(int chunkX, int chunkZ, String newName) {
+
+    public boolean updateEntryName(int chunkX, int chunkZ, String dimension, String newName) {
         if (newName == null || newName.trim().isEmpty()) {
             return false;
         }
         final String trimmedName = newName.trim();
-        
+
         if (!isValidName(trimmedName)) {
             return false;
         }
-        
+
         lock.writeLock().lock();
         try {
             ChunkloaderTarget existing = chunkEntries.stream()
-                .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ)
-                .findFirst()
-                .orElse(null);
+                    .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ && Objects.equals(entry.dimension(), dimension))
+                    .findFirst()
+                    .orElse(null);
             if (existing == null) {
                 return false;
             }
-            
+
             if (trimmedName.equals(existing.name())) {
                 return false;
             }
 
             boolean nameTaken = chunkEntries.stream()
-                .anyMatch(entry -> entry != existing
-                    && entry.name() != null
-                    && trimmedName.equalsIgnoreCase(entry.name()));
+                    .anyMatch(entry -> entry != existing
+                            && entry.name() != null
+                            && trimmedName.equalsIgnoreCase(entry.name()));
             if (nameTaken) {
                 return false;
             }
-            
+
             chunkEntries.remove(existing);
-            chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), 
-                existing.blockX(), existing.blockY(), existing.blockZ(), 
-                trimmedName, existing.enabled(), existing.nameVisible(), existing.chunkRadius(), existing.allowMobSpawning(), existing.dimension(), existing.ownerName(), existing.hideOtherDots()));
+            chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(),
+                    existing.blockX(), existing.blockY(), existing.blockZ(),
+                    trimmedName, existing.enabled(), existing.nameVisible(), existing.chunkRadius(),
+                    existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
+                    existing.easterEggSkinIndex(), existing.spawnYaw()));
             save();
             return true;
         } finally {
             lock.writeLock().unlock();
         }
     }
-    
-    public void updateEntryChunkRadius(int chunkX, int chunkZ, int chunkRadius) {
+
+    public void updateEntryChunkRadius(int chunkX, int chunkZ, String dimension, int chunkRadius) {
         lock.writeLock().lock();
         try {
             chunkRadius = Math.max(0, Math.min(3, chunkRadius));
-            
+
             ChunkloaderTarget existing = chunkEntries.stream()
-                .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ)
-                .findFirst()
-                .orElse(null);
+                    .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ && Objects.equals(entry.dimension(), dimension))
+                    .findFirst()
+                    .orElse(null);
             if (existing != null) {
                 chunkEntries.remove(existing);
-                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), 
-                    existing.blockX(), existing.blockY(), existing.blockZ(), 
-                    existing.name(), existing.enabled(), existing.nameVisible(), chunkRadius, existing.allowMobSpawning(), existing.dimension(), existing.ownerName(), existing.hideOtherDots()));
+                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(),
+                        existing.blockX(), existing.blockY(), existing.blockZ(),
+                        existing.name(), existing.enabled(), existing.nameVisible(), chunkRadius,
+                        existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
+                        existing.easterEggSkinIndex(), existing.spawnYaw()));
                 save();
             }
         } finally {
             lock.writeLock().unlock();
         }
     }
-    
-    public void updateEntryAllowMobSpawning(int chunkX, int chunkZ, boolean allowMobSpawning) {
+
+    public void updateEntryAllowMobSpawning(int chunkX, int chunkZ, String dimension, boolean allowMobSpawning) {
         lock.writeLock().lock();
         try {
             ChunkloaderTarget existing = chunkEntries.stream()
-                .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ)
-                .findFirst()
-                .orElse(null);
+                    .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ && Objects.equals(entry.dimension(), dimension))
+                    .findFirst()
+                    .orElse(null);
             if (existing != null) {
                 int newRadius = existing.chunkRadius();
-                
+
                 String newName = existing.name();
                 if (newName != null) {
                     String oldPrefix = existing.allowMobSpawning() ? "Fakeplayer" : "Chunkplayer";
                     String newPrefix = allowMobSpawning ? "Fakeplayer" : "Chunkplayer";
-                    
+
                     if (newName.startsWith(oldPrefix)) {
                         String numStr = newName.substring(oldPrefix.length());
                         if (numStr.matches("^\\d+$")) {
-                            String candidateName = newPrefix + numStr;
-                            boolean nameExists = chunkEntries.stream()
-                                .anyMatch(entry -> entry != existing && entry.name() != null && candidateName.equalsIgnoreCase(entry.name()));
-                            if (nameExists) {
-                                newName = generateNextNameForPrefix(newPrefix, existing);
-                            } else {
-                                String lowestAvailableName = generateNextNameForPrefix(newPrefix, existing);
-                                try {
-                                    int currentNum = Integer.parseInt(numStr);
-                                    String lowestNumStr = lowestAvailableName.substring(newPrefix.length());
-                                    if (lowestNumStr.matches("^\\d+$")) {
-                                        int lowestNum = Integer.parseInt(lowestNumStr);
-                                        if (lowestNum < currentNum) {
-                                            newName = lowestAvailableName;
-                                        } else {
-                                            newName = candidateName;
-                                        }
-                                    } else {
-                                        newName = candidateName;
-                                    }
-                                } catch (NumberFormatException e) {
-                                    newName = candidateName;
-                                }
-                            }
+                            newName = generateNextNameForPrefix(newPrefix, existing);
                         }
-                    }
-                    else if (newName.startsWith("fakeplayer") || newName.startsWith("chunkplayer")) {
+                    } else if (newName.startsWith("fakeplayer") || newName.startsWith("chunkplayer")) {
                         String oldPrefixLower = existing.allowMobSpawning() ? "fakeplayer" : "chunkplayer";
                         if (newName.startsWith(oldPrefixLower)) {
                             String numStr = newName.substring(oldPrefixLower.length());
                             if (numStr.matches("^\\d+$")) {
-                                String candidateName = newPrefix + numStr;
-                                boolean nameExists = chunkEntries.stream()
-                                    .anyMatch(entry -> entry != existing && entry.name() != null && candidateName.equalsIgnoreCase(entry.name()));
-                                if (nameExists) {
-                                    newName = generateNextNameForPrefix(newPrefix, existing);
-                                } else {
-                                    String lowestAvailableName = generateNextNameForPrefix(newPrefix, existing);
-                                    try {
-                                        int currentNum = Integer.parseInt(numStr);
-                                        String lowestNumStr = lowestAvailableName.substring(newPrefix.length());
-                                        if (lowestNumStr.matches("^\\d+$")) {
-                                            int lowestNum = Integer.parseInt(lowestNumStr);
-                                            if (lowestNum < currentNum) {
-                                                newName = lowestAvailableName;
-                                            } else {
-                                                newName = candidateName;
-                                            }
-                                        } else {
-                                            newName = candidateName;
-                                        }
-                                    } catch (NumberFormatException e) {
-                                        newName = candidateName;
-                                    }
-                                }
+                                newName = generateNextNameForPrefix(newPrefix, existing);
                             }
                         }
                     }
                 }
-                
+
                 chunkEntries.remove(existing);
-                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), 
-                    existing.blockX(), existing.blockY(), existing.blockZ(), 
-                    newName, existing.enabled(), existing.nameVisible(), newRadius, allowMobSpawning, existing.dimension(), existing.ownerName(), existing.hideOtherDots()));
+                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(),
+                        existing.blockX(), existing.blockY(), existing.blockZ(),
+                        newName, existing.enabled(), existing.nameVisible(), newRadius, allowMobSpawning,
+                        existing.dimension(), existing.ownerName(),
+                        existing.easterEggSkinIndex(), existing.spawnYaw()));
                 save();
             }
         } finally {
             lock.writeLock().unlock();
         }
     }
-    
+
     public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ) {
         return addOrUpdateEntry(chunkX, chunkZ, blockX, blockY, blockZ, null);
     }
-    
+
     public ChunkloaderTarget getEntryByName(String name) {
-        if (name == null) return null;
+        if (name == null)
+            return null;
         lock.readLock().lock();
         try {
             return chunkEntries.stream()
-                .filter(entry -> entry.name() != null && name.equalsIgnoreCase(entry.name()))
-                .findFirst()
-                .orElse(null);
+                    .filter(entry -> entry.name() != null && name.equalsIgnoreCase(entry.name()))
+                    .findFirst()
+                    .orElse(null);
         } finally {
             lock.readLock().unlock();
         }
     }
-    
+
     public boolean removeEntryByName(String name) {
         lock.writeLock().lock();
         try {
@@ -680,12 +890,12 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
             lock.writeLock().unlock();
         }
     }
-    
+
     public String generateNextName(boolean isFakePlayer) {
         String prefix = isFakePlayer ? "Fakeplayer" : "Chunkplayer";
         return generateNextNameForPrefix(prefix, null);
     }
-    
+
     private String generateNextNameForPrefix(String prefix, ChunkloaderTarget excludeEntry) {
         Set<Integer> usedNumbers = new HashSet<>();
         for (ChunkloaderTarget entry : chunkEntries) {
@@ -693,7 +903,8 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                 continue;
             }
             String entryName = entry.name();
-            if (entryName != null && entryName.length() >= prefix.length() && entryName.regionMatches(true, 0, prefix, 0, prefix.length())) {
+            if (entryName != null && entryName.length() >= prefix.length()
+                    && entryName.regionMatches(true, 0, prefix, 0, prefix.length())) {
                 try {
                     String numStr = entryName.substring(prefix.length());
                     if (numStr.matches("^\\d+$")) {
@@ -704,30 +915,30 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                 }
             }
         }
-        
+
         int nextNum = 1;
         while (usedNumbers.contains(nextNum)) {
             nextNum++;
         }
         return prefix + nextNum;
     }
-    
+
     public String generateNextName() {
         return generateNextName(true);
     }
-    
-    public boolean removeEntry(int chunkX, int chunkZ) {
+
+    public boolean removeEntry(int chunkX, int chunkZ, String dimension) {
         lock.writeLock().lock();
         try {
-            ChunkloaderTarget existing = getEntry(chunkX, chunkZ);
+            ChunkloaderTarget existing = getEntry(chunkX, chunkZ, dimension);
             if (existing != null) {
                 String deletedName = existing.name();
                 chunkEntries.remove(existing);
-                
+
                 if (deletedName != null) {
                     renumberNamesAfterDeletion(deletedName);
                 }
-                
+
                 save();
                 return true;
             }
@@ -736,11 +947,11 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
             lock.writeLock().unlock();
         }
     }
-    
+
     private void renumberNamesAfterDeletion(String deletedName) {
         final String prefix;
         int deletedNumber = -1;
-        
+
         if (deletedName.startsWith("Fakeplayer")) {
             prefix = "Fakeplayer";
             try {
@@ -768,7 +979,7 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
         } else {
             return;
         }
-        
+
         final int finalDeletedNumber = deletedNumber;
         List<ChunkloaderTarget> entriesToRename = new ArrayList<>();
         for (ChunkloaderTarget entry : chunkEntries) {
@@ -785,7 +996,7 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                 }
             }
         }
-        
+
         entriesToRename.sort((a, b) -> {
             try {
                 int numA = Integer.parseInt(a.name().substring(prefix.length()));
@@ -795,38 +1006,37 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                 return 0;
             }
         });
-        
+
         for (ChunkloaderTarget entry : entriesToRename) {
             try {
                 String currentName = entry.name();
                 int currentNum = Integer.parseInt(currentName.substring(prefix.length()));
                 String newName = prefix + (currentNum - 1);
-                
+
                 ChunkloaderTarget updated = new ChunkloaderTarget(
-                    entry.chunkX(), entry.chunkZ(),
-                    entry.blockX(), entry.blockY(), entry.blockZ(),
-                    newName,
-                    entry.enabled(), entry.nameVisible(),
-                    entry.chunkRadius(), entry.allowMobSpawning(),
-                    entry.dimension(), entry.ownerName(), entry.hideOtherDots()
-                );
+                        entry.chunkX(), entry.chunkZ(),
+                        entry.blockX(), entry.blockY(), entry.blockZ(),
+                        newName,
+                        entry.enabled(), entry.nameVisible(),
+                        entry.chunkRadius(), entry.allowMobSpawning(),
+                        entry.dimension(), entry.ownerName(), entry.easterEggSkinIndex(), entry.spawnYaw());
                 chunkEntries.remove(entry);
                 chunkEntries.add(updated);
             } catch (NumberFormatException e) {
             }
         }
     }
-    
+
     public List<String> findSimilarNames(String name, int maxResults) {
         lock.readLock().lock();
         try {
             if (name == null || name.isEmpty()) {
                 return List.of();
             }
-            
+
             String lowerName = name.toLowerCase();
             List<String> similar = new ArrayList<>();
-            
+
             for (ChunkloaderTarget entry : chunkEntries) {
                 if (entry.name() != null) {
                     String entryName = entry.name().toLowerCase();
@@ -838,11 +1048,10 @@ private static final String LATEST_BACKUP_NAME = BACKUP_PREFIX + "latest.json";
                     }
                 }
             }
-            
+
             return similar;
         } finally {
             lock.readLock().unlock();
         }
     }
 }
-

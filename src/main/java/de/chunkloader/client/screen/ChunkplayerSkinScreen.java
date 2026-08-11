@@ -1,0 +1,946 @@
+package de.chunkloader.client.screen;
+
+import de.chunkloader.ChunkloaderMod;
+import de.chunkloader.client.CustomFakePlayerSkinCache;
+import de.chunkloader.client.SkinLayerMask;
+import de.chunkloader.client.config.ClientConfig;
+import de.chunkloader.client.SkinModelType;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.font.TextRenderer;
+import net.minecraft.client.gui.Click;
+import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.client.render.entity.model.EntityModelLayer;
+import net.minecraft.client.render.entity.model.EntityModelLayers;
+import net.minecraft.client.render.entity.model.PlayerEntityModel;
+import net.minecraft.entity.player.PlayerModelPart;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
+import net.minecraft.util.Identifier;
+import org.lwjgl.PointerBuffer;
+import org.lwjgl.system.MemoryStack;
+import org.lwjgl.util.tinyfd.TinyFileDialogs;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.util.Locale;
+import java.util.UUID;
+
+@Environment(EnvType.CLIENT)
+public class ChunkplayerSkinScreen extends Screen {
+    private static final int SCREEN_MARGIN = 12;
+    private static final int PANEL_MAX_WIDTH = 460;
+    private static final int PANEL_MAX_HEIGHT = 370;
+    private static final float PREVIEW_MODEL_HEIGHT = 2.125F;
+    private static final float PREVIEW_MODEL_WIDTH = 1.5F;
+    private static final float PREVIEW_FIT_MARGIN = 0.97F;
+    private static final float PREVIEW_Y_PIVOT = -1.0625F;
+
+    private static final float PREVIEW_VISUAL_CENTER_BIAS = 1.601F + PREVIEW_Y_PIVOT + 0.10F;
+
+    private static final float PREVIEW_CLAMP_HEIGHT = 2.0F;
+    private static final float PREVIEW_CLAMP_WIDTH = 1.2F;
+
+    private static final float PREVIEW_EDGE_PAD_PX = 4.0F;
+    private static final float MIN_PREVIEW_ZOOM = 0.6F;
+    private static final float MAX_PREVIEW_ZOOM = 2.25F;
+    private static final float PREVIEW_ROTATION_SENSITIVITY = 2.5F;
+    private static final float PREVIEW_PITCH_LIMIT = 50.0F;
+
+    private static final int LAYER_CHEVRON_SIZE = 11;
+    private static final int LAYER_ROW_HEIGHT = 12;
+    private static final int LAYER_MENU_PAD = 3;
+    private static final UUID PREVIEW_CACHE_UUID = UUID.nameUUIDFromBytes(
+        "chunkloader:skin-preview".getBytes(StandardCharsets.UTF_8)
+    );
+
+    private final Screen parent;
+    private final ClientConfig clientConfig;
+    private final String targetPlayerName;
+
+    private TextFieldWidget pathField;
+    private ButtonWidget loadButtonWidget;
+    private ButtonWidget chooseFileButtonWidget;
+    private ButtonWidget applyButtonWidget;
+    private ButtonWidget removeButtonWidget;
+    private ButtonWidget backButtonWidget;
+
+    private CustomFakePlayerSkinCache.CustomSkin previewSkin;
+    private static final EntityModelLayer PLAYER_WIDE_LAYER = EntityModelLayers.PLAYER;
+    private static final EntityModelLayer PLAYER_SLIM_LAYER = new EntityModelLayer(Identifier.ofVanilla("player_slim"), "main");
+
+    private PlayerEntityModel widePreviewModel;
+    private PlayerEntityModel slimPreviewModel;
+    private String selectedPath;
+    private boolean previewDragging;
+    private boolean previewPanning;
+    private float previewPitch = -5.0F;
+    private float previewYaw = 30.0F;
+    private float previewScale = 70.0F;
+    private float previewOffsetX;
+    private float previewOffsetY;
+    private boolean fileDialogOpen;
+    private boolean layersMenuOpen;
+    private int previewLayerMask = SkinLayerMask.DEFAULT_MASK;
+    private String statusMessage = "Select a PNG file or enter a path.";
+    private int statusColor = 0xFFCCCCCC;
+
+    public ChunkplayerSkinScreen(Screen parent, ClientConfig clientConfig, String targetPlayerName) {
+        super(Text.literal("Chunkplayer Skin"));
+        this.parent = parent;
+        this.clientConfig = clientConfig != null ? clientConfig : ClientConfig.load();
+        this.targetPlayerName = targetPlayerName;
+        this.selectedPath = this.clientConfig.getCustomSkinPath(targetPlayerName);
+
+        this.previewLayerMask = this.clientConfig.getCustomSkinLayers(targetPlayerName);
+    }
+    public Screen getParentScreen() {
+        return parent;
+    }
+
+    @Override
+    protected void init() {
+        super.init();
+
+        int panelX = getPanelX();
+        int panelY = getPanelY();
+        int panelWidth = getPanelWidth();
+        int rowX = panelX + 18;
+        int rowWidth = panelWidth - 36;
+        int fileFieldY = panelY + 64;
+        int chooseWidth = 98;
+        int loadWidth = 58;
+        int fieldWidth = rowWidth - chooseWidth - loadWidth - 16;
+
+        pathField = new TextFieldWidget(this.textRenderer, rowX + 4, fileFieldY + 7, fieldWidth - 8, 12, Text.literal("Skin PNG"));
+        pathField.setMaxLength(512);
+        pathField.setDrawsBackground(false);
+        pathField.setTextShadow(false);
+        if (clientConfig != null) {
+            pathField.setEditableColor(clientConfig.getSkinSearchbarTextColor());
+        }
+        pathField.setChangedListener(text -> updateLoadButtonWidgetState());
+        setPathFieldValue(selectedPath != null ? selectedPath : "");
+        addDrawableChild(pathField);
+
+        loadButtonWidget = ButtonWidget.builder(
+            Text.literal("Load"),
+            button -> loadSkinFromPath(pathField.getText())
+        ).dimensions(rowX + fieldWidth + 8, fileFieldY, loadWidth, 20).build();
+        addDrawableChild(loadButtonWidget);
+
+        chooseFileButtonWidget = ButtonWidget.builder(
+            Text.literal("Choose PNG"),
+            button -> openFilePicker()
+        ).dimensions(rowX + fieldWidth + loadWidth + 16, fileFieldY, chooseWidth, 20).build();
+        addDrawableChild(chooseFileButtonWidget);
+
+        int actionWidth = 100;
+        int actionGap = 8;
+        int actionY = panelY + getPanelHeight() - 36;
+        int actionStartX = panelX + (panelWidth - (actionWidth * 3 + actionGap * 2)) / 2;
+
+        applyButtonWidget = ButtonWidget.builder(
+            Text.literal("Apply"),
+            button -> applySkin()
+        ).dimensions(actionStartX, actionY, actionWidth, 20).build();
+        addDrawableChild(applyButtonWidget);
+
+        removeButtonWidget = ButtonWidget.builder(
+            Text.literal("Remove"),
+            button -> removeSkin()
+        ).dimensions(actionStartX + actionWidth + actionGap, actionY, actionWidth, 20).build();
+        addDrawableChild(removeButtonWidget);
+
+        backButtonWidget = ButtonWidget.builder(
+            Text.literal("Back"),
+            button -> this.client.setScreen(parent)
+        ).dimensions(actionStartX + (actionWidth + actionGap) * 2, actionY, actionWidth, 20).build();
+        addDrawableChild(backButtonWidget);
+
+        updateLoadButtonWidgetState();
+        updateActionButtonWidgetState();
+
+        if (selectedPath != null && !selectedPath.isBlank()) {
+            loadSkinFromPath(selectedPath);
+        }
+    }
+
+    @Override
+    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+        drawDimBackground(context);
+
+        int panelX = getPanelX();
+        int panelY = getPanelY();
+        int panelWidth = getPanelWidth();
+        int panelHeight = getPanelHeight();
+        PreviewBounds previewBounds = getPreviewBounds();
+
+        drawModalPanel(context, panelX, panelY, panelWidth, panelHeight);
+
+        TextRenderer renderer = this.textRenderer;
+        Text title = Text.literal("Select Skin").formatted(Formatting.BOLD);
+        int titleColor = clientConfig != null ? clientConfig.getSkinTitleColor() : 0xFFFFFFFF;
+        int titleX = panelX + (panelWidth - renderer.getWidth(title)) / 2 + 1;
+        int titleY = panelY + 12;
+        context.drawText(renderer, title, titleX, titleY, titleColor, false);
+
+        int textColor = clientConfig != null ? clientConfig.getSkinTextColor() : 0xCC808080;
+        int valueColor = clientConfig != null ? clientConfig.getSkinPlayerNameColor() : 0xFFFFFFFF;
+        String playerLabel = targetPlayerName == null || targetPlayerName.isBlank()
+            ? "Player: Unavailable"
+            : "Player: " + targetPlayerName;
+        context.drawText(renderer, Text.literal(playerLabel), panelX + 18, panelY + 35, valueColor, false);
+        context.drawText(renderer, Text.literal("Skin PNG"), panelX + 18, panelY + 52, textColor, false);
+        context.drawText(renderer, Text.literal("3D Preview"), previewBounds.left(), previewBounds.top() - 13, textColor, false);
+
+        int rowX = panelX + 18;
+        int rowWidth = panelWidth - 36;
+        int fileFieldY = panelY + 64;
+        int chooseWidth = 98;
+        int loadWidth = 58;
+        int fieldWidth = rowWidth - chooseWidth - loadWidth - 16;
+
+        int pathBgColor = clientConfig != null ? clientConfig.getSkinSearchbarBgColor() : 0xFF0A0D10;
+        int pathBorderColor = clientConfig != null ? clientConfig.getSkinSearchbarBorderColor() : 0xFF4A4A4A;
+        int currentBorderColor = (pathField != null && pathField.isFocused()) ? 0xFFFFFFFF : pathBorderColor;
+        int pathPlaceholderColor = clientConfig != null ? clientConfig.getSkinSearchbarPlaceholderColor() : 0xCC808080;
+
+        context.fill(rowX, fileFieldY, rowX + fieldWidth, fileFieldY + 20, pathBgColor);
+        context.fill(rowX, fileFieldY, rowX + fieldWidth, fileFieldY + 1, currentBorderColor);
+        context.fill(rowX, fileFieldY + 19, rowX + fieldWidth, fileFieldY + 20, currentBorderColor);
+        context.fill(rowX, fileFieldY, rowX + 1, fileFieldY + 20, currentBorderColor);
+        context.fill(rowX + fieldWidth - 1, fileFieldY, rowX + fieldWidth, fileFieldY + 20, currentBorderColor);
+
+        if (pathField != null && !pathField.isFocused() && pathField.getText().isEmpty()) {
+            context.drawText(renderer, Text.literal("Path to a skin PNG"), rowX + 4, fileFieldY + 7, pathPlaceholderColor, false);
+        }
+
+        drawPreviewPanel(context, previewBounds);
+        drawPreview(context, previewBounds);
+        drawLayerControls(context, previewBounds);
+
+        Text controlsHint = Text.literal("Drag: rotate  |  Alt/MMB+drag: pan  |  Scroll: zoom  |  Double click: reset");
+        context.drawText(
+            renderer,
+            controlsHint,
+            previewBounds.left() + (previewBounds.width() - renderer.getWidth(controlsHint)) / 2,
+            previewBounds.bottom() + 8,
+            textColor,
+            false
+        );
+
+        int statusY = panelY + panelHeight - 58;
+        String visibleStatus = truncateStatus(renderer, statusMessage, panelWidth - 36);
+        int currentStatusColor;
+        if (statusColor == 0xFF55FF55) {
+            currentStatusColor = clientConfig != null ? clientConfig.getSkinStatusSuccessColor() : 0xFF55FF55;
+        } else if (statusColor == 0xFFFF7777) {
+            currentStatusColor = clientConfig != null ? clientConfig.getSkinStatusErrorColor() : 0xFFFF7777;
+        } else if (statusColor == 0xFFFFCC66) {
+            currentStatusColor = clientConfig != null ? clientConfig.getSkinStatusWarningColor() : 0xFFFFCC66;
+        } else {
+            currentStatusColor = textColor;
+        }
+        context.drawText(renderer, Text.literal(visibleStatus), panelX + 18, statusY, currentStatusColor, false);
+
+        super.render(context, mouseX, mouseY, delta);
+    }
+
+    @Override
+    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
+    }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.gui.Click click, boolean doubleClick) {
+        double mouseX = click.x();
+        double mouseY = click.y();
+
+        if (click.button() == 0) {
+            if (pathField != null && !pathField.isMouseOver(mouseX, mouseY)) {
+                if (this.getFocused() == pathField) {
+                    this.setFocused(null);
+                }
+                pathField.setFocused(false);
+            }
+            if (handleLayerControlClick(mouseX, mouseY)) {
+                return true;
+            }
+        }
+
+        if (previewSkin != null && getPreviewBounds().contains(mouseX, mouseY)) {
+            if (isOverLayerControls(mouseX, mouseY)) {
+                return true;
+            }
+            if (click.button() == 0 && doubleClick) {
+                resetPreviewCamera();
+                previewDragging = false;
+                previewPanning = false;
+                return true;
+            }
+            if (click.button() == 0 || click.button() == 2) {
+                previewDragging = true;
+                previewPanning = click.button() == 2 || click.hasAlt();
+                return true;
+            }
+        }
+        return super.mouseClicked(click, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.gui.Click click, double deltaX, double deltaY) {
+        if (previewDragging) {
+            if (previewPanning) {
+                previewOffsetX += (float) deltaX;
+                previewOffsetY += (float) deltaY;
+                clampPreviewOffsets(getPreviewBounds());
+            } else {
+                previewYaw = wrapDegrees(previewYaw + (float) deltaX * PREVIEW_ROTATION_SENSITIVITY);
+                previewPitch = clamp(
+                    previewPitch - (float) deltaY * PREVIEW_ROTATION_SENSITIVITY,
+                    -PREVIEW_PITCH_LIMIT,
+                    PREVIEW_PITCH_LIMIT
+                );
+            }
+            return true;
+        }
+        return super.mouseDragged(click, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.gui.Click click) {
+        if (previewDragging) {
+            previewDragging = false;
+            previewPanning = false;
+            return true;
+        }
+        return super.mouseReleased(click);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        PreviewBounds bounds = getPreviewBounds();
+        if (previewSkin != null && bounds.contains(mouseX, mouseY)) {
+            zoomPreviewAt(bounds, (float) mouseX, (float) mouseY, (float) verticalAmount);
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+    }
+
+    public void close() {
+        this.client.setScreen(parent);
+    }
+
+    public void removed() {
+        CustomFakePlayerSkinCache.clearPreviewSkin(PREVIEW_CACHE_UUID);
+        super.removed();
+    }
+
+    @Override
+    public boolean shouldPause() {
+        return false;
+    }
+
+    private void openFilePicker() {
+        if (fileDialogOpen) {
+            return;
+        }
+
+        fileDialogOpen = true;
+        updateLoadButtonWidgetState();
+        setStatus("Opening file picker...", 0xFFCCCCCC);
+
+        try {
+            String selectedFilePath = showNativeFilePicker();
+            finishFilePicker(selectedFilePath, "File selection canceled.");
+        } catch (RuntimeException | UnsatisfiedLinkError e) {
+            org.slf4j.LoggerFactory.getLogger("chunkloader").warn("Unable to open the custom skin file picker", e);
+            finishFilePicker(null, "Failed to open file picker.");
+        }
+    }
+
+    private String showNativeFilePicker() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            PointerBuffer pngFilter = stack.mallocPointer(1);
+            pngFilter.put(stack.UTF8("*.png")).flip();
+            return TinyFileDialogs.tinyfd_openFileDialog(
+                "Select Skin PNG",
+                getFilePickerInitialPath(),
+                pngFilter,
+                "PNG Files",
+                false
+            );
+        }
+    }
+
+    private String getFilePickerInitialPath() {
+        String configuredPath = pathField.getText().trim();
+        if (!configuredPath.isEmpty()) {
+            try {
+                Path candidate = Path.of(configuredPath).toAbsolutePath().normalize();
+                if (Files.isRegularFile(candidate) || Files.isDirectory(candidate)) {
+                    return candidate.toString();
+                }
+                Path parent = candidate.getParent();
+                if (parent != null && Files.isDirectory(parent)) {
+                    return parent.toString();
+                }
+            } catch (InvalidPathException e) {
+                org.slf4j.LoggerFactory.getLogger("chunkloader").debug("Invalid custom skin path used as a file-picker starting location: {}", configuredPath);
+            }
+        }
+        return this.client.runDirectory.getAbsolutePath();
+    }
+
+    private void finishFilePicker(String selectedFilePath, String pickerMessage) {
+        fileDialogOpen = false;
+        updateLoadButtonWidgetState();
+        if (this.client.currentScreen != this) {
+            return;
+        }
+        if (selectedFilePath == null) {
+            setStatus(pickerMessage, 0xFFFFCC66);
+            return;
+        }
+
+        setPathFieldValue(selectedFilePath);
+        loadSkinFromPath(selectedFilePath);
+    }
+
+    private void setPathFieldValue(String path) {
+        if (pathField == null) {
+            return;
+        }
+        pathField.setText(path == null ? "" : path);
+
+        pathField.setCursorToStart(false);
+    }
+
+    private void loadSkinFromPath(String pathText) {
+        Path skinPath = validateSkinPath(pathText);
+        if (skinPath == null) {
+            return;
+        }
+
+        try {
+            previewSkin = CustomFakePlayerSkinCache.setPreviewSkin(PREVIEW_CACHE_UUID, skinPath);
+            selectedPath = skinPath.toString();
+            setPathFieldValue(selectedPath);
+            resetPreviewCamera();
+            String modelName = previewSkin.model() == SkinModelType.SLIM ? "Slim" : "Standard";
+            setStatus("Preview loaded (" + modelName + " arms).", 0xFF55FF55);
+            updateLoadButtonWidgetState();
+            updateActionButtonWidgetState();
+        } catch (IOException e) {
+            setStatus("Failed to load skin PNG: " + e.getMessage(), 0xFFFF7777);
+        }
+    }
+
+    private Path validateSkinPath(String pathText) {
+        if (pathText == null || pathText.isBlank()) {
+            setStatus("Please enter the path to a PNG file.", 0xFFFF7777);
+            return null;
+        }
+
+        Path skinPath;
+        try {
+            skinPath = Path.of(pathText.trim()).toAbsolutePath().normalize();
+        } catch (InvalidPathException e) {
+            setStatus("The specified path is invalid.", 0xFFFF7777);
+            return null;
+        }
+
+        if (!skinPath.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".png")) {
+            setStatus("Please select a PNG file.", 0xFFFF7777);
+            return null;
+        }
+        if (!Files.isRegularFile(skinPath)) {
+            setStatus("The selected file does not exist.", 0xFFFF7777);
+            return null;
+        }
+        return skinPath;
+    }
+
+    private void applySkin() {
+        if (targetPlayerName == null || targetPlayerName.isBlank()) {
+            setStatus("The selected player is unavailable.", 0xFFFF7777);
+            return;
+        }
+        if (selectedPath == null || selectedPath.isBlank()) {
+            setStatus("Load a valid skin PNG first.", 0xFFFF7777);
+            return;
+        }
+
+        try {
+            Path skinPath = Path.of(selectedPath);
+            byte[] pngBytes = Files.readAllBytes(skinPath);
+            if (pngBytes.length > de.chunkloader.config.CustomFakePlayerSkinStore.MAX_PNG_BYTES) {
+                setStatus("Skin file too large (max 128 KiB).", 0xFFFF7777);
+                return;
+            }
+            CustomFakePlayerSkinCache.setSkin(targetPlayerName, skinPath, previewLayerMask);
+            clientConfig.setCustomSkinPath(targetPlayerName, skinPath.toString());
+            clientConfig.setCustomSkinLayers(targetPlayerName, previewLayerMask);
+            String model = previewSkin != null && previewSkin.model() == SkinModelType.SLIM ? "slim" : "wide";
+            de.chunkloader.network.ChunkloaderNetworking.sendApplyCustomSkin(
+                targetPlayerName,
+                previewLayerMask,
+                model,
+                pngBytes
+            );
+            setStatus("Skin applied for " + targetPlayerName + ".", 0xFF55FF55);
+            updateActionButtonWidgetState();
+        } catch (InvalidPathException e) {
+            setStatus("The saved path is invalid.", 0xFFFF7777);
+        } catch (IOException e) {
+            setStatus("Failed to apply skin: " + e.getMessage(), 0xFFFF7777);
+        }
+    }
+
+    private void removeSkin() {
+        if (targetPlayerName == null || targetPlayerName.isBlank()) {
+            return;
+        }
+
+        CustomFakePlayerSkinCache.removeSkin(targetPlayerName);
+        CustomFakePlayerSkinCache.clearPreviewSkin(PREVIEW_CACHE_UUID);
+        previewSkin = null;
+        layersMenuOpen = false;
+        previewLayerMask = SkinLayerMask.DEFAULT_MASK;
+        clientConfig.setCustomSkinPath(targetPlayerName, null);
+        selectedPath = null;
+        setPathFieldValue("");
+        resetPreviewCamera();
+        de.chunkloader.network.ChunkloaderNetworking.sendClearCustomSkin(targetPlayerName);
+        setStatus("Custom skin removed.", 0xFFCCCCCC);
+        updateLoadButtonWidgetState();
+        updateActionButtonWidgetState();
+    }
+
+    private void drawPreview(DrawContext context, PreviewBounds bounds) {
+        if (previewSkin == null) {
+            Text hint = Text.literal("No skin PNG loaded yet");
+            int hintColor = clientConfig != null ? clientConfig.getSkinTextColor() : 0xCC808080;
+            context.drawText(
+                this.textRenderer,
+                hint,
+                bounds.left() + (bounds.width() - this.textRenderer.getWidth(hint)) / 2,
+                bounds.top() + bounds.height() / 2 - 4,
+                hintColor,
+                false
+            );
+            return;
+        }
+
+        PlayerEntityModel model = getPreviewModel(previewSkin.model());
+        SkinLayerMask.applyToModel(model, previewLayerMask);
+        int[] drawRect = getPreviewDrawRect(bounds);
+        context.enableScissor(bounds.left(), bounds.top(), bounds.right(), bounds.bottom());
+        context.addPlayerSkin(
+            model,
+            previewSkin.textureId(),
+            previewScale,
+            previewPitch,
+            previewYaw,
+            PREVIEW_Y_PIVOT,
+            drawRect[0],
+            drawRect[1],
+            drawRect[2],
+            drawRect[3]
+        );
+        context.disableScissor();
+    }
+
+    private void drawLayerControls(DrawContext context, PreviewBounds bounds) {
+        if (previewSkin == null) {
+            return;
+        }
+
+        TextRenderer renderer = this.textRenderer;
+        int chevronBg = clientConfig != null ? clientConfig.getSkinLayerChevronBgColor() : 0x99000000;
+        int chevronColor = clientConfig != null ? clientConfig.getSkinLayerChevronColor() : 0xFFFFFFFF;
+        int menuBg = clientConfig != null ? clientConfig.getSkinLayerMenuBgColor() : 0xCC0A0D10;
+        int activeColor = clientConfig != null ? clientConfig.getSkinLayerActiveColor() : 0xFFFFFFFF;
+        int inactiveColor = clientConfig != null ? clientConfig.getSkinLayerInactiveColor() : 0xCC808080;
+        int chevronLeft = bounds.left() + LAYER_MENU_PAD;
+        int chevronTop = bounds.top() + LAYER_MENU_PAD;
+        context.fill(chevronLeft, chevronTop, chevronLeft + LAYER_CHEVRON_SIZE, chevronTop + LAYER_CHEVRON_SIZE, chevronBg);
+        drawChevronIcon(context, chevronLeft, chevronTop, layersMenuOpen, chevronColor);
+
+        if (!layersMenuOpen) {
+            return;
+        }
+
+        int menuLeft = bounds.left() + LAYER_MENU_PAD;
+        int menuTop = chevronTop + LAYER_CHEVRON_SIZE + 2;
+        int menuWidth = Math.min(110, bounds.width() - LAYER_MENU_PAD * 2);
+        int menuHeight = SkinLayerMask.EDITABLE_PARTS.length * LAYER_ROW_HEIGHT + 4;
+        context.fill(menuLeft, menuTop, menuLeft + menuWidth, menuTop + menuHeight, menuBg);
+
+        int checkboxWidth = renderer.getWidth("[x]");
+        int rowY = menuTop + 2;
+        for (PlayerModelPart part : SkinLayerMask.EDITABLE_PARTS) {
+            boolean enabled = SkinLayerMask.isShown(previewLayerMask, part);
+            int markColor = enabled ? activeColor : inactiveColor;
+            int markX = menuLeft + 3;
+            int markY = rowY + 2;
+            drawLayerCheckbox(context, renderer, markX, markY, enabled, markColor);
+            context.drawText(
+                renderer,
+                Text.literal(SkinLayerMask.label(part)),
+                markX + checkboxWidth + 4,
+                markY,
+                markColor,
+                false
+            );
+            rowY += LAYER_ROW_HEIGHT;
+        }
+    }
+
+    private void drawChevronIcon(DrawContext context, int boxLeft, int boxTop, boolean openUp, int color) {
+        int startX = boxLeft + (LAYER_CHEVRON_SIZE - 5) / 2;
+        int startY = boxTop + (LAYER_CHEVRON_SIZE - 3) / 2;
+        if (openUp) {
+            fillPixel(context, startX + 2, startY, color);
+            fillPixel(context, startX + 1, startY + 1, color);
+            fillPixel(context, startX + 3, startY + 1, color);
+            fillPixel(context, startX, startY + 2, color);
+            fillPixel(context, startX + 4, startY + 2, color);
+        } else {
+            fillPixel(context, startX, startY, color);
+            fillPixel(context, startX + 4, startY, color);
+            fillPixel(context, startX + 1, startY + 1, color);
+            fillPixel(context, startX + 3, startY + 1, color);
+            fillPixel(context, startX + 2, startY + 2, color);
+        }
+    }
+
+    private static void fillPixel(DrawContext context, int x, int y, int color) {
+        context.fill(x, y, x + 1, y + 1, color);
+    }
+
+    private void drawLayerCheckbox(DrawContext context, TextRenderer renderer, int x, int y, boolean enabled, int color) {
+        int openWidth = renderer.getWidth("[");
+        int innerWidth = renderer.getWidth(enabled ? "x" : " ");
+        context.drawText(renderer, Text.literal("["), x, y, color, false);
+        if (enabled) {
+            context.drawText(renderer, Text.literal("x"), x + openWidth, y - 1, color, false);
+        } else {
+            context.drawText(renderer, Text.literal(" "), x + openWidth, y, color, false);
+        }
+        context.drawText(renderer, Text.literal("]"), x + openWidth + innerWidth, y, color, false);
+    }
+
+    private boolean handleLayerControlClick(double mouseX, double mouseY) {
+        if (previewSkin == null) {
+            return false;
+        }
+
+        PreviewBounds bounds = getPreviewBounds();
+        int chevronLeft = bounds.left() + LAYER_MENU_PAD;
+        int chevronTop = bounds.top() + LAYER_MENU_PAD;
+        if (mouseX >= chevronLeft && mouseX < chevronLeft + LAYER_CHEVRON_SIZE
+            && mouseY >= chevronTop && mouseY < chevronTop + LAYER_CHEVRON_SIZE) {
+            layersMenuOpen = !layersMenuOpen;
+            return true;
+        }
+
+        if (!layersMenuOpen) {
+            return false;
+        }
+
+        int menuLeft = bounds.left() + LAYER_MENU_PAD;
+        int menuTop = chevronTop + LAYER_CHEVRON_SIZE + 2;
+        int menuWidth = Math.min(110, bounds.width() - LAYER_MENU_PAD * 2);
+        int menuHeight = SkinLayerMask.EDITABLE_PARTS.length * LAYER_ROW_HEIGHT + 4;
+        if (mouseX < menuLeft || mouseX >= menuLeft + menuWidth || mouseY < menuTop || mouseY >= menuTop + menuHeight) {
+            return false;
+        }
+
+        int index = (int) ((mouseY - menuTop - 2) / LAYER_ROW_HEIGHT);
+        if (index < 0 || index >= SkinLayerMask.EDITABLE_PARTS.length) {
+            return true;
+        }
+
+        previewLayerMask = SkinLayerMask.toggle(previewLayerMask, SkinLayerMask.EDITABLE_PARTS[index]);
+        updateActionButtonWidgetState();
+        return true;
+    }
+
+    private boolean isOverLayerControls(double mouseX, double mouseY) {
+        if (previewSkin == null) {
+            return false;
+        }
+
+        PreviewBounds bounds = getPreviewBounds();
+        int chevronLeft = bounds.left() + LAYER_MENU_PAD;
+        int chevronTop = bounds.top() + LAYER_MENU_PAD;
+        if (mouseX >= chevronLeft && mouseX < chevronLeft + LAYER_CHEVRON_SIZE
+            && mouseY >= chevronTop && mouseY < chevronTop + LAYER_CHEVRON_SIZE) {
+            return true;
+        }
+        if (!layersMenuOpen) {
+            return false;
+        }
+
+        int menuLeft = bounds.left() + LAYER_MENU_PAD;
+        int menuTop = chevronTop + LAYER_CHEVRON_SIZE + 2;
+        int menuWidth = Math.min(110, bounds.width() - LAYER_MENU_PAD * 2);
+        int menuHeight = SkinLayerMask.EDITABLE_PARTS.length * LAYER_ROW_HEIGHT + 4;
+        return mouseX >= menuLeft && mouseX < menuLeft + menuWidth
+            && mouseY >= menuTop && mouseY < menuTop + menuHeight;
+    }
+    private PlayerEntityModel getPreviewModel(SkinModelType model) {
+        if (model == SkinModelType.SLIM) {
+            if (slimPreviewModel == null) {
+                slimPreviewModel = new PlayerEntityModel(
+                    MinecraftClient.getInstance().getLoadedEntityModels().getModelPart(PLAYER_SLIM_LAYER),
+                    true
+                );
+            }
+            return slimPreviewModel;
+        }
+
+        if (widePreviewModel == null) {
+            widePreviewModel = new PlayerEntityModel(
+                MinecraftClient.getInstance().getLoadedEntityModels().getModelPart(PLAYER_WIDE_LAYER),
+                false
+            );
+        }
+        return widePreviewModel;
+    }
+
+    private void resetPreviewCamera() {
+        previewPitch = -5.0F;
+        previewYaw = 30.0F;
+        previewScale = getFitScale(getPreviewBounds());
+        previewOffsetX = 0.0F;
+        previewOffsetY = getDefaultPreviewOffsetY();
+    }
+
+    private float getDefaultPreviewOffsetY() {
+
+        return -PREVIEW_VISUAL_CENTER_BIAS * previewScale - 2.0F;
+    }
+
+    private float getFitScale(PreviewBounds bounds) {
+        int height = Math.max(1, bounds.height());
+        return PREVIEW_FIT_MARGIN * height / PREVIEW_MODEL_HEIGHT;
+    }
+
+    private float getMinPreviewScale(PreviewBounds bounds) {
+        return getFitScale(bounds) * MIN_PREVIEW_ZOOM;
+    }
+
+    private float getMaxPreviewScale(PreviewBounds bounds) {
+        return getFitScale(bounds) * MAX_PREVIEW_ZOOM;
+    }
+
+    private void zoomPreviewAt(PreviewBounds bounds, float mouseX, float mouseY, float scrollAmount) {
+        float oldScale = previewScale;
+        float fit = getFitScale(bounds);
+        float newScale = clamp(
+            oldScale + scrollAmount * (fit * 0.07F),
+            getMinPreviewScale(bounds),
+            getMaxPreviewScale(bounds)
+        );
+        if (newScale == oldScale) {
+            return;
+        }
+
+        float scaleRatio = newScale / oldScale;
+        float baseX = (bounds.left() + bounds.right()) / 2.0F;
+        float baseY = (bounds.top() + bounds.bottom()) / 2.0F;
+        float currentOriginX = baseX + previewOffsetX;
+        float currentOriginY = baseY + previewOffsetY;
+        previewOffsetX = mouseX - baseX - (mouseX - currentOriginX) * scaleRatio;
+        previewOffsetY = mouseY - baseY - (mouseY - currentOriginY) * scaleRatio;
+        previewScale = newScale;
+        clampPreviewOffsets(bounds);
+    }
+
+    private void clampPreviewOffsets(PreviewBounds bounds) {
+
+        float homeY = getDefaultPreviewOffsetY();
+        float modelHalfW = PREVIEW_CLAMP_WIDTH * previewScale * 0.5F;
+        float extentH = PREVIEW_CLAMP_HEIGHT * previewScale * 0.5F + PREVIEW_EDGE_PAD_PX;
+        float viewHalfW = bounds.width() * 0.5F;
+        float viewHalfH = bounds.height() * 0.5F;
+        float maxOffsetX = Math.abs(viewHalfW - modelHalfW);
+        float maxOffsetY = Math.abs(viewHalfH - extentH);
+        previewOffsetX = clamp(previewOffsetX, -maxOffsetX, maxOffsetX);
+        previewOffsetY = clamp(previewOffsetY, homeY - maxOffsetY, homeY + maxOffsetY);
+    }
+
+    private int[] getPreviewDrawRect(PreviewBounds bounds) {
+        float pad = previewScale * 0.75F;
+        int halfW = Math.max(bounds.width() / 2, Math.round(PREVIEW_MODEL_WIDTH * previewScale * 0.5F + pad));
+        int halfH = Math.max(bounds.height() / 2, Math.round(PREVIEW_MODEL_HEIGHT * previewScale * 0.5F + pad));
+        int centerX = (bounds.left() + bounds.right()) / 2 + Math.round(previewOffsetX);
+        int centerY = (bounds.top() + bounds.bottom()) / 2 + Math.round(previewOffsetY);
+        return new int[] {
+            centerX - halfW,
+            centerY - halfH,
+            centerX + halfW,
+            centerY + halfH
+        };
+    }
+
+    private void updateLoadButtonWidgetState() {
+        if (loadButtonWidget != null && pathField != null) {
+            String pathText = pathField.getText().trim();
+            boolean pathChanged = selectedPath == null || selectedPath.isBlank()
+                || !pathText.equals(selectedPath.trim());
+            loadButtonWidget.active = !pathText.isEmpty() && pathChanged && !fileDialogOpen;
+        }
+        if (chooseFileButtonWidget != null) {
+            chooseFileButtonWidget.active = !fileDialogOpen;
+        }
+    }
+
+    private void updateActionButtonWidgetState() {
+        boolean hasTarget = targetPlayerName != null && !targetPlayerName.isBlank();
+        boolean hasPreview = selectedPath != null && !selectedPath.isBlank() && previewSkin != null;
+        if (applyButtonWidget != null) {
+            applyButtonWidget.active = hasTarget && hasPreview && !isPreviewAlreadyApplied();
+        }
+        if (removeButtonWidget != null) {
+            removeButtonWidget.active = hasTarget && clientConfig.getCustomSkinPath(targetPlayerName) != null;
+        }
+    }
+
+    private boolean isPreviewAlreadyApplied() {
+        if (targetPlayerName == null || targetPlayerName.isBlank() || selectedPath == null || selectedPath.isBlank()) {
+            return false;
+        }
+        String appliedPath = clientConfig.getCustomSkinPath(targetPlayerName);
+        if (appliedPath == null || appliedPath.isBlank()) {
+            return false;
+        }
+        if (SkinLayerMask.sanitize(previewLayerMask) != clientConfig.getCustomSkinLayers(targetPlayerName)) {
+            return false;
+        }
+        try {
+            return Path.of(selectedPath).toAbsolutePath().normalize()
+                .equals(Path.of(appliedPath).toAbsolutePath().normalize());
+        } catch (InvalidPathException e) {
+            return selectedPath.equals(appliedPath);
+        }
+    }
+
+    private void drawDimBackground(DrawContext context) {
+        context.fill(0, 0, width, height, 0xC0101010);
+    }
+
+    private void drawModalPanel(DrawContext context, int x, int y, int panelWidth, int panelHeight) {
+        int panelColor = clientConfig != null ? clientConfig.getSkinPanelColor() : 0xFF2C2C2C;
+        int borderColor = clientConfig != null ? clientConfig.getSkinBorderColor() : 0xFF4A4A4A;
+        int dividerColor = clientConfig != null ? clientConfig.getSkinDividerColor() : 0x33FFFFFF;
+
+        int modalBackground = panelColor;
+
+        context.fill(x, y, x + panelWidth, y + panelHeight, modalBackground);
+
+        context.fill(x, y, x + panelWidth, y + 1, borderColor);
+        context.fill(x, y + panelHeight - 1, x + panelWidth, y + panelHeight, borderColor);
+        context.fill(x, y, x + 1, y + panelHeight, borderColor);
+        context.fill(x + panelWidth - 1, y, x + panelWidth, y + panelHeight, borderColor);
+
+        context.fill(x, y + 1, x + panelWidth, y + 30, 0x30000000);
+        context.fill(x, y + 30, x + panelWidth, y + 31, dividerColor);
+
+        context.fill(x + 18, y + 96, x + panelWidth - 18, y + 97, dividerColor);
+    }
+
+    private void drawPreviewPanel(DrawContext context, PreviewBounds bounds) {
+        int viewportColor = clientConfig != null ? clientConfig.getSkinViewportColor() : 0xFF111417;
+
+        int viewportBg = viewportColor;
+        context.fill(bounds.left(), bounds.top(), bounds.right(), bounds.bottom(), viewportBg);
+
+        if (previewSkin == null) {
+            TextRenderer renderer = this.textRenderer;
+            Text hint = Text.literal("No skin PNG loaded yet");
+            int textColor = clientConfig != null ? clientConfig.getSkinTextColor() : 0xCC808080;
+            context.drawText(renderer, hint, bounds.left() + (bounds.width() - renderer.getWidth(hint)) / 2, bounds.top() + bounds.height() / 2 - 4, textColor, false);
+        }
+    }
+
+    private void setStatus(String message, int color) {
+        statusMessage = message;
+        statusColor = color;
+    }
+
+    private String truncateStatus(TextRenderer renderer, String message, int maxWidth) {
+        if (renderer.getWidth(message) <= maxWidth) {
+            return message;
+        }
+
+        String ellipsis = "...";
+        int end = message.length();
+        int maxTextWidth = Math.max(0, maxWidth - renderer.getWidth(ellipsis));
+        while (end > 0 && renderer.getWidth(message.substring(0, end)) > maxTextWidth) {
+            end--;
+        }
+        return message.substring(0, end) + ellipsis;
+    }
+
+    private PreviewBounds getPreviewBounds() {
+        int panelX = getPanelX();
+        int panelY = getPanelY();
+        int panelWidth = getPanelWidth();
+        int panelHeight = getPanelHeight();
+        return new PreviewBounds(
+            panelX + 18,
+            panelY + 116,
+            panelX + panelWidth - 18,
+            panelY + panelHeight - 88
+        );
+    }
+
+    private int getPanelWidth() {
+        return Math.min(PANEL_MAX_WIDTH, Math.max(1, width - SCREEN_MARGIN * 2));
+    }
+
+    private int getPanelHeight() {
+        return Math.min(PANEL_MAX_HEIGHT, Math.max(1, height - SCREEN_MARGIN * 2));
+    }
+
+    private int getPanelX() {
+        return (width - getPanelWidth()) / 2;
+    }
+
+    private int getPanelY() {
+        return (height - getPanelHeight()) / 2;
+    }
+
+    private static float clamp(float value, float min, float max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static float wrapDegrees(float angle) {
+        float wrapped = angle % 360.0F;
+        return wrapped < 0.0F ? wrapped + 360.0F : wrapped;
+    }
+
+    private record PreviewBounds(int left, int top, int right, int bottom) {
+        private boolean contains(double x, double y) {
+            return x >= left && x < right && y >= top && y < bottom;
+        }
+
+        private int width() {
+            return right - left;
+        }
+
+        private int height() {
+            return bottom - top;
+        }
+    }
+}

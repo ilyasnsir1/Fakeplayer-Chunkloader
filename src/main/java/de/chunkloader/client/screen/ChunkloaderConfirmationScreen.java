@@ -26,29 +26,33 @@ public class ChunkloaderConfirmationScreen extends Screen {
         this.onConfirm = onConfirm;
         this.onCancel = onCancel;
     }
-    
+    public Screen getParentScreen() {
+        return parent;
+    }
+
     @Override
     protected void init() {
         super.init();
-        
+
         int buttonWidth = 100;
         int buttonSpacing = 20;
         int buttonY = this.height / 2 + 30;
         int buttonX = (this.width - buttonWidth * 2 - buttonSpacing) / 2;
-        
+
         this.addDrawableChild(ButtonWidget.builder(
                 Text.literal("Confirm").formatted(Formatting.RED),
                 btn -> {
                     if (onConfirm != null) {
                         onConfirm.run();
-                    } else {
+                    }
+                    if (this.client.currentScreen == this) {
                         this.client.setScreen(parent);
                     }
                 })
             .dimensions(buttonX, buttonY, buttonWidth, 20)
             .build()
         );
-        
+
         this.addDrawableChild(ButtonWidget.builder(
                 Text.literal("Cancel"),
                 btn -> {
@@ -65,34 +69,34 @@ public class ChunkloaderConfirmationScreen extends Screen {
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         drawDimBackground(context);
-        
+
         TextRenderer renderer = this.textRenderer;
-        
+
         int titleWidth = renderer.getWidth(title);
         Text titleFormatted = title.copy().formatted(Formatting.BOLD).formatted(Formatting.RED);
-        context.drawText(renderer, titleFormatted, 
+        context.drawText(renderer, titleFormatted,
             (this.width - titleWidth) / 2, this.height / 2 - 40, 0xFFFFFFFF, false);
-        
+
         String[] lines = message.getString().split("\n");
         int lineHeight = 12;
         int startY = this.height / 2 - 10;
         for (int i = 0; i < lines.length; i++) {
             int lineWidth = renderer.getWidth(Text.literal(lines[i]));
-            context.drawText(renderer, Text.literal(lines[i]), 
+            context.drawText(renderer, Text.literal(lines[i]),
                 (this.width - lineWidth) / 2, startY + i * lineHeight, 0xFFCCCCCC, false);
         }
-        
+
         super.render(context, mouseX, mouseY, delta);
     }
-    
+
     private void drawDimBackground(DrawContext context) {
         context.fill(0, 0, this.width, this.height, 0xC0101010);
     }
-    
+
     @Override
     public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
     }
-    
+
     @Override
     public boolean shouldPause() {
         return false;

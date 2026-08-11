@@ -14,7 +14,7 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
 
     public static final CustomPayload.Id<DisabledChunkloadersListPayload> ID =
         new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "disabled_chunkloaders_list"));
-    
+
     public static final PacketCodec<RegistryByteBuf, DisabledChunkloadersListPayload> CODEC =
         PacketCodec.of((payload, buf) -> {
             buf.writeVarInt(payload.disabledChunkloaders().size());
@@ -44,7 +44,8 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
         String name,
         boolean allowMobSpawning,
         String dimension,
-        boolean hasWarning
+        boolean hasWarning,
+        int easterEggSkinIndex
     ) {
         public void write(net.minecraft.network.PacketByteBuf buf) {
             buf.writeInt(chunkX);
@@ -56,6 +57,7 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
             buf.writeBoolean(allowMobSpawning);
             buf.writeString(dimension != null ? dimension : "");
             buf.writeBoolean(hasWarning);
+            buf.writeInt(easterEggSkinIndex);
         }
 
         public static DisabledChunkloaderEntry read(net.minecraft.network.PacketByteBuf buf) {
@@ -68,12 +70,14 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
             boolean allowMobSpawning = buf.readBoolean();
             String dimension = buf.readString(32767);
             boolean hasWarning = buf.readBoolean();
+            int easterEggSkinIndex = buf.readInt();
             return new DisabledChunkloaderEntry(
                 chunkX, chunkZ, blockX, blockY, blockZ,
                 name.isEmpty() ? null : name,
                 allowMobSpawning,
                 dimension.isEmpty() ? null : dimension,
-                hasWarning
+                hasWarning,
+                easterEggSkinIndex
             );
         }
     }
