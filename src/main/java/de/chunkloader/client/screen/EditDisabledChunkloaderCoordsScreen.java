@@ -12,15 +12,15 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
 
 public class EditDisabledChunkloaderCoordsScreen extends Screen {
-    
+
     private final Screen parent;
     private final DisabledChunkloadersListPayload.DisabledChunkloaderEntry entry;
-    
+
     private EditBox blockXField;
     private EditBox blockYField;
     private EditBox blockZField;
     private Button saveButton;
-    
+
     private String warningMessage = null;
     private boolean isClosed = false;
     private UpdateDisabledChunkloaderCoordsResponsePayload pendingResponse = null;
@@ -30,25 +30,25 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
     private void drawDimBackground(GuiGraphics graphics) {
         graphics.fill(0, 0, this.width, this.height, 0xC0101010);
     }
-    
+
     public EditDisabledChunkloaderCoordsScreen(Screen parent, DisabledChunkloadersListPayload.DisabledChunkloaderEntry entry) {
         super(Component.literal("Edit Coordinates"));
         this.parent = parent;
         this.entry = entry;
     }
-    
+
     @Override
     protected void init() {
         super.init();
-        
+
         int fieldWidth = 100;
         int fieldHeight = 20;
         int centerX = this.width / 2;
         int startY = this.height / 2 - 60;
         int spacing = 30;
-        
+
         var font = this.font;
-        
+
         int labelWidth = Math.max(
                     font.width("Block X:"),
                     Math.max(
@@ -59,7 +59,7 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
         int totalWidth = labelWidth + 10 + fieldWidth;
         int labelX = centerX - totalWidth / 2;
         int fieldX = labelX + labelWidth + 10;
-        
+
         blockXField = new EditBox(font, fieldX, startY, fieldWidth, fieldHeight, Component.literal("X coordinate"));
         blockXField.setMaxLength(11);
         blockXField.setValue("");
@@ -73,7 +73,7 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             updateSaveButtonState();
         });
         this.addWidget(blockXField);
-        
+
         blockYField = new EditBox(font, fieldX, startY + spacing, fieldWidth, fieldHeight, Component.literal("Y coordinate"));
         blockYField.setMaxLength(11);
         blockYField.setValue("");
@@ -86,7 +86,7 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             updateSaveButtonState();
         });
         this.addWidget(blockYField);
-        
+
         blockZField = new EditBox(font, fieldX, startY + spacing * 2, fieldWidth, fieldHeight, Component.literal("Z coordinate"));
         blockZField.setMaxLength(11);
         blockZField.setValue("");
@@ -100,10 +100,10 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             updateSaveButtonState();
         });
         this.addWidget(blockZField);
-        
+
         int buttonWidth = 100;
         int buttonSpacing = 110;
-        
+
         saveButton = Button.builder(
                 Component.literal("Save"),
                 btn -> save())
@@ -111,7 +111,7 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             .build();
         saveButton.active = false;
         this.addRenderableWidget(saveButton);
-        
+
         this.addRenderableWidget(Button.builder(
                 Component.literal("Cancel"),
                 btn -> {
@@ -122,10 +122,10 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             .build()
         );
     }
-    
+
     private void updateChunkDisplay() {
     }
-    
+
     private void updateSaveButtonState() {
         if (saveButton == null) {
             return;
@@ -133,9 +133,9 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
         String blockXText = blockXField.getValue().trim();
         String blockYText = blockYField.getValue().trim();
         String blockZText = blockZField.getValue().trim();
-        
+
         boolean allFieldsFilled = !blockXText.isEmpty() && !blockYText.isEmpty() && !blockZText.isEmpty();
-        
+
         if (allFieldsFilled) {
             try {
                 Integer.parseInt(blockXText);
@@ -149,36 +149,36 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             saveButton.active = false;
         }
     }
-    
+
     private void save() {
         warningMessage = null;
         try {
             String blockXText = blockXField.getValue().trim();
             String blockYText = blockYField.getValue().trim();
             String blockZText = blockZField.getValue().trim();
-            
+
             if (blockXText.isEmpty() || blockYText.isEmpty() || blockZText.isEmpty()) {
                 warningMessage = "All fields must be filled!";
                 return;
             }
-            
+
             int newBlockX = Integer.parseInt(blockXText);
             int newBlockY = Integer.parseInt(blockYText);
             int newBlockZ = Integer.parseInt(blockZText);
-            
+
             int newChunkX = newBlockX >> 4;
             int newChunkZ = newBlockZ >> 4;
-            
+
             if (saveButton != null) {
                 saveButton.active = false;
             }
-            
+
             ChunkloaderNetworking.sendUpdateDisabledChunkloaderCoords(
-                entry.chunkX(), entry.chunkZ(),
+                entry.chunkX(), entry.chunkZ(), entry.dimension(),
                 newChunkX, newChunkZ,
                 newBlockX, newBlockY, newBlockZ
             );
-            
+
             warningMessage = "Updating...";
             updateStartTime = System.currentTimeMillis();
             pendingResponse = null;
@@ -189,34 +189,34 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             }
         }
     }
-    
+
     public void handleUpdateResponse(UpdateDisabledChunkloaderCoordsResponsePayload payload) {
         if (isClosed) {
             return;
         }
-        
+
         pendingResponse = payload;
     }
-    
+
     private void processPendingResponse() {
         if (pendingResponse == null || isClosed) {
             return;
         }
-        
+
         long currentTime = System.currentTimeMillis();
         if (updateStartTime <= 0) {
             return;
         }
-        
+
         long elapsed = currentTime - updateStartTime;
         if (elapsed < UPDATE_DISPLAY_DURATION_MS) {
             return;
         }
-        
+
         UpdateDisabledChunkloaderCoordsResponsePayload response = pendingResponse;
         pendingResponse = null;
         updateStartTime = 0;
-        
+
         if (response.success()) {
             isClosed = true;
             this.minecraft.setScreen(parent);
@@ -228,7 +228,7 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             }
         }
     }
-    
+
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         if (pendingResponse != null && !isClosed) {
@@ -236,13 +236,13 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
         }
 
         drawDimBackground(graphics);
-        
+
         var font = this.font;
         int centerX = this.width / 2;
         int startY = this.height / 2 - 60;
         int spacing = 30;
         int fieldWidth = 100;
-        
+
         String name = entry.name() != null ? entry.name() : "Unnamed";
         ChatFormatting nameColor;
         if (entry.allowMobSpawning()) {
@@ -254,17 +254,17 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
         } else {
             nameColor = ChatFormatting.BLUE;
         }
-        
+
         Component infoText = Component.literal("⚠ Enter block coordinates, not your own coordinates!")
             .withStyle(ChatFormatting.YELLOW, ChatFormatting.ITALIC);
         int infoWidth = font.width(infoText);
         graphics.drawString(font, infoText, centerX - infoWidth / 2, startY - 70, 0xFFFFFF00, false);
-        
+
         Component title = Component.literal("Edit Coordinates: ").withStyle(ChatFormatting.BOLD)
             .append(Component.literal(name).withStyle(nameColor));
         int titleWidth = font.width(title);
         graphics.drawString(font, title, centerX - titleWidth / 2, startY - 30, 0xFFFFFFFF, false);
-        
+
         int labelWidth = Math.max(
                     font.width("Block X:"),
                     Math.max(
@@ -275,7 +275,7 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
         int totalWidth = labelWidth + 10 + fieldWidth;
         int labelX = centerX - totalWidth / 2;
         int labelY = startY + 5;
-        
+
         int chunkX = 0;
         int chunkZ = 0;
         try {
@@ -294,23 +294,23 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             chunkX = entry.blockX() >> 4;
             chunkZ = entry.blockZ() >> 4;
         }
-        
+
         Component chunkInfo = Component.literal("Chunk: " + chunkX + ", " + chunkZ).withStyle(ChatFormatting.GRAY);
         int chunkInfoWidth = font.width(chunkInfo);
         graphics.drawString(font, chunkInfo, centerX - chunkInfoWidth / 2, startY - 15, 0xFFCCCCCC, false);
-        
+
         graphics.drawString(font, Component.literal("Block X:"), labelX, labelY, 0xFFCCCCCC, false);
         graphics.drawString(font, Component.literal("Block Y:"), labelX, labelY + spacing, 0xFFCCCCCC, false);
         graphics.drawString(font, Component.literal("Block Z:"), labelX, labelY + spacing * 2, 0xFFCCCCCC, false);
-        
+
         blockXField.render(graphics, mouseX, mouseY, delta);
         blockYField.render(graphics, mouseX, mouseY, delta);
         blockZField.render(graphics, mouseX, mouseY, delta);
-        
+
         int fieldX = labelX + labelWidth + 10;
         int fieldHeight = 20;
         int fieldPadding = 4;
-        
+
         if (blockXField.getValue().isEmpty() && !blockXField.isFocused()) {
             Component placeholder = Component.literal("X coordinate").withStyle(ChatFormatting.GRAY);
             int fieldY = blockXField.getY();
@@ -329,17 +329,17 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             int textY = fieldY + (fieldHeight - 8) / 2;
             graphics.drawString(font, placeholder, fieldX + fieldPadding, textY, 0xFF808080, false);
         }
-        
+
         if (warningMessage != null) {
             ChatFormatting color = warningMessage.startsWith("Updating") ? ChatFormatting.YELLOW : ChatFormatting.RED;
             Component warning = Component.literal(warningMessage).withStyle(color);
             int warningWidth = font.width(warning);
             graphics.drawString(font, warning, centerX - warningWidth / 2, startY + spacing * 3 + 5, 0xFFFFFFFF, false);
         }
-        
+
         super.render(graphics, mouseX, mouseY, delta);
     }
-    
+
     @Override
     public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
     }
@@ -369,16 +369,16 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
 
         return super.mouseClicked(event, doubleClick);
     }
-    
+
     public Screen getParent() {
         return parent;
     }
-    
+
     @Override
     public boolean isPauseScreen() {
         return false;
     }
-    
+
     @Override
     public void tick() {
         super.tick();

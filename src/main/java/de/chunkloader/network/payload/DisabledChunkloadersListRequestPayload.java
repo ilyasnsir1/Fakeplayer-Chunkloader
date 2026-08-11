@@ -10,7 +10,7 @@ public record DisabledChunkloadersListRequestPayload() implements CustomPacketPa
 
     public static final Type<DisabledChunkloadersListRequestPayload> TYPE =
         new Type<>(ResourceLocation.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "disabled_chunkloaders_list_request"));
-    
+
     public static final StreamCodec<FriendlyByteBuf, DisabledChunkloadersListRequestPayload> STREAM_CODEC =
         StreamCodec.of(
             (payload, buf) -> {

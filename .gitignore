@@ -23,11 +23,3 @@ run
 
 # Files from Forge MDK
 forge*changelog.txt
-
-# Local IDE / helpers
-.settings/
-.vscode/
-runClient.bat
-runclient.bat
-build_neoforge_*.log
-

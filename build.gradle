@@ -17,6 +17,8 @@ minecraft {
     mappings channel: mapping_channel, version: mapping_version
     copyIdeResources = true
 
+    reobf = false
+
     runs {
         configureEach {
             workingDirectory project.file('run')
@@ -75,7 +77,6 @@ dependencies {
     annotationProcessor 'net.minecraftforge:eventbus-validator:7.0-beta.12'
     implementation 'com.google.code.gson:gson:2.10.1'
 
-    // VS Code Java (Eclipse JDT) null analysis uses these annotations.
     implementation 'org.eclipse.jdt:org.eclipse.jdt.annotation:2.2.600'
 }
 

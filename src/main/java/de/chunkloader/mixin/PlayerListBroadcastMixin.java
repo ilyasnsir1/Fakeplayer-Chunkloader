@@ -37,6 +37,10 @@ public class PlayerListBroadcastMixin {
     }
 
     private void suppressIfFakeplayerJoinLeave(Component message, CallbackInfo ci) {
+        if (de.chunkloader.fakeplayer.SyntheticPlayerContext.isSpawning()) {
+            ci.cancel();
+            return;
+        }
         if (message == null) {
             return;
         }
@@ -81,7 +85,7 @@ public class PlayerListBroadcastMixin {
         if (manager != null) {
             for (var entry : manager.getActiveChunkloaderEntries()) {
                 String prefix = entry.allowMobSpawning() ? "fakeplayer" : "chunkplayer";
-                String fakePlayerName = entry.name() != null ? entry.name() : 
+                String fakePlayerName = entry.name() != null ? entry.name() :
                     (prefix + entry.chunkX() + "_" + entry.chunkZ());
                 if (s.contains(fakePlayerName)) {
                     ci.cancel();
