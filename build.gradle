@@ -7,7 +7,7 @@ version = project.mod_version
 group = project.maven_group
 
 base {
-    archivesName = "fakeplayerchunkloader${project.minecraft_version}-fabric"
+    archivesName = "fakeplayerchunkloader26.1.x-fabric"
 }
 
 repositories {
@@ -35,6 +35,7 @@ dependencies {
 processResources {
     inputs.property "version", project.version
     inputs.property "minecraft_version", project.minecraft_version
+    inputs.property "minecraft_version_range", project.findProperty("minecraft_version_range") ?: project.minecraft_version
     inputs.property "loader_version", project.loader_version
     inputs.property "fabric_api_version", project.fabric_api_version
 
@@ -42,7 +43,7 @@ processResources {
 
     filesMatching("fabric.mod.json") {
         expand "version": project.version,
-                "minecraft_version": project.minecraft_version,
+                "minecraft_version_range": project.findProperty("minecraft_version_range") ?: project.minecraft_version,
                 "loader_version": project.loader_version,
                 "fabric_api_version": project.fabric_api_version
     }

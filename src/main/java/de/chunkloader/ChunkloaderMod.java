@@ -27,7 +27,7 @@ public class ChunkloaderMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        LOGGER.info("Initializing Chunkloader Mod for Minecraft 26.1");
+        LOGGER.info("Initializing Chunkloader Mod for Minecraft 26.1.x");
 
         PermissionManager.init();
 
