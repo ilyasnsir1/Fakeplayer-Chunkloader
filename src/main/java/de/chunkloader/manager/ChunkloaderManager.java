@@ -35,6 +35,8 @@ import net.minecraft.server.world.ChunkTicket;
 import net.minecraft.server.world.ChunkLevels;
 import net.minecraft.server.world.ChunkLevelType;
 import net.minecraft.server.world.ChunkTicketManager;
+import net.minecraft.network.packet.s2c.play.EntityS2CPacket;
+import net.minecraft.network.packet.s2c.play.EntitySetHeadYawS2CPacket;
 import net.minecraft.network.packet.s2c.play.PlayerListS2CPacket;
 
 import java.nio.charset.StandardCharsets;
@@ -1513,6 +1515,7 @@ public class ChunkloaderManager {
             boolean nameVisible = entry.nameVisible();
             existingFakePlayer.setCustomNameVisible(nameVisible);
             existingFakePlayer.setVisibleAsMarker(true);
+            existingFakePlayer.setMobTarget(entry.allowMobSpawning() && entry.mobTarget());
 
             String plainName = displayName;
             de.chunkloader.network.ChunkloaderNetworking.broadcastFakePlayerVisibility(server, plainName, nameVisible);
@@ -1581,6 +1584,7 @@ public class ChunkloaderManager {
             fakePlayer.setCustomNameVisible(nameVisible);
 
             fakePlayer.setVisibleAsMarker(true);
+            fakePlayer.setMobTarget(entry.allowMobSpawning() && entry.mobTarget());
 
             String plainName = displayName;
             de.chunkloader.network.ChunkloaderNetworking.broadcastFakePlayerVisibility(server, plainName, nameVisible);
@@ -2251,6 +2255,7 @@ public class ChunkloaderManager {
         boolean nameVisible = entry.nameVisible();
         fakePlayer.setCustomNameVisible(nameVisible);
         fakePlayer.setVisibleAsMarker(true);
+        fakePlayer.setMobTarget(entry.allowMobSpawning() && entry.mobTarget());
         fakePlayer.setPlayerListName(buildTabListName(displayName, color, entry.dimension()));
         de.chunkloader.network.ChunkloaderNetworking.broadcastFakePlayerVisibility(server, displayName, nameVisible);
         updateFakePlayerTeam(fakePlayer, entry);
@@ -2917,6 +2922,7 @@ public class ChunkloaderManager {
                 fakePlayer.setPlayerListName(buildTabListName(displayName, color, updatedEntry.dimension()));
                 fakePlayer.setCustomNameVisible(updatedEntry.nameVisible());
                 fakePlayer.setVisibleAsMarker(true);
+                fakePlayer.setMobTarget(updatedEntry.allowMobSpawning() && updatedEntry.mobTarget());
 
                 String plainName = displayName;
                 de.chunkloader.network.ChunkloaderNetworking.broadcastFakePlayerVisibility(server, plainName,
@@ -2993,6 +2999,24 @@ public class ChunkloaderManager {
             return true;
         }
         return false;
+    }
+
+    public boolean setChunkloaderMobTarget(String name, boolean mobTarget) {
+        ChunkloaderTarget entry = config.getEntryByName(name);
+        if (entry == null) {
+            return false;
+        }
+        if (!entry.allowMobSpawning()) {
+            return false;
+        }
+        config.updateEntryMobTarget(entry.chunkX(), entry.chunkZ(), entry.dimension(), mobTarget);
+        ChunkKey key = chunkKey(entry);
+        ChunkloaderTarget updated = config.getEntry(entry.chunkX(), entry.chunkZ(), entry.dimension());
+        if (updated != null && activeTargets.containsKey(key)) {
+            activeTargets.put(key, updated);
+        }
+        updateMarkerForChunkloader(key);
+        return true;
     }
 
     public boolean setChunkloaderAllowMobSpawning(String name, boolean allowMobSpawning) {
@@ -3440,7 +3464,8 @@ public class ChunkloaderManager {
                 canIncreaseRadius,
                 otherChunkloaders,
                 entry.ownerName(),
-                isEasterEgg(chunkKey(entry)) || entry.easterEggSkinIndex() != null);
+                isEasterEgg(chunkKey(entry)) || entry.easterEggSkinIndex() != null,
+                entry.allowMobSpawning() && entry.mobTarget());
     }
 
     public boolean toggleChunkloaderAt(int chunkX, int chunkZ, String dimension) {
@@ -3501,6 +3526,22 @@ public class ChunkloaderManager {
         boolean newVisible = !entry.nameVisible();
         config.updateEntryNameVisible(chunkX, chunkZ, dimension, newVisible);
         ChunkKey key = new ChunkKey(dimension, chunkX, chunkZ);
+        updateMarkerForChunkloader(key);
+        return true;
+    }
+
+    public boolean toggleChunkloaderMobTarget(int chunkX, int chunkZ, String dimension) {
+        ChunkloaderTarget entry = config.getEntry(chunkX, chunkZ, dimension);
+        if (entry == null || entry.name() == null || !entry.allowMobSpawning()) {
+            return false;
+        }
+        boolean newValue = !entry.mobTarget();
+        config.updateEntryMobTarget(chunkX, chunkZ, dimension, newValue);
+        ChunkKey key = new ChunkKey(dimension, chunkX, chunkZ);
+        ChunkloaderTarget updated = config.getEntry(chunkX, chunkZ, dimension);
+        if (updated != null && activeTargets.containsKey(key)) {
+            activeTargets.put(key, updated);
+        }
         updateMarkerForChunkloader(key);
         return true;
     }
@@ -3708,6 +3749,7 @@ public class ChunkloaderManager {
         ChunkKey key = new ChunkKey(dimension, chunkX, chunkZ);
 
         config.updateEntryNameVisible(chunkX, chunkZ, dimension, true);
+        config.updateEntryMobTarget(chunkX, chunkZ, dimension, false);
         int defaultRadius = 0;
         if (entry.chunkRadius() != defaultRadius) {
             setChunkloaderRadius(entry.name(), defaultRadius);
@@ -4029,10 +4071,42 @@ public class ChunkloaderManager {
             return;
         }
         float yaw = normalizeSpawnYaw(entry.spawnYaw());
+        
+        fakePlayer.refreshPositionAndAngles(
+                entry.blockX() + 0.5,
+                entry.blockY(),
+                entry.blockZ() + 0.5,
+                yaw,
+                0.0F);
         fakePlayer.setYaw(yaw);
         fakePlayer.setPitch(0.0F);
         fakePlayer.setHeadYaw(yaw);
         fakePlayer.setBodyYaw(yaw);
+        fakePlayer.lastYaw = yaw;
+        fakePlayer.lastPitch = 0.0F;
+        broadcastSpawnFacing(fakePlayer, yaw);
+    }
+
+    private void broadcastSpawnFacing(ChunkloaderFakePlayer fakePlayer, float yaw) {
+        if (!(fakePlayer.getEntityWorld() instanceof ServerWorld world)) {
+            return;
+        }
+        byte yawByte = MathHelper.packDegrees(yaw);
+        byte pitchByte = MathHelper.packDegrees(0.0F);
+        EntityS2CPacket.Rotate rotatePacket = new EntityS2CPacket.Rotate(
+                fakePlayer.getId(), yawByte, pitchByte, fakePlayer.isOnGround());
+        EntitySetHeadYawS2CPacket headPacket = new EntitySetHeadYawS2CPacket(fakePlayer, yawByte);
+        double maxDistanceSq = 64.0 * 64.0;
+        for (ServerPlayerEntity player : world.getPlayers()) {
+            if (player == null || player == fakePlayer || player.networkHandler == null) {
+                continue;
+            }
+            if (player.squaredDistanceTo(fakePlayer) > maxDistanceSq) {
+                continue;
+            }
+            player.networkHandler.sendPacket(rotatePacket);
+            player.networkHandler.sendPacket(headPacket);
+        }
     }
 
     private static float normalizeSpawnYaw(float yaw) {
