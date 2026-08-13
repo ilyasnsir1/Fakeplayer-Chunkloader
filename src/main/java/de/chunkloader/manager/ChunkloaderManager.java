@@ -1494,6 +1494,7 @@ public class ChunkloaderManager {
             boolean nameVisible = entry.nameVisible();
             existingFakePlayer.setCustomNameVisible(nameVisible);
             existingFakePlayer.setVisibleAsMarker(true);
+            existingFakePlayer.setMobTarget(entry.allowMobSpawning() && entry.mobTarget());
 
             String plainName = displayName;
             de.chunkloader.network.ChunkloaderNetworking.broadcastFakePlayerVisibility(server, plainName, nameVisible);
@@ -1563,6 +1564,7 @@ public class ChunkloaderManager {
             fakePlayer.setCustomNameVisible(nameVisible);
 
             fakePlayer.setVisibleAsMarker(true);
+            fakePlayer.setMobTarget(entry.allowMobSpawning() && entry.mobTarget());
 
             String plainName = displayName;
             de.chunkloader.network.ChunkloaderNetworking.broadcastFakePlayerVisibility(server, plainName, nameVisible);
@@ -2243,6 +2245,7 @@ public class ChunkloaderManager {
         boolean nameVisible = entry.nameVisible();
         fakePlayer.setCustomNameVisible(nameVisible);
         fakePlayer.setVisibleAsMarker(true);
+        fakePlayer.setMobTarget(entry.allowMobSpawning() && entry.mobTarget());
         fakePlayer.setPlayerListName(buildTabListName(displayName, color, entry.dimension()));
         de.chunkloader.network.ChunkloaderNetworking.broadcastFakePlayerVisibility(server, displayName, nameVisible);
         updateFakePlayerTeam(fakePlayer, entry);
@@ -2950,6 +2953,7 @@ public class ChunkloaderManager {
                 fakePlayer.setPlayerListName(buildTabListName(displayName, color, updatedEntry.dimension()));
                 fakePlayer.setCustomNameVisible(updatedEntry.nameVisible());
                 fakePlayer.setVisibleAsMarker(true);
+                fakePlayer.setMobTarget(updatedEntry.allowMobSpawning() && updatedEntry.mobTarget());
 
                 String plainName = displayName;
                 de.chunkloader.network.ChunkloaderNetworking.broadcastFakePlayerVisibility(server, plainName,
@@ -3026,6 +3030,24 @@ public class ChunkloaderManager {
             return true;
         }
         return false;
+    }
+
+    public boolean setChunkloaderMobTarget(String name, boolean mobTarget) {
+        ChunkloaderTarget entry = config.getEntryByName(name);
+        if (entry == null) {
+            return false;
+        }
+        if (!entry.allowMobSpawning()) {
+            return false;
+        }
+        config.updateEntryMobTarget(entry.chunkX(), entry.chunkZ(), entry.dimension(), mobTarget);
+        ChunkKey key = chunkKey(entry);
+        ChunkloaderTarget updated = config.getEntry(entry.chunkX(), entry.chunkZ(), entry.dimension());
+        if (updated != null && activeTargets.containsKey(key)) {
+            activeTargets.put(key, updated);
+        }
+        updateMarkerForChunkloader(key);
+        return true;
     }
 
     public boolean setChunkloaderAllowMobSpawning(String name, boolean allowMobSpawning) {
@@ -3474,7 +3496,8 @@ public class ChunkloaderManager {
                 canIncreaseRadius,
                 otherChunkloaders,
                 entry.ownerName(),
-                isEasterEgg(chunkKey(entry)) || entry.easterEggSkinIndex() != null);
+                isEasterEgg(chunkKey(entry)) || entry.easterEggSkinIndex() != null,
+                entry.allowMobSpawning() && entry.mobTarget());
     }
 
     private void applySpawnFacing(ChunkloaderFakePlayer fakePlayer, ChunkloaderTarget entry) {
@@ -3564,6 +3587,22 @@ public class ChunkloaderManager {
         boolean newVisible = !entry.nameVisible();
         config.updateEntryNameVisible(chunkX, chunkZ, dimension, newVisible);
         ChunkKey key = new ChunkKey(dimension, chunkX, chunkZ);
+        updateMarkerForChunkloader(key);
+        return true;
+    }
+
+    public boolean toggleChunkloaderMobTarget(int chunkX, int chunkZ, String dimension) {
+        ChunkloaderTarget entry = config.getEntry(chunkX, chunkZ, dimension);
+        if (entry == null || entry.name() == null || !entry.allowMobSpawning()) {
+            return false;
+        }
+        boolean newValue = !entry.mobTarget();
+        config.updateEntryMobTarget(chunkX, chunkZ, dimension, newValue);
+        ChunkKey key = new ChunkKey(dimension, chunkX, chunkZ);
+        ChunkloaderTarget updated = config.getEntry(chunkX, chunkZ, dimension);
+        if (updated != null && activeTargets.containsKey(key)) {
+            activeTargets.put(key, updated);
+        }
         updateMarkerForChunkloader(key);
         return true;
     }
@@ -3763,6 +3802,7 @@ public class ChunkloaderManager {
         ChunkKey key = new ChunkKey(dimension, chunkX, chunkZ);
 
         config.updateEntryNameVisible(chunkX, chunkZ, dimension, true);
+        config.updateEntryMobTarget(chunkX, chunkZ, dimension, false);
         int defaultRadius = 0;
         if (entry.chunkRadius() != defaultRadius) {
             setChunkloaderRadius(entry.name(), defaultRadius);

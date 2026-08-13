@@ -86,21 +86,23 @@ public final class SkinLayerMask {
         }
         int sanitized = sanitize(mask);
         ModelPart root = model.root();
-        setChildVisible(root, "hat", isShown(sanitized, PlayerModelPart.HAT));
-        setChildVisible(root, "jacket", isShown(sanitized, PlayerModelPart.JACKET));
-        setChildVisible(root, "left_sleeve", isShown(sanitized, PlayerModelPart.LEFT_SLEEVE));
-        setChildVisible(root, "right_sleeve", isShown(sanitized, PlayerModelPart.RIGHT_SLEEVE));
-        setChildVisible(root, "left_pants", isShown(sanitized, PlayerModelPart.LEFT_PANTS_LEG));
-        setChildVisible(root, "right_pants", isShown(sanitized, PlayerModelPart.RIGHT_PANTS_LEG));
-    }
-
-    private static void setChildVisible(ModelPart root, String childName, boolean visible) {
-        if (root == null || childName == null) {
+        if (root == null) {
             return;
         }
-        try {
-            root.getChild(childName).visible = visible;
-        } catch (RuntimeException ignored) {
+        
+        var lookup = root.createPartLookup();
+        setPartVisible(lookup.apply("hat"), isShown(sanitized, PlayerModelPart.HAT));
+        setPartVisible(lookup.apply("jacket"), isShown(sanitized, PlayerModelPart.JACKET));
+        setPartVisible(lookup.apply("left_sleeve"), isShown(sanitized, PlayerModelPart.LEFT_SLEEVE));
+        setPartVisible(lookup.apply("right_sleeve"), isShown(sanitized, PlayerModelPart.RIGHT_SLEEVE));
+        setPartVisible(lookup.apply("left_pants"), isShown(sanitized, PlayerModelPart.LEFT_PANTS_LEG));
+        setPartVisible(lookup.apply("right_pants"), isShown(sanitized, PlayerModelPart.RIGHT_PANTS_LEG));
+    }
+
+    private static void setPartVisible(ModelPart part, boolean visible) {
+        if (part == null) {
+            return;
         }
+        part.visible = visible;
     }
 }
