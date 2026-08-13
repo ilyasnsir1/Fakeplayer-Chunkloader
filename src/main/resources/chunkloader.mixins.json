@@ -5,6 +5,7 @@
     "compatibilityLevel":  "JAVA_21",
     "mixins":  [
                    "ChunkMapMixin",
+                   "MobTargetFakePlayerMixin",
                    "PlayerAdvancementsMixin",
                    "PlayerListBroadcastMixin",
                    "PlayerListPlaceNewPlayerMixin",

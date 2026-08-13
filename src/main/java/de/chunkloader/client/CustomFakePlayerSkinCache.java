@@ -2,7 +2,6 @@ package de.chunkloader.client;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import de.chunkloader.ChunkloaderForgeMod;
-import de.chunkloader.client.config.ClientConfig;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
 import net.minecraft.client.Minecraft;
@@ -16,6 +15,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Locale;
@@ -38,15 +38,6 @@ public final class CustomFakePlayerSkinCache {
     }
 
     public record CustomSkin(ResourceLocation assetId, ResourceLocation textureId, SkinModelType model) {
-    }
-
-    public static void loadConfiguredSkins(ClientConfig config) {
-        skinPathByPlayerName.clear();
-        skinPathByPlayerName.putAll(config.getCustomSkinPathsByPlayerName());
-        layerMaskByPlayerName.clear();
-        layerMaskByPlayerName.putAll(config.getCustomSkinLayersByPlayerName());
-        clearRuntimeBindings();
-        refreshBindings();
     }
 
     public static CustomSkin setPreviewSkin(UUID previewPlayerUuid, Path skinPath) throws IOException {
@@ -83,6 +74,7 @@ public final class CustomFakePlayerSkinCache {
     public static void setSkin(String playerName, Path skinPath, int layerMask) throws IOException {
         String normalizedName = normalizePlayerName(playerName);
         String normalizedPath = normalizeSkinPath(skinPath);
+        invalidateCachedSkin(normalizedPath);
         loadSkin(normalizedPath);
         skinPathByPlayerName.put(normalizedName, normalizedPath);
         layerMaskByPlayerName.put(normalizedName, SkinLayerMask.sanitize(layerMask));
@@ -95,17 +87,60 @@ public final class CustomFakePlayerSkinCache {
             throw new IOException("Empty skin data");
         }
         String normalizedName = normalizePlayerName(playerName);
-        Minecraft client = Minecraft.getInstance();
-        if (client == null || client.gameDirectory == null) {
+        Path dir = syncedSkinsDirectory();
+        if (dir == null) {
             throw new IOException("Client unavailable");
         }
-        Path dir = client.gameDirectory.toPath().resolve("chunkloader").resolve("synced_skins");
         Files.createDirectories(dir);
         Path file = dir.resolve(safeSyncedFileName(normalizedName) + ".png");
+        String normalizedPath = normalizeSkinPath(file);
+        boolean samePixels = Files.isRegularFile(file)
+            && skinByPath.containsKey(normalizedPath)
+            && java.util.Arrays.equals(Files.readAllBytes(file), pngBytes);
         Files.write(file, pngBytes);
+        if (samePixels) {
+            skinPathByPlayerName.put(normalizedName, normalizedPath);
+            layerMaskByPlayerName.put(normalizedName, SkinLayerMask.sanitize(layerMask));
+            failedPaths.remove(normalizedPath);
+            refreshBindings();
+            return;
+        }
         setSkin(normalizedName, file, layerMask);
-        ClientConfig.load().setCustomSkinPath(normalizedName, file.toString());
-        ClientConfig.load().setCustomSkinLayers(normalizedName, layerMask);
+    }
+
+    private static Path syncedSkinsDirectory() {
+        Minecraft client = Minecraft.getInstance();
+        if (client == null || client.gameDirectory == null) {
+            return null;
+        }
+        return client.gameDirectory.toPath().resolve("chunkloader").resolve("synced_skins");
+    }
+
+    private static void deleteSyncedSkinFile(String normalizedName) {
+        Path dir = syncedSkinsDirectory();
+        if (dir == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(dir.resolve(safeSyncedFileName(normalizedName) + ".png"));
+        } catch (IOException ignored) {
+        }
+    }
+
+    private static void clearSyncedSkinsDirectory() {
+        Path dir = syncedSkinsDirectory();
+        if (dir == null || !Files.isDirectory(dir)) {
+            return;
+        }
+        try (var stream = Files.list(dir)) {
+            for (Path path : stream.toList()) {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                }
+            }
+        } catch (IOException ignored) {
+        }
     }
 
     private static String safeSyncedFileName(String normalizedName) {
@@ -148,9 +183,43 @@ public final class CustomFakePlayerSkinCache {
         if (playerName == null || playerName.isBlank()) {
             return;
         }
-        removeSkin(playerName);
+        String normalizedName = normalizePlayerName(playerName);
+        removeSkin(normalizedName);
+        deleteSyncedSkinFile(normalizedName);
+    }
 
-        ClientConfig.load().setCustomSkinPath(playerName, null);
+    public static void clearAllSkins() {
+        for (String path : new HashSet<>(skinByPath.keySet())) {
+            releaseIfUnused(path);
+        }
+        skinPathByPlayerName.clear();
+        layerMaskByPlayerName.clear();
+        previewPathByPlayerUuid.clear();
+        clearRuntimeBindings();
+        failedPaths.clear();
+        clearSyncedSkinsDirectory();
+    }
+
+    public static boolean hasSkin(String playerName) {
+        if (playerName == null || playerName.isBlank()) {
+            return false;
+        }
+        return skinPathByPlayerName.containsKey(playerName.trim().toLowerCase(Locale.ROOT));
+    }
+
+    public static String getSkinPath(String playerName) {
+        if (playerName == null || playerName.isBlank()) {
+            return null;
+        }
+        return skinPathByPlayerName.get(playerName.trim().toLowerCase(Locale.ROOT));
+    }
+
+    public static int getLayerMaskForPlayerName(String playerName) {
+        if (playerName == null || playerName.isBlank()) {
+            return SkinLayerMask.DEFAULT_MASK;
+        }
+        Integer mask = layerMaskByPlayerName.get(playerName.trim().toLowerCase(Locale.ROOT));
+        return mask == null ? SkinLayerMask.DEFAULT_MASK : SkinLayerMask.sanitize(mask);
     }
 
     public static CustomSkin getSkin(UUID playerUuid) {
@@ -283,6 +352,130 @@ public final class CustomFakePlayerSkinCache {
         skinByPath.put(normalizedPath, skin);
         dynamicTextureByPath.put(normalizedPath, texture);
         return skin;
+    }
+
+    
+    public static boolean isSyncedSkinPath(String path) {
+        if (path == null || path.isBlank()) {
+            return false;
+        }
+        Path syncedDir = syncedSkinsDirectory();
+        if (syncedDir == null) {
+            return false;
+        }
+        try {
+            Path candidate = Path.of(path).toAbsolutePath().normalize();
+            return candidate.startsWith(syncedDir.toAbsolutePath().normalize());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    
+    private static volatile String cachedUserPicturesDirectory;
+
+    public static String getUserPicturesDirectory() {
+        String cached = cachedUserPicturesDirectory;
+        if (cached != null) {
+            return cached;
+        }
+        String resolved = resolveUserPicturesDirectory();
+        if (resolved != null) {
+            cachedUserPicturesDirectory = resolved;
+        }
+        return resolved;
+    }
+
+    private static String resolveUserPicturesDirectory() {
+        
+        String[] candidates = {
+            System.getenv("USERPROFILE") != null ? System.getenv("USERPROFILE") + java.io.File.separator + "Pictures" : null,
+            System.getProperty("user.home") != null ? System.getProperty("user.home") + java.io.File.separator + "Pictures" : null,
+            System.getProperty("user.home") != null ? System.getProperty("user.home") + java.io.File.separator + "Bilder" : null
+        };
+        for (String candidate : candidates) {
+            if (candidate == null || candidate.isBlank()) {
+                continue;
+            }
+            try {
+                Path path = Path.of(candidate).toAbsolutePath().normalize();
+                if (Files.isDirectory(path)) {
+                    return path.toString();
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+        if (os.contains("win")) {
+            String fromShell = queryWindowsShellMyPictures();
+            if (fromShell != null) {
+                return fromShell;
+            }
+        }
+        if (System.getProperty("user.home") != null) {
+            return System.getProperty("user.home");
+        }
+        return System.getProperty("user.dir", ".");
+    }
+
+    private static String queryWindowsShellMyPictures() {
+        ProcessBuilder builder = new ProcessBuilder(
+            "reg", "query",
+            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+            "/v", "My Pictures"
+        );
+        builder.redirectErrorStream(true);
+        try {
+            Process process = builder.start();
+            String output;
+            try (var reader = new java.io.BufferedReader(
+                new java.io.InputStreamReader(process.getInputStream(), java.nio.charset.StandardCharsets.UTF_8)
+            )) {
+                output = reader.lines().collect(java.util.stream.Collectors.joining("\n"));
+            }
+            if (!process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return null;
+            }
+            if (process.exitValue() != 0 || output == null || output.isBlank()) {
+                return null;
+            }
+            for (String line : output.split("\\R")) {
+                String trimmed = line.trim();
+                int idx = trimmed.toUpperCase(java.util.Locale.ROOT).indexOf("REG_SZ");
+                if (idx < 0) {
+                    continue;
+                }
+                String value = trimmed.substring(idx + "REG_SZ".length()).trim();
+                if (value.isEmpty()) {
+                    continue;
+                }
+                Path path = Path.of(value).toAbsolutePath().normalize();
+                if (Files.isDirectory(path)) {
+                    return path.toString();
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private static void invalidateCachedSkin(String normalizedPath) {
+        if (normalizedPath == null || normalizedPath.isBlank()) {
+            return;
+        }
+        CustomSkin skin = skinByPath.remove(normalizedPath);
+        DynamicTexture texture = dynamicTextureByPath.remove(normalizedPath);
+        if (skin != null) {
+            skinByPlayerUuid.entrySet().removeIf(entry -> entry.getValue() == skin);
+            Minecraft client = Minecraft.getInstance();
+            if (client != null) {
+                client.getTextureManager().release(skin.textureId());
+            }
+        } else if (texture != null) {
+            texture.close();
+        }
+        failedPaths.remove(normalizedPath);
     }
 
     private static void releaseIfUnused(String normalizedPath) {

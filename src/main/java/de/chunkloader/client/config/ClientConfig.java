@@ -82,8 +82,6 @@ public class ClientConfig {
     private int skinLayerActiveColor = 0;
     private int skinLayerInactiveColor = 0;
     private final EnumMap<PanelColorTarget, Integer> colorPreviewOverrides = new EnumMap<>(PanelColorTarget.class);
-    private final Map<String, String> customSkinPathsByPlayerName = new HashMap<>();
-    private final Map<String, Integer> customSkinLayersByPlayerName = new HashMap<>();
     private int borderColor = DEFAULT_BORDER_COLOR;
     private int dividerColor = DEFAULT_DIVIDER_COLOR;
     private int frameColor = DEFAULT_FRAME_COLOR;
@@ -340,44 +338,6 @@ public class ClientConfig {
                         config.hideOtherDots = false;
                     }
                 }
-                if (json.has("customSkinPathsByPlayerName") && json.get("customSkinPathsByPlayerName").isJsonObject()) {
-                    try {
-                        JsonObject skinPaths = json.getAsJsonObject("customSkinPathsByPlayerName");
-                        for (Map.Entry<String, com.google.gson.JsonElement> entry : skinPaths.entrySet()) {
-                            String playerName = entry.getKey();
-                            String path = entry.getValue().getAsString();
-                            if (playerName != null && !playerName.isBlank() && path != null && !path.isBlank()) {
-                                config.customSkinPathsByPlayerName.put(
-                                    playerName.trim().toLowerCase(Locale.ROOT),
-                                    path
-                                );
-                            }
-                        }
-                    } catch (Exception e) {
-                        config.customSkinPathsByPlayerName.clear();
-                    }
-                }
-                if (json.has("customSkinLayersByPlayerName") && json.get("customSkinLayersByPlayerName").isJsonObject()) {
-                    try {
-                        JsonObject skinLayers = json.getAsJsonObject("customSkinLayersByPlayerName");
-                        for (Map.Entry<String, com.google.gson.JsonElement> entry : skinLayers.entrySet()) {
-                            String playerName = entry.getKey();
-                            if (playerName == null || playerName.isBlank() || !entry.getValue().isJsonPrimitive()) {
-                                continue;
-                            }
-                            try {
-                                int mask = de.chunkloader.client.SkinLayerMask.sanitize(entry.getValue().getAsInt());
-                                config.customSkinLayersByPlayerName.put(
-                                    playerName.trim().toLowerCase(Locale.ROOT),
-                                    mask
-                                );
-                            } catch (Exception ignored) {
-                            }
-                        }
-                    } catch (Exception e) {
-                        config.customSkinLayersByPlayerName.clear();
-                    }
-                }
             } catch (Exception e) {
             }
         } else {
@@ -436,24 +396,6 @@ public class ClientConfig {
             json.addProperty("chunkMapLayoutPreset", chunkMapLayoutPreset);
             json.addProperty("disabledChunkloadersKeyName", disabledChunkloadersKeyName);
             json.addProperty("hideOtherDots", hideOtherDots);
-            JsonObject skinPaths = new JsonObject();
-            for (Map.Entry<String, String> entry : customSkinPathsByPlayerName.entrySet()) {
-                String playerName = entry.getKey();
-                String path = entry.getValue();
-                if (playerName != null && !playerName.isBlank() && path != null && !path.isBlank()) {
-                    skinPaths.addProperty(playerName, path);
-                }
-            }
-            json.add("customSkinPathsByPlayerName", skinPaths);
-            JsonObject skinLayers = new JsonObject();
-            for (Map.Entry<String, Integer> entry : customSkinLayersByPlayerName.entrySet()) {
-                String playerName = entry.getKey();
-                Integer mask = entry.getValue();
-                if (playerName != null && !playerName.isBlank() && mask != null) {
-                    skinLayers.addProperty(playerName, de.chunkloader.client.SkinLayerMask.sanitize(mask));
-                }
-            }
-            json.add("customSkinLayersByPlayerName", skinLayers);
 
             try (FileWriter writer = new FileWriter(configPath.toFile())) {
                 GSON.toJson(json, writer);
@@ -750,45 +692,6 @@ public class ClientConfig {
 
     public void setSkinLayerInactiveColor(int color) {
         this.skinLayerInactiveColor = color;
-        save();
-    }
-
-    public Map<String, String> getCustomSkinPathsByPlayerName() { return Map.copyOf(customSkinPathsByPlayerName); }
-    public String getCustomSkinPath(String playerName) {
-        if (playerName == null) return null;
-        return customSkinPathsByPlayerName.get(playerName.trim().toLowerCase(Locale.ROOT));
-    }
-    public void setCustomSkinPath(String playerName, String path) {
-        if (playerName == null) return;
-        String name = playerName.trim().toLowerCase(Locale.ROOT);
-        if (path == null || path.isBlank()) {
-            customSkinPathsByPlayerName.remove(name);
-            customSkinLayersByPlayerName.remove(name);
-        }
-        else customSkinPathsByPlayerName.put(name, path);
-        save();
-    }
-
-    public int getCustomSkinLayers(String playerName) {
-        if (playerName == null || playerName.isBlank()) {
-            return de.chunkloader.client.SkinLayerMask.DEFAULT_MASK;
-        }
-        Integer mask = customSkinLayersByPlayerName.get(playerName.trim().toLowerCase(Locale.ROOT));
-        return mask == null
-            ? de.chunkloader.client.SkinLayerMask.DEFAULT_MASK
-            : de.chunkloader.client.SkinLayerMask.sanitize(mask);
-    }
-
-    public Map<String, Integer> getCustomSkinLayersByPlayerName() {
-        return Map.copyOf(customSkinLayersByPlayerName);
-    }
-
-    public void setCustomSkinLayers(String playerName, int mask) {
-        if (playerName == null || playerName.isBlank()) {
-            return;
-        }
-        String name = playerName.trim().toLowerCase(Locale.ROOT);
-        customSkinLayersByPlayerName.put(name, de.chunkloader.client.SkinLayerMask.sanitize(mask));
         save();
     }
 
