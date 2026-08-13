@@ -36,7 +36,6 @@ public class ChunkloaderClient {
 
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
-        event.enqueueWork(() -> CustomFakePlayerSkinCache.loadConfiguredSkins(ClientConfig.load()));
         ChunkloaderNetworking.setClearCustomSkinClientHook(playerName -> {
             Minecraft client = Minecraft.getInstance();
             if (client != null) {
@@ -398,3 +397,19 @@ public class ChunkloaderClient {
     }
 }
 
+@Mod.EventBusSubscriber(modid = ChunkloaderForgeMod.MODID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
+class ChunkloaderClientNetworkHandler {
+    @SubscribeEvent
+    public static void onLoggingIn(net.minecraftforge.client.event.ClientPlayerNetworkEvent.LoggingIn event) {
+        CustomFakePlayerSkinCache.clearAllSkins();
+    }
+
+    @SubscribeEvent
+    public static void onLoggingOut(net.minecraftforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
+        FakePlayerNameCache.clear();
+        FakePlayerVisibilityCache.clear();
+        FakePlayerEasterEggSkinCache.clear();
+        FakePlayerEasterEggEmoteCache.clear();
+        CustomFakePlayerSkinCache.clearAllSkins();
+    }
+}

@@ -29,6 +29,7 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
     private boolean registered;
     private Component tabListName;
     private boolean visibleAsMarker = false;
+    private boolean mobTarget = false;
 
     private static final int ALL_SKIN_LAYERS = Arrays.stream(PlayerModelPart.values())
             .mapToInt(PlayerModelPart::getMask)
@@ -76,13 +77,51 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
 
     public void setVisibleAsMarker(boolean visible) {
         this.visibleAsMarker = visible;
-        this.setInvisible(!visible);
-        this.setInvulnerable(true);
-        this.getAbilities().invulnerable = true;
+        applyMobTargetState();
+        if (visible) {
+            this.setInvulnerable(false);
+        }
     }
 
     public boolean isVisibleAsMarker() {
         return visibleAsMarker;
+    }
+
+    public void setMobTarget(boolean mobTarget) {
+        this.mobTarget = mobTarget;
+        applyMobTargetState();
+    }
+
+    public boolean isMobTarget() {
+        return mobTarget;
+    }
+
+    private void applyVisibilityState() {
+        boolean show = visibleAsMarker || mobTarget;
+        this.setInvisible(!show);
+    }
+
+    private void applyMobTargetState() {
+        applyVisibilityState();
+        this.getAbilities().invulnerable = !mobTarget;
+        this.setInvulnerable(!mobTarget && !visibleAsMarker);
+        this.onUpdateAbilities();
+    }
+
+    @Override
+    public boolean canBeSeenAsEnemy() {
+        if (!mobTarget) {
+            return false;
+        }
+        return super.canBeSeenAsEnemy();
+    }
+
+    @Override
+    public boolean isInvulnerable() {
+        if (mobTarget) {
+            return false;
+        }
+        return super.isInvulnerable();
     }
 
     public boolean isRegistered() {
@@ -206,7 +245,10 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
         return this.isCustomNameVisible();
     }
 
-    public boolean handleHurt(net.minecraft.world.damagesource.DamageSource source, float amount) {
+    @Override
+    public boolean hurtServer(net.minecraft.server.level.ServerLevel world, net.minecraft.world.damagesource.DamageSource source,
+            float amount) {
+        
         if (visibleAsMarker && ChunkloaderForgeMod.getChunkloaderManager() != null) {
             if (ChunkloaderForgeMod.getChunkloaderManager().isChunkloaderMarker(this.getUUID())) {
                 Entity attacker = source.getEntity();
@@ -218,15 +260,23 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
                     }
                     if (player.isShiftKeyDown()) {
                         ChunkloaderForgeMod.getChunkloaderManager().removeChunkloaderByMarkerUuid(this.getUUID());
+                        if (player instanceof ServerPlayer serverPlayer) {
+                            serverPlayer.sendSystemMessage(Component.literal("Player deleted"));
+                        }
                     } else {
                         ChunkloaderForgeMod.getChunkloaderManager().handleMarkerDestroyed(this.getUUID());
+                        if (player instanceof ServerPlayer serverPlayer) {
+                            String keyName = de.chunkloader.util.KeybindHelper.getDisabledChunkloadersKeyName();
+                            serverPlayer.sendSystemMessage(
+                                    Component.literal("Player disabled (Press " + keyName + " to open disabled list)"));
+                        }
                     }
                     this.remove(Entity.RemovalReason.KILLED);
                     return true;
-                } else {
-                    return false;
                 }
+                return false;
             }
+            return super.hurtServer(world, source, amount);
         }
         return false;
     }
