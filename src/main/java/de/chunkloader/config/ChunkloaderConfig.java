@@ -115,6 +115,10 @@ public class ChunkloaderConfig {
                             Integer easterEggSkinIndex = EasterEggSkinGuard.readVerifiedIndex(
                                     chunkObj, dimension, chunkX, chunkZ);
                             float spawnYaw = chunkObj.has("spawnYaw") ? chunkObj.get("spawnYaw").getAsFloat() : 0.0f;
+                            boolean mobTarget = chunkObj.has("mobTarget") ? chunkObj.get("mobTarget").getAsBoolean() : false;
+                            if (!allowMobSpawning) {
+                                mobTarget = false;
+                            }
 
                             chunkRadius = Math.max(ChunkloaderConstants.MIN_RADIUS,
                                     Math.min(ChunkloaderConstants.MAX_RADIUS, chunkRadius));
@@ -130,7 +134,7 @@ public class ChunkloaderConfig {
 
                             config.chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name,
                                     enabled, nameVisible, chunkRadius, allowMobSpawning, dimension, ownerName,
-                                    easterEggSkinIndex, spawnYaw));
+                                    easterEggSkinIndex, spawnYaw, mobTarget));
                         } catch (Exception e) {
                             ChunkloaderMod.LOGGER.warn("Failed to load chunkloader entry, skipping", e);
                         }
@@ -306,6 +310,9 @@ public class ChunkloaderConfig {
                 }
                 if (entry.spawnYaw() != 0.0f) {
                     chunkObj.addProperty("spawnYaw", entry.spawnYaw());
+                }
+                if (entry.mobTarget()) {
+                    chunkObj.addProperty("mobTarget", true);
                 }
                 chunkloaders.add(chunkObj);
             }
@@ -693,7 +700,7 @@ public class ChunkloaderConfig {
                         existing.blockX(), existing.blockY(), existing.blockZ(),
                         existing.name(), enabled, existing.nameVisible(), existing.chunkRadius(),
                         existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
-                        existing.easterEggSkinIndex(), existing.spawnYaw()));
+                        existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget()));
                 save();
             }
         } finally {
@@ -714,7 +721,7 @@ public class ChunkloaderConfig {
                         existing.blockX(), existing.blockY(), existing.blockZ(),
                         existing.name(), existing.enabled(), nameVisible, existing.chunkRadius(),
                         existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
-                        existing.easterEggSkinIndex(), existing.spawnYaw()));
+                        existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget()));
                 save();
             }
         } finally {
@@ -722,6 +729,28 @@ public class ChunkloaderConfig {
         }
     }
 
+
+    public void updateEntryMobTarget(int chunkX, int chunkZ, String dimension, boolean mobTarget) {
+        lock.writeLock().lock();
+        try {
+            ChunkloaderTarget existing = chunkEntries.stream()
+                    .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ && Objects.equals(entry.dimension(), dimension))
+                    .findFirst()
+                    .orElse(null);
+            if (existing != null) {
+                boolean effective = existing.allowMobSpawning() && mobTarget;
+                chunkEntries.remove(existing);
+                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(),
+                        existing.blockX(), existing.blockY(), existing.blockZ(),
+                        existing.name(), existing.enabled(), existing.nameVisible(), existing.chunkRadius(),
+                        existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
+                        existing.easterEggSkinIndex(), existing.spawnYaw(), effective));
+                save();
+            }
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
     public void updateEntryEasterEggSkinIndex(int chunkX, int chunkZ, String dimension, Integer easterEggSkinIndex) {
         lock.writeLock().lock();
         try {
@@ -735,7 +764,7 @@ public class ChunkloaderConfig {
                         existing.blockX(), existing.blockY(), existing.blockZ(),
                         existing.name(), existing.enabled(), existing.nameVisible(), existing.chunkRadius(),
                         existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
-                        easterEggSkinIndex, existing.spawnYaw()));
+                        easterEggSkinIndex, existing.spawnYaw(), existing.mobTarget()));
                 save();
             }
         } finally {
@@ -787,7 +816,7 @@ public class ChunkloaderConfig {
                     existing.blockX(), existing.blockY(), existing.blockZ(),
                     trimmedName, existing.enabled(), existing.nameVisible(), existing.chunkRadius(),
                     existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
-                    existing.easterEggSkinIndex(), existing.spawnYaw()));
+                    existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget()));
             save();
             return true;
         } finally {
@@ -828,7 +857,7 @@ public class ChunkloaderConfig {
                     existing.blockX(), existing.blockY(), existing.blockZ(),
                     trimmedName, existing.enabled(), existing.nameVisible(), existing.chunkRadius(),
                     existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
-                    existing.easterEggSkinIndex(), existing.spawnYaw()));
+                    existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget()));
             save();
             return true;
         } finally {
@@ -851,7 +880,7 @@ public class ChunkloaderConfig {
                         existing.blockX(), existing.blockY(), existing.blockZ(),
                         existing.name(), existing.enabled(), existing.nameVisible(), chunkRadius,
                         existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
-                        existing.easterEggSkinIndex(), existing.spawnYaw()));
+                        existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget()));
                 save();
             }
         } finally {
@@ -895,7 +924,7 @@ public class ChunkloaderConfig {
                         existing.blockX(), existing.blockY(), existing.blockZ(),
                         newName, existing.enabled(), existing.nameVisible(), newRadius, allowMobSpawning,
                         existing.dimension(), existing.ownerName(),
-                        existing.easterEggSkinIndex(), existing.spawnYaw()));
+                        existing.easterEggSkinIndex(), existing.spawnYaw(), allowMobSpawning && existing.mobTarget()));
                 save();
             }
         } finally {
@@ -1064,7 +1093,7 @@ public class ChunkloaderConfig {
                         newName,
                         entry.enabled(), entry.nameVisible(),
                         entry.chunkRadius(), entry.allowMobSpawning(),
-                        entry.dimension(), entry.ownerName(), entry.easterEggSkinIndex(), entry.spawnYaw());
+                        entry.dimension(), entry.ownerName(), entry.easterEggSkinIndex(), entry.spawnYaw(), entry.mobTarget());
                 chunkEntries.remove(entry);
                 chunkEntries.add(updated);
             } catch (NumberFormatException e) {

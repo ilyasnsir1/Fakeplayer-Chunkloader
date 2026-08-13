@@ -36,7 +36,6 @@ public class RenameChunkloaderScreen extends Screen {
         this.dimension = dimension != null && !dimension.isBlank() ? dimension : "minecraft:overworld";
         this.currentName = currentName != null ? currentName : "";
     }
-
     public Screen getParentScreen() {
         return parent;
     }

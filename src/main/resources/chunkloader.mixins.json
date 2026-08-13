@@ -1,38 +1,39 @@
 {
-  "required": true,
-  "minVersion": "0.8",
-  "package": "de.chunkloader.mixin",
-  "compatibilityLevel": "JAVA_25",
-  "mixins": [
-    "EntityMixin",
-    "EntityRemoveMixin",
-    "PlayerAdvancementsMixin",
-    "PlayerListEntryMixin",
-    "SleepManagerMixin",
-    "PlayerEntityMixin",
-    "PlayerListPlaceNewPlayerMixin",
-    "PlayerManagerMixin",
-    "PlayerManagerTabListMixin",
-    "ServerChunkManagerAccessor",
-    "ServerChunkCacheSpawnCountMixin",
-    "ServerChunkLoadingManagerMixin",
-    "ServerCommonNetworkHandlerMixin",
-    "ServerPlayerEntityMixin",
-    "ServerWorldMixin",
-    "ServerWorldRandomTickMixin",
-    "ServerWorldSleepMixin",
-    "ServerWorldTickChunkMixin"
-  ],
-  "client": [
-    "client.PlayerEntityClientMixin",
-    "client.AbstractClientPlayerEntitySkinMixin",
-    "client.AvatarModelPartMixin",
-    "client.PlayerListEntrySkinMixin",
-    "client.PlayerModelEasterEggEmoteMixin",
-    "client.InGameHudMixin",
-    "client.IntegratedPlayerListMixin"
-  ],
-  "injectors": {
-    "defaultRequire": 1
-  }
+    "required":  true,
+    "minVersion":  "0.8",
+    "package":  "de.chunkloader.mixin",
+    "compatibilityLevel":  "JAVA_25",
+    "mixins":  [
+                   "EntityMixin",
+                   "EntityRemoveMixin",
+    "MobTargetFakePlayerMixin",
+                   "PlayerAdvancementsMixin",
+                   "PlayerListEntryMixin",
+                   "SleepManagerMixin",
+                   "PlayerEntityMixin",
+                   "PlayerListPlaceNewPlayerMixin",
+                   "PlayerManagerMixin",
+                   "PlayerManagerTabListMixin",
+                   "ServerChunkManagerAccessor",
+                   "ServerChunkCacheSpawnCountMixin",
+                   "ServerChunkLoadingManagerMixin",
+                   "ServerCommonNetworkHandlerMixin",
+                   "ServerPlayerEntityMixin",
+                   "ServerWorldMixin",
+                   "ServerWorldRandomTickMixin",
+                   "ServerWorldSleepMixin",
+                   "ServerWorldTickChunkMixin"
+               ],
+    "client":  [
+                   "client.PlayerEntityClientMixin",
+                   "client.AbstractClientPlayerEntitySkinMixin",
+                   "client.PlayerListEntrySkinMixin",
+                   "client.PlayerModelEasterEggEmoteMixin",
+                   "client.InGameHudMixin",
+                   "client.IntegratedPlayerListMixin",
+                   "client.AvatarModelPartMixin"
+               ],
+    "injectors":  {
+                      "defaultRequire":  1
+                  }
 }

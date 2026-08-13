@@ -4,7 +4,6 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import de.chunkloader.client.SkinLayerMask;
 import de.chunkloader.util.KeybindHelper;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -83,8 +82,6 @@ public class ClientConfig {
     private String chunkMapLayoutPreset = DEFAULT_CHUNKMAP_LAYOUT_PRESET;
     private String disabledChunkloadersKeyName = DEFAULT_DISABLED_CHUNKLOADERS_KEY;
     private boolean hideOtherDots = false;
-    private final Map<String, String> customSkinPathsByPlayerName = new HashMap<>();
-    private final Map<String, Integer> customSkinLayersByPlayerName = new HashMap<>();
     private final Map<String, Integer> chunkMapRotationByKey = new HashMap<>();
     private Path configPath;
 
@@ -325,44 +322,6 @@ public class ClientConfig {
                         config.hideOtherDots = false;
                     }
                 }
-                if (json.has("customSkinPathsByPlayerName") && json.get("customSkinPathsByPlayerName").isJsonObject()) {
-                    try {
-                        JsonObject skinPaths = json.getAsJsonObject("customSkinPathsByPlayerName");
-                        for (Map.Entry<String, com.google.gson.JsonElement> entry : skinPaths.entrySet()) {
-                            String playerName = entry.getKey();
-                            String path = entry.getValue().getAsString();
-                            if (playerName != null && !playerName.isBlank() && path != null && !path.isBlank()) {
-                                config.customSkinPathsByPlayerName.put(
-                                    playerName.trim().toLowerCase(java.util.Locale.ROOT),
-                                    path
-                                );
-                            }
-                        }
-                    } catch (Exception e) {
-                        config.customSkinPathsByPlayerName.clear();
-                    }
-                }
-                if (json.has("customSkinLayersByPlayerName") && json.get("customSkinLayersByPlayerName").isJsonObject()) {
-                    try {
-                        JsonObject skinLayers = json.getAsJsonObject("customSkinLayersByPlayerName");
-                        for (Map.Entry<String, com.google.gson.JsonElement> entry : skinLayers.entrySet()) {
-                            String playerName = entry.getKey();
-                            if (playerName == null || playerName.isBlank() || !entry.getValue().isJsonPrimitive()) {
-                                continue;
-                            }
-                            try {
-                                int mask = SkinLayerMask.sanitize(entry.getValue().getAsInt());
-                                config.customSkinLayersByPlayerName.put(
-                                    playerName.trim().toLowerCase(java.util.Locale.ROOT),
-                                    mask
-                                );
-                            } catch (Exception ignored) {
-                            }
-                        }
-                    } catch (Exception e) {
-                        config.customSkinLayersByPlayerName.clear();
-                    }
-                }
                 if (json.has("chunkMapRotationByKey") && json.get("chunkMapRotationByKey").isJsonObject()) {
                     try {
                         JsonObject rotations = json.getAsJsonObject("chunkMapRotationByKey");
@@ -436,24 +395,6 @@ public class ClientConfig {
             json.addProperty("chunkMapLayoutPreset", chunkMapLayoutPreset);
             json.addProperty("disabledChunkloadersKeyName", disabledChunkloadersKeyName);
             json.addProperty("hideOtherDots", hideOtherDots);
-            JsonObject skinPaths = new JsonObject();
-            for (Map.Entry<String, String> entry : customSkinPathsByPlayerName.entrySet()) {
-                String playerName = entry.getKey();
-                String path = entry.getValue();
-                if (playerName != null && !playerName.isBlank() && path != null && !path.isBlank()) {
-                    skinPaths.addProperty(playerName, path);
-                }
-            }
-            json.add("customSkinPathsByPlayerName", skinPaths);
-            JsonObject skinLayers = new JsonObject();
-            for (Map.Entry<String, Integer> entry : customSkinLayersByPlayerName.entrySet()) {
-                String playerName = entry.getKey();
-                Integer mask = entry.getValue();
-                if (playerName != null && !playerName.isBlank() && mask != null) {
-                    skinLayers.addProperty(playerName, SkinLayerMask.sanitize(mask));
-                }
-            }
-            json.add("customSkinLayersByPlayerName", skinLayers);
             JsonObject rotations = new JsonObject();
             for (Map.Entry<String, Integer> entry : chunkMapRotationByKey.entrySet()) {
                 int rotation = entry.getValue() == null ? 0 : Math.max(0, Math.min(3, entry.getValue()));
@@ -504,60 +445,6 @@ public class ClientConfig {
         this.chunkMapLayoutPreset = (preset == null || preset.isBlank())
             ? DEFAULT_CHUNKMAP_LAYOUT_PRESET
             : preset;
-        save();
-    }
-
-    public String getCustomSkinPath(String playerName) {
-        if (playerName == null || playerName.isBlank()) {
-            return null;
-        }
-        return customSkinPathsByPlayerName.get(playerName.trim().toLowerCase(java.util.Locale.ROOT));
-    }
-
-    public Map<String, String> getCustomSkinPathsByPlayerName() {
-        return Map.copyOf(customSkinPathsByPlayerName);
-    }
-
-    public void setCustomSkinPath(String playerName, String path) {
-        if (playerName == null || playerName.isBlank()) {
-            throw new IllegalArgumentException("Player name must not be blank");
-        }
-        String normalizedName = playerName.trim().toLowerCase(java.util.Locale.ROOT);
-        if (path == null || path.isBlank()) {
-            customSkinPathsByPlayerName.remove(normalizedName);
-            customSkinLayersByPlayerName.remove(normalizedName);
-        } else {
-            customSkinPathsByPlayerName.put(normalizedName, path);
-        }
-        save();
-    }
-
-    public int getCustomSkinLayers(String playerName) {
-        if (playerName == null || playerName.isBlank()) {
-            return SkinLayerMask.DEFAULT_MASK;
-        }
-        Integer mask = customSkinLayersByPlayerName.get(playerName.trim().toLowerCase(java.util.Locale.ROOT));
-        return mask == null ? SkinLayerMask.DEFAULT_MASK : SkinLayerMask.sanitize(mask);
-    }
-
-    public Map<String, Integer> getCustomSkinLayersByPlayerName() {
-        return Map.copyOf(customSkinLayersByPlayerName);
-    }
-
-    public void setCustomSkinLayers(String playerName, int mask) {
-        if (playerName == null || playerName.isBlank()) {
-            throw new IllegalArgumentException("Player name must not be blank");
-        }
-        String normalizedName = playerName.trim().toLowerCase(java.util.Locale.ROOT);
-        customSkinLayersByPlayerName.put(normalizedName, SkinLayerMask.sanitize(mask));
-        save();
-    }
-
-    public void clearCustomSkinLayers(String playerName) {
-        if (playerName == null || playerName.isBlank()) {
-            return;
-        }
-        customSkinLayersByPlayerName.remove(playerName.trim().toLowerCase(java.util.Locale.ROOT));
         save();
     }
 
@@ -1097,7 +984,6 @@ public class ClientConfig {
         this.skinLayerInactiveColor = 0;
         this.disabledChunkloadersKeyName = DEFAULT_DISABLED_CHUNKLOADERS_KEY;
         this.hideOtherDots = false;
-        this.customSkinPathsByPlayerName.clear();
         save();
     }
 }

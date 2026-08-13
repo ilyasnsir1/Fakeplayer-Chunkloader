@@ -26,7 +26,6 @@ public class ChunkloaderConfirmationScreen extends Screen {
         this.onConfirm = onConfirm;
         this.onCancel = onCancel;
     }
-
     public Screen getParentScreen() {
         return parent;
     }

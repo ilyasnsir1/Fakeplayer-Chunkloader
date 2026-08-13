@@ -108,7 +108,6 @@ public class PanelColorHelpScreen extends Screen {
         helpLines.add(Component.literal("Back:").withStyle(ChatFormatting.YELLOW)
             .append(content(" Close without saving")));
     }
-
     public Screen getParentScreen() {
         return parent;
     }

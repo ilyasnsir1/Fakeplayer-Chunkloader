@@ -211,6 +211,7 @@ public class ChunkloaderCommandsScreen extends Screen {
             {{"Configuration Commands", ""}},
             {{"/fakeplayer rename <name> <newName>", "Renames a player (alphanumeric only). Cannot rename to real player names.", "Example: /fakeplayer rename Fakeplayer1 MyPlayer"}},
             {{"/fakeplayer setradius <name> <0-3>", "Sets chunk loading radius (0=1x1, 1=3x3, 2=5x5, 3=7x7)", "Example: /fakeplayer setradius Fakeplayer1 2"}},
+            {{"/fakeplayer setmobtarget <name> <true/false>", "Fakeplayer only: allow mobs to aggro/pathfind to this player (AFK farm target). Default off.", "Example: /fakeplayer setmobtarget Fakeplayer1 true"}},
             {{"/fakeplayer setmobspawning <name> <true/false>", "Sets mode: true=Fakeplayer (mobs spawn near it like a real player), false=Chunkplayer (chunks-only). Not global.", "Example: /fakeplayer setmobspawning Fakeplayer1 false"}},
             {{"/fakeplayer toggle <name>", "Toggles mob spawning on/off for a fakeplayer/chunkplayer", "Example: /fakeplayer toggle Fakeplayer1"}},
             {{"/fakeplayer namevisible <name> <true/false>", "Shows/hides the player name", "Example: /fakeplayer namevisible Fakeplayer1 false"}},
