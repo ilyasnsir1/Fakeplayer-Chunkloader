@@ -39,7 +39,6 @@ public class ChunkloaderClient {
 
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
-        event.enqueueWork(() -> CustomFakePlayerSkinCache.loadConfiguredSkins(ClientConfig.load()));
         ChunkloaderNetworking.setClearCustomSkinClientHook(playerName -> {
             Minecraft client = Minecraft.getInstance();
             if (client != null) {
@@ -67,6 +66,20 @@ public class ChunkloaderClient {
             }
         });
         NeoForge.EVENT_BUS.addListener(ChunkloaderClient::onClientTick);
+        NeoForge.EVENT_BUS.addListener(ChunkloaderClient::onLoggingIn);
+        NeoForge.EVENT_BUS.addListener(ChunkloaderClient::onLoggingOut);
+    }
+
+    private static void onLoggingIn(net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingIn event) {
+        CustomFakePlayerSkinCache.clearAllSkins();
+    }
+
+    private static void onLoggingOut(net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
+        FakePlayerNameCache.clear();
+        FakePlayerVisibilityCache.clear();
+        FakePlayerEasterEggSkinCache.clear();
+        FakePlayerEasterEggEmoteCache.clear();
+        CustomFakePlayerSkinCache.clearAllSkins();
     }
 
     private static void requestHUDStatusIfNeeded(boolean isEnabled, boolean needsUpdate, Runnable requestAction,
@@ -285,4 +298,3 @@ public class ChunkloaderClient {
                 }
     }
 }
-

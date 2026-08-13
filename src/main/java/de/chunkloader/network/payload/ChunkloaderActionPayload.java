@@ -38,6 +38,7 @@ public record ChunkloaderActionPayload(int chunkX, int chunkZ, @NonNull String d
     public enum Action {
         TOGGLE_ENABLED,
         TOGGLE_MOB_SPAWNING,
+        TOGGLE_MOB_TARGET,
         RADIUS_INCREMENT,
         RADIUS_DECREMENT,
         TOGGLE_NAME_VISIBLE,

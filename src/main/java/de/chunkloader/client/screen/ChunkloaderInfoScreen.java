@@ -220,6 +220,7 @@ public class ChunkloaderInfoScreen extends Screen {
             "Great for redstone, mob, and plant farms that need entity ticking.",
             "SD controls chunk loading and simulation area (0-3).",
             "Mob spawning works independently with SD 5 (24-128 blocks away).",
+            "Optional Mob Target: allow mobs to aggro/pathfind to this Fakeplayer (AFK farms). Default off; no inventory, armor, or combat.",
             "Ideal for farms with mobs (hostile, passive, villagers, golems, etc.)."
         };
         y = drawInfoSection(graphics, font, y, fakePlayerTitle, fakePlayerLines, lineHeight, sectionSpacing, false);
