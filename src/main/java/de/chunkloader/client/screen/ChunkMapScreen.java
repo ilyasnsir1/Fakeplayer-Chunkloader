@@ -3043,6 +3043,8 @@ public class ChunkMapScreen extends Screen {
         boolean modeHeaderMatches = actionSearchMatches("Mode");
         String mobLabelRaw = data.allowMobSpawning() ? "Disable mob spawning" : "Enable mob spawning";
         boolean mobButtonMatches = actionSearchMatches(mobLabelRaw);
+        String mobTargetLabelRaw = data.mobTarget() ? "Disable mob target" : "Enable mob target";
+        boolean mobTargetMatches = data.allowMobSpawning() && actionSearchMatches(mobTargetLabelRaw);
 
         int radiusY = 0;
         int halfWidth = (buttonWidth - 4) / 2;
@@ -3058,7 +3060,7 @@ public class ChunkMapScreen extends Screen {
         boolean radiusUpMatches = actionSearchMatches(radiusUpLabel);
         boolean showRadiusSection = radiusHeaderMatches || radiusDownMatches || radiusUpMatches;
 
-        boolean showModeHeader = modeHeaderMatches || mobButtonMatches || showRadiusSection;
+        boolean showModeHeader = modeHeaderMatches || mobButtonMatches || mobTargetMatches || showRadiusSection;
         if (showModeHeader) {
             actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Component.literal("Mode")));
             cursorY += headerHeight + gap;
@@ -3086,6 +3088,29 @@ public class ChunkMapScreen extends Screen {
         this.addRenderableWidget(mobButton);
 
         cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        if (data.allowMobSpawning() && (modeHeaderMatches || mobTargetMatches || mobButtonMatches)) {
+            Button mobTargetButton = Button.builder(
+                Component.literal(mobTargetLabelRaw),
+                btn -> ChunkloaderClientNetworking.sendAction(
+                    ChunkloaderActionPayload.Action.TOGGLE_MOB_TARGET,
+                    data.fakeplayerChunkX(),
+                    data.fakeplayerChunkZ(),
+                            data.dimensionKey(),
+                            0
+                ))
+                .bounds(buttonX, 0, buttonWidth, 20)
+                .build();
+            if (data.mobTarget()) {
+                mobTargetButton.setMessage(Component.literal("Disable mob target").withStyle(net.minecraft.ChatFormatting.BLUE));
+            } else {
+                mobTargetButton.setMessage(Component.literal("Enable mob target").withStyle(net.minecraft.ChatFormatting.GREEN));
+            }
+            actionButtons.add(mobTargetButton);
+            actionButtonYOffset.put(mobTargetButton, cursorY);
+            this.addRenderableWidget(mobTargetButton);
+            cursorY += ACTION_BUTTON_HEIGHT + gap;
         }
 
         boolean showRadiusButtons = modeHeaderMatches || showRadiusSection;

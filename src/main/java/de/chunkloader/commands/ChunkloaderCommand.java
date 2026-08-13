@@ -91,6 +91,11 @@ public class ChunkloaderCommand {
                     .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
                     .then(Commands.argument("allow", BoolArgumentType.bool())
                         .executes(ChunkloaderCommand::setMobSpawning))))
+            .then(Commands.literal("setmobtarget")
+                .then(Commands.argument("name", StringArgumentType.string())
+                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .then(Commands.argument("enabled", BoolArgumentType.bool())
+                        .executes(ChunkloaderCommand::setMobTarget))))
             .then(Commands.literal("toggle")
                 .then(Commands.argument("name", StringArgumentType.string())
                     .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
@@ -179,6 +184,11 @@ public class ChunkloaderCommand {
                     .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
                     .then(Commands.argument("allow", BoolArgumentType.bool())
                         .executes(ChunkloaderCommand::setMobSpawning))))
+            .then(Commands.literal("setmobtarget")
+                .then(Commands.argument("name", StringArgumentType.string())
+                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .then(Commands.argument("enabled", BoolArgumentType.bool())
+                        .executes(ChunkloaderCommand::setMobTarget))))
             .then(Commands.literal("toggle")
                 .then(Commands.argument("name", StringArgumentType.string())
                     .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
@@ -507,6 +517,53 @@ public class ChunkloaderCommand {
         }
 
         return 1;
+    }
+
+
+    private static int setMobTarget(CommandContext<CommandSourceStack> context) {
+        String name = StringArgumentType.getString(context, "name");
+        boolean enabled = BoolArgumentType.getBool(context, "enabled");
+
+        if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
+            context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
+            return 0;
+        }
+
+        ChunkloaderTarget entry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
+            .filter(e -> name.equals(e.name()))
+            .findFirst()
+            .orElse(null);
+
+        if (entry == null) {
+            var config = ChunkloaderForgeMod.getConfig();
+            List<String> similar = config != null ? config.findSimilarNames(name, 3) : List.of();
+
+            Component errorText;
+            if (!similar.isEmpty()) {
+                errorText = Component.literal("Player '" + name + "' not found. Did you mean: " + String.join(", ", similar))
+                    .withStyle(ChatFormatting.RED);
+            } else {
+                errorText = Component.literal("Player '" + name + "' not found").withStyle(ChatFormatting.RED);
+            }
+            context.getSource().sendFailure(errorText);
+            return 0;
+        }
+
+        if (!entry.allowMobSpawning()) {
+            context.getSource().sendFailure(Component.literal("Mob target is only available for Fakeplayers").withStyle(ChatFormatting.RED));
+            return 0;
+        }
+
+        boolean success = ChunkloaderForgeMod.getChunkloaderManager().setChunkloaderMobTarget(name, enabled);
+
+        if (success) {
+            context.getSource().sendSuccess(() -> Component.literal("Mob target for '" + name + "' set to " + (enabled ? "enabled" : "disabled"))
+                .withStyle(ChatFormatting.GREEN), true);
+            return 1;
+        } else {
+            context.getSource().sendFailure(Component.literal("Error setting mob target").withStyle(ChatFormatting.RED));
+            return 0;
+        }
     }
 
     private static int setNameVisible(CommandContext<CommandSourceStack> context) {
