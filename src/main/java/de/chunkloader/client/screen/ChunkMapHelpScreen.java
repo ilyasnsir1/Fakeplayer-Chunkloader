@@ -122,6 +122,8 @@ public class ChunkMapHelpScreen extends Screen {
             .append(content(" Turns it on/off (loads chunks or stops)")));
         helpLines.add(Text.literal("Mob spawning:").formatted(Formatting.YELLOW)
             .append(content(" Toggle whether mobs can spawn near this Fakeplayer (like a real player; not world-wide). Works independently from SD (SD 5 for mob spawning).")));
+        helpLines.add(Text.literal("Mob target:").formatted(Formatting.YELLOW)
+            .append(content(" Enable/Disable whether mobs may aggro/pathfind to this Fakeplayer (AFK farm target). Default off. Fakeplayer only. Does not add inventory, armor, or combat.")));
         helpLines.add(Text.literal("SD/Radius -1 / +1:").formatted(Formatting.YELLOW)
             .append(content(" Change your SD/radius (0-3)")));
         helpLines.add(Text.literal("Rename:").formatted(Formatting.YELLOW)

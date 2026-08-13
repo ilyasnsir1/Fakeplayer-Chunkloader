@@ -49,8 +49,6 @@ public class ChunkloaderClient implements ClientModInitializer {
     @Override
     @SuppressWarnings("all")
     public void onInitializeClient() {
-        CustomFakePlayerSkinCache.loadConfiguredSkins(ClientConfig.load());
-
         ChunkloaderNetworking.setClearCustomSkinClientHook(playerName -> {
             MinecraftClient client = MinecraftClient.getInstance();
             if (client != null) {
@@ -103,11 +101,11 @@ public class ChunkloaderClient implements ClientModInitializer {
             FakePlayerVisibilityCache.clear();
             FakePlayerEasterEggSkinCache.clear();
             FakePlayerEasterEggEmoteCache.clear();
-            CustomFakePlayerSkinCache.clearRuntimeBindings();
+            CustomFakePlayerSkinCache.clearAllSkins();
         });
 
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) ->
-            CustomFakePlayerSkinCache.loadConfiguredSkins(ClientConfig.load())
+            CustomFakePlayerSkinCache.clearAllSkins()
         );
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {

@@ -19,6 +19,7 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.MathHelper;
 
 import java.util.List;
 
@@ -95,6 +96,11 @@ public class ChunkloaderCommand {
                     .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
                     .then(CommandManager.argument("allow", BoolArgumentType.bool())
                         .executes(ChunkloaderCommand::setMobSpawning))))
+            .then(CommandManager.literal("setmobtarget")
+                .then(CommandManager.argument("name", StringArgumentType.string())
+                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .then(CommandManager.argument("enabled", BoolArgumentType.bool())
+                        .executes(ChunkloaderCommand::setMobTarget))))
             .then(CommandManager.literal("toggle")
                 .then(CommandManager.argument("name", StringArgumentType.string())
                     .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
@@ -183,6 +189,11 @@ public class ChunkloaderCommand {
                     .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
                     .then(CommandManager.argument("allow", BoolArgumentType.bool())
                         .executes(ChunkloaderCommand::setMobSpawning))))
+            .then(CommandManager.literal("setmobtarget")
+                .then(CommandManager.argument("name", StringArgumentType.string())
+                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .then(CommandManager.argument("enabled", BoolArgumentType.bool())
+                        .executes(ChunkloaderCommand::setMobTarget))))
             .then(CommandManager.literal("toggle")
                 .then(CommandManager.argument("name", StringArgumentType.string())
                     .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
@@ -282,7 +293,7 @@ public class ChunkloaderCommand {
             }
 
             String playerName = player.getName().getString();
-            float playerYaw = player.getYaw();
+            float playerYaw = MathHelper.wrapDegrees(player.getYaw());
             boolean success = ChunkloaderMod.getChunkloaderManager().addChunkloader(
                 chunkX, chunkZ, playerPos, null, world, playerName, playerYaw);
 
@@ -593,6 +604,53 @@ public class ChunkloaderCommand {
             return 1;
         } else {
             context.getSource().sendError(Text.literal("Error setting chunk radius").formatted(Formatting.RED));
+            return 0;
+        }
+    }
+
+
+    private static int setMobTarget(CommandContext<ServerCommandSource> context) {
+        String name = StringArgumentType.getString(context, "name");
+        boolean enabled = BoolArgumentType.getBool(context, "enabled");
+
+        if (ChunkloaderMod.getChunkloaderManager() == null) {
+            context.getSource().sendError(Text.literal("Player Manager is not initialized"));
+            return 0;
+        }
+
+        ChunkloaderTarget entry = ChunkloaderMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
+            .filter(e -> name.equals(e.name()))
+            .findFirst()
+            .orElse(null);
+
+        if (entry == null) {
+            var config = ChunkloaderMod.getConfig();
+            List<String> similar = config != null ? config.findSimilarNames(name, 3) : List.of();
+
+            Text errorText;
+            if (!similar.isEmpty()) {
+                errorText = Text.literal("Player '" + name + "' not found. Did you mean: " + String.join(", ", similar))
+                    .formatted(Formatting.RED);
+            } else {
+                errorText = Text.literal("Player '" + name + "' not found").formatted(Formatting.RED);
+            }
+            context.getSource().sendError(errorText);
+            return 0;
+        }
+
+        if (!entry.allowMobSpawning()) {
+            context.getSource().sendError(Text.literal("Mob target is only available for Fakeplayers").formatted(Formatting.RED));
+            return 0;
+        }
+
+        boolean success = ChunkloaderMod.getChunkloaderManager().setChunkloaderMobTarget(name, enabled);
+
+        if (success) {
+            context.getSource().sendFeedback(() -> Text.literal("Mob target for '" + name + "' set to " + (enabled ? "enabled" : "disabled"))
+                .formatted(Formatting.GREEN), true);
+            return 1;
+        } else {
+            context.getSource().sendError(Text.literal("Error setting mob target").formatted(Formatting.RED));
             return 0;
         }
     }

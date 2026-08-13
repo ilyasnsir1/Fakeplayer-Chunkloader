@@ -44,6 +44,7 @@ public class ChunkloaderFakePlayer extends ServerPlayerEntity {
     }
 
     private boolean visibleAsMarker = false;
+    private boolean mobTarget = false;
 
     public ChunkloaderFakePlayer(MinecraftServer server, ServerWorld world, GameProfile profile) {
         super(server, world, profile, FAKEPLAYER_OPTIONS);
@@ -91,7 +92,7 @@ public class ChunkloaderFakePlayer extends ServerPlayerEntity {
 
     public void setVisibleAsMarker(boolean visible) {
         this.visibleAsMarker = visible;
-        this.setInvisible(!visible);
+        applyMobTargetState();
         if (visible) {
             this.setInvulnerable(false);
         }
@@ -99,6 +100,44 @@ public class ChunkloaderFakePlayer extends ServerPlayerEntity {
 
     public boolean isVisibleAsMarker() {
         return visibleAsMarker;
+    }
+
+    
+    public void setMobTarget(boolean mobTarget) {
+        this.mobTarget = mobTarget;
+        applyMobTargetState();
+    }
+
+    public boolean isMobTarget() {
+        return mobTarget;
+    }
+
+    private void applyVisibilityState() {
+        boolean show = visibleAsMarker || mobTarget;
+        this.setInvisible(!show);
+    }
+
+    private void applyMobTargetState() {
+        applyVisibilityState();
+        this.getAbilities().invulnerable = !mobTarget;
+        this.setInvulnerable(!mobTarget && !visibleAsMarker);
+        this.sendAbilitiesUpdate();
+    }
+
+    @Override
+    public boolean canTakeDamage() {
+        if (!mobTarget) {
+            return false;
+        }
+        return super.canTakeDamage();
+    }
+
+    @Override
+    public boolean isInvulnerable() {
+        if (mobTarget) {
+            return false;
+        }
+        return super.isInvulnerable();
     }
 
     public boolean isRegistered() {
