@@ -836,8 +836,8 @@ public class ChunkloaderManager {
                     }
 
                     AABB box = new AABB(
-                            cx * 16.0, Double.NEGATIVE_INFINITY, cz * 16.0,
-                            cx * 16.0 + 16.0, Double.POSITIVE_INFINITY, cz * 16.0 + 16.0);
+                            cx * 16.0, world.getMinY(), cz * 16.0,
+                            cx * 16.0 + 16.0, world.getMaxY() + 1, cz * 16.0 + 16.0);
 
                     List<Mob> mobs = world.getEntitiesOfClass(Mob.class, box, m -> true);
                     if (mobs == null || mobs.isEmpty()) {
