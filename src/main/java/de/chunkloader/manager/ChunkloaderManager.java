@@ -859,8 +859,8 @@ public class ChunkloaderManager {
                     }
 
                     Box box = new Box(
-                            cx * 16.0, Double.NEGATIVE_INFINITY, cz * 16.0,
-                            cx * 16.0 + 16.0, Double.POSITIVE_INFINITY, cz * 16.0 + 16.0);
+                            cx * 16.0, world.getBottomY(), cz * 16.0,
+                            cx * 16.0 + 16.0, world.getBottomY() + world.getHeight(), cz * 16.0 + 16.0);
 
                     List<MobEntity> mobs = world.getEntitiesByClass(MobEntity.class, box, m -> true);
                     if (mobs == null || mobs.isEmpty()) {
@@ -1467,7 +1467,8 @@ public class ChunkloaderManager {
     public boolean removeChunkloader(int x, int z, String dimension) {
         ChunkloaderTarget entryToRemove = config.getEntry(x, z, dimension);
         String removedName = entryToRemove != null ? entryToRemove.name() : null;
-        boolean removed = config.removeEntry(x, z, dimension);
+        ChunkloaderConfig.RemoveResult removeResult = config.removeEntry(x, z, dimension);
+        boolean removed = removeResult.removed();
 
         if (removed) {
             ChunkKey key = new ChunkKey(dimension, x, z);
@@ -1478,6 +1479,9 @@ public class ChunkloaderManager {
             if (removedName != null && !removedName.isBlank()) {
                 customSkinStore.remove(removedName);
                 ChunkloaderNetworking.broadcastClearCustomSkin(server, removedName);
+            }
+            for (ChunkloaderConfig.NameRename rename : removeResult.renames()) {
+                migrateCustomSkinName(rename.oldName(), rename.newName());
             }
             ChunkloaderNetworking.closeOpenChunkMapsFor(server, x, z, dimension);
             ChunkloaderNetworking.refreshOpenChunkMapMarkers(server, this);
@@ -3069,6 +3073,9 @@ public class ChunkloaderManager {
         ChunkloaderFakePlayer existingFakePlayer = activeFakePlayers.get(key);
         boolean nameChanged = entry.name() != null && updatedEntry.name() != null
                 && !entry.name().equals(updatedEntry.name());
+        if (nameChanged) {
+            migrateCustomSkinName(entry.name(), updatedEntry.name());
+        }
         if (nameChanged && existingFakePlayer != null && existingFakePlayer.isAlive()) {
             respawnMarkerForChunkloader(key, updatedEntry);
             existingFakePlayer = activeFakePlayers.get(key);
@@ -4206,7 +4213,13 @@ public class ChunkloaderManager {
         }
 
         if (oldChunkX != newChunkX || oldChunkZ != newChunkZ) {
-            config.removeEntry(oldChunkX, oldChunkZ, oldDimension);
+            ChunkloaderConfig.RemoveResult oldRemoveResult = config.removeEntry(oldChunkX, oldChunkZ, oldDimension);
+
+            for (ChunkloaderConfig.NameRename rename : oldRemoveResult.renames()) {
+
+                migrateCustomSkinName(rename.oldName(), rename.newName());
+
+            }
         }
 
         ChunkloaderMod.LOGGER.info("Updated disabled chunkloader coordinates from ({}, {}) to ({}, {})",
