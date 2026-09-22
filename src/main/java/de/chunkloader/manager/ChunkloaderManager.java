@@ -2575,6 +2575,9 @@ public class ChunkloaderManager {
         ChunkloaderFakePlayer existingFakePlayer = activeFakePlayers.get(key);
         boolean nameChanged = entry.name() != null && updatedEntry.name() != null
                 && !entry.name().equals(updatedEntry.name());
+        if (nameChanged) {
+            migrateCustomSkinName(entry.name(), updatedEntry.name());
+        }
         if (nameChanged && existingFakePlayer != null && existingFakePlayer.isAlive()) {
             respawnMarkerForChunkloader(key, updatedEntry);
             existingFakePlayer = activeFakePlayers.get(key);

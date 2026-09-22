@@ -93,14 +93,16 @@ public class ChunkloaderCommandsScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
-        drawDimBackground(graphics);
-
         graphics.enableScissor(0, contentTop, this.width, contentBottom);
         renderText(graphics);
         graphics.disableScissor();
 
-        drawScrollbar(graphics);
         super.render(graphics, mouseX, mouseY, delta);
+
+        graphics.enableScissor(0, contentTop, this.width, contentBottom);
+                graphics.disableScissor();
+
+        drawScrollbar(graphics);
     }
 
     @Override
@@ -313,6 +315,7 @@ public class ChunkloaderCommandsScreen extends Screen {
     @Override
     public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         super.renderBackground(graphics, mouseX, mouseY, delta);
+        drawDimBackground(graphics);
     }
 
     @Override
