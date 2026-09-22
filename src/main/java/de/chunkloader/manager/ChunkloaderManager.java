@@ -1445,7 +1445,8 @@ public class ChunkloaderManager {
     public boolean removeChunkloader(int x, int z, String dimension) {
         ChunkloaderTarget entryToRemove = config.getEntry(x, z, dimension);
         String removedName = entryToRemove != null ? entryToRemove.name() : null;
-        boolean removed = config.removeEntry(x, z, dimension);
+        ChunkloaderConfig.RemoveResult removeResult = config.removeEntry(x, z, dimension);
+        boolean removed = removeResult.removed();
 
         if (removed) {
             chunkMapGeneration++;
@@ -1457,6 +1458,9 @@ public class ChunkloaderManager {
             if (removedName != null && !removedName.isBlank()) {
                 customSkinStore.remove(removedName);
                 ChunkloaderNetworking.broadcastClearCustomSkin(server, removedName);
+            }
+            for (ChunkloaderConfig.NameRename rename : removeResult.renames()) {
+                migrateCustomSkinName(rename.oldName(), rename.newName());
             }
             ChunkloaderNetworking.closeOpenChunkMapsFor(server, x, z, dimension);
             ChunkloaderNetworking.refreshOpenChunkMapMarkers(server, this);
@@ -2504,10 +2508,12 @@ public class ChunkloaderManager {
                     .getPlayers()) {
                 if (!(onlinePlayer instanceof ChunkloaderFakePlayer) &&
                         entry.name().equalsIgnoreCase(onlinePlayer.getGameProfile().name())) {
+                    String oldSkinName = entry.name();
                     String suffix = entry.allowMobSpawning() ? "_Fakeplayer" : "_Chunkplayer";
-                    String newName = entry.name() + suffix;
+                    String newName = oldSkinName + suffix;
                     boolean success = config.updateEntryNameForced(entry.chunkX(), entry.chunkZ(), entry.dimension(), newName);
                     if (success) {
+                        migrateCustomSkinName(oldSkinName, newName);
 
                         String type = entry.allowMobSpawning() ? "Fakeplayer" : "Chunkplayer";
                         net.minecraft.network.chat.Component message = net.minecraft.network.chat.Component.literal(type + " '")
@@ -3100,6 +3106,9 @@ public class ChunkloaderManager {
         ChunkloaderFakePlayer existingFakePlayer = activeFakePlayers.get(key);
         boolean nameChanged = entry.name() != null && updatedEntry.name() != null
                 && !entry.name().equals(updatedEntry.name());
+        if (nameChanged) {
+            migrateCustomSkinName(entry.name(), updatedEntry.name());
+        }
         if (nameChanged && existingFakePlayer != null && existingFakePlayer.isAlive()) {
             respawnMarkerForChunkloader(key, updatedEntry);
             existingFakePlayer = activeFakePlayers.get(key);
@@ -4197,7 +4206,13 @@ public class ChunkloaderManager {
         }
 
         if (oldChunkX != newChunkX || oldChunkZ != newChunkZ) {
-            config.removeEntry(oldChunkX, oldChunkZ, entry.dimension());
+            ChunkloaderConfig.RemoveResult oldRemoveResult = config.removeEntry(oldChunkX, oldChunkZ, entry.dimension());
+
+            for (ChunkloaderConfig.NameRename rename : oldRemoveResult.renames()) {
+
+                migrateCustomSkinName(rename.oldName(), rename.newName());
+
+            }
         }
 
         ChunkloaderMod.LOGGER.info("Updated disabled chunkloader coordinates from ({}, {}) to ({}, {})",

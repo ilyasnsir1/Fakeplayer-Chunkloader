@@ -759,7 +759,7 @@ final class PanelColorEditorOverlay {
             return PanelColorTarget.SKIN_TEXT;
         }
 
-        int cw = font().width("Drag: rotate  |  Alt/MMB+drag: pan  |  Scroll: zoom  |  Double click: reset");
+        int cw = font().width("Drag: rotate  |  Double-click: reset");
         int cx1 = previewLeft + (previewWidth - cw) / 2 - 4;
         int cx2 = previewLeft + (previewWidth + cw) / 2 + 4;
         if (mouseX >= cx1 && mouseX <= cx2 && mouseY >= previewBottom + 2 && mouseY <= previewBottom + 20) {
@@ -851,7 +851,7 @@ final class PanelColorEditorOverlay {
 
         drawSkinLayerPreview(context, previewLeft, previewTop, previewWidth);
 
-        Component controlsHint = Component.literal("Drag: rotate  |  Alt/MMB+drag: pan  |  Scroll: zoom  |  Double click: reset");
+        Component controlsHint = Component.literal("Drag: rotate  |  Double-click: reset");
         context.text(font(), controlsHint, previewLeft + (previewWidth - font().width(controlsHint)) / 2, previewBottom + 8, skinTextColor, false);
 
         int statusY = panelY + panelHeight - 58;
@@ -955,7 +955,7 @@ final class PanelColorEditorOverlay {
                 case SKIN_TEXT -> {
                     int pngW = font().width("Skin PNG");
                     int prevW = font().width("3D Preview");
-                    int cw = font().width("Drag: rotate  |  Alt/MMB+drag: pan  |  Scroll: zoom  |  Double click: reset");
+                    int cw = font().width("Drag: rotate  |  Double-click: reset");
                     int hw = font().width("No skin PNG loaded yet");
                     int cx1 = previewLeft + (previewWidth - cw) / 2 - 4;
                     int cx2 = previewLeft + (previewWidth + cw) / 2 + 4;
