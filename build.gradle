@@ -1,0 +1,81 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = "fakeplayerchunkloader${project.minecraft_version}-fabric"
+}
+
+repositories {
+    maven {
+        name = "Fabric"
+        url = "https://maven.fabricmc.net/"
+    }
+    mavenCentral()
+}
+
+loom {
+    // Access widener is empty - re-enable when needed
+    // accessWidenerPath = file("src/main/resources/chunkloader.accesswidener")
+    enableModProvidedJavadoc = false
+}
+
+dependencies {
+    // Mojang mappings are the default in Loom 1.16+ (Yarn discontinued for 26.1+).
+    // Loom 1.16 exposes Fabric dependencies through Gradle's standard implementation configuration.
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    // 26.3 dropped GLFW (and with it tinyfd). Keep the native PNG picker.
+    def lwjglTinyFd = "3.4.3"
+    implementation "org.lwjgl:lwjgl-tinyfd:${lwjglTinyFd}"
+    include "org.lwjgl:lwjgl-tinyfd:${lwjglTinyFd}"
+    ["natives-windows", "natives-windows-arm64", "natives-linux", "natives-linux-arm64", "natives-macos", "natives-macos-arm64"].each { classifier ->
+        runtimeOnly "org.lwjgl:lwjgl-tinyfd:${lwjglTinyFd}:${classifier}"
+        include "org.lwjgl:lwjgl-tinyfd:${lwjglTinyFd}:${classifier}"
+    }
+}
+
+processResources {
+    inputs.property "version", project.version
+    inputs.property "minecraft_version", project.minecraft_version
+    inputs.property "loader_version", project.loader_version
+    inputs.property "fabric_api_version", project.fabric_api_version
+
+    filteringCharset "UTF-8"
+
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version,
+                "minecraft_version": project.minecraft_version,
+                "loader_version": project.loader_version,
+                "fabric_api_version": project.fabric_api_version
+    }
+}
+
+def targetJavaVersion = 25
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = "UTF-8"
+    it.options.release = targetJavaVersion
+}
+
+java {
+    def javaVersion = JavaVersion.toVersion(targetJavaVersion)
+    sourceCompatibility = javaVersion
+    targetCompatibility = javaVersion
+    // Use the JDK that's running Gradle (Java 25+ required); avoids toolchain auto-provisioning.
+    if (JavaVersion.current() < javaVersion) {
+        toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    }
+    withSourcesJar()
+}
+
+jar {
+    from("LICENSE") {
+        rename { "${it}_${project.base.archivesName.get()}" }
+    }
+}

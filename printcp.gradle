@@ -1,0 +1,5 @@
+﻿tasks.register("printCp") {
+    doLast {
+        sourceSets.main.compileClasspath.files.each { println it }
+    }
+}
