@@ -962,7 +962,16 @@ public class ChunkloaderConfig {
         return generateNextName(true);
     }
 
-    public boolean removeEntry(int chunkX, int chunkZ, String dimension) {
+    public record NameRename(String oldName, String newName) {
+    }
+
+    public record RemoveResult(boolean removed, List<NameRename> renames) {
+        public static RemoveResult notRemoved() {
+            return new RemoveResult(false, List.of());
+        }
+    }
+
+    public RemoveResult removeEntry(int chunkX, int chunkZ, String dimension) {
         lock.writeLock().lock();
         try {
             ChunkloaderTarget existing = getEntry(chunkX, chunkZ, dimension);
@@ -970,20 +979,21 @@ public class ChunkloaderConfig {
                 String deletedName = existing.name();
                 chunkEntries.remove(existing);
 
+                List<NameRename> renames = List.of();
                 if (deletedName != null) {
-                    renumberNamesAfterDeletion(deletedName);
+                    renames = renumberNamesAfterDeletion(deletedName);
                 }
 
                 save();
-                return true;
+                return new RemoveResult(true, renames);
             }
-            return false;
+            return RemoveResult.notRemoved();
         } finally {
             lock.writeLock().unlock();
         }
     }
 
-    private void renumberNamesAfterDeletion(String deletedName) {
+    private List<NameRename> renumberNamesAfterDeletion(String deletedName) {
         final String prefix;
         int deletedNumber = -1;
 
@@ -994,10 +1004,10 @@ public class ChunkloaderConfig {
                 if (numStr.matches("^\\d+$")) {
                     deletedNumber = Integer.parseInt(numStr);
                 } else {
-                    return;
+                    return List.of();
                 }
             } catch (NumberFormatException e) {
-                return;
+                return List.of();
             }
         } else if (deletedName.startsWith("Chunkplayer")) {
             prefix = "Chunkplayer";
@@ -1006,13 +1016,13 @@ public class ChunkloaderConfig {
                 if (numStr.matches("^\\d+$")) {
                     deletedNumber = Integer.parseInt(numStr);
                 } else {
-                    return;
+                    return List.of();
                 }
             } catch (NumberFormatException e) {
-                return;
+                return List.of();
             }
         } else {
-            return;
+            return List.of();
         }
 
         final int finalDeletedNumber = deletedNumber;
@@ -1042,6 +1052,7 @@ public class ChunkloaderConfig {
             }
         });
 
+        List<NameRename> renames = new ArrayList<>();
         for (ChunkloaderTarget entry : entriesToRename) {
             try {
                 String currentName = entry.name();
@@ -1057,9 +1068,11 @@ public class ChunkloaderConfig {
                         entry.dimension(), entry.ownerName(), entry.easterEggSkinIndex(), entry.spawnYaw(), entry.mobTarget());
                 chunkEntries.remove(entry);
                 chunkEntries.add(updated);
+                renames.add(new NameRename(currentName, newName));
             } catch (NumberFormatException e) {
             }
         }
+        return renames;
     }
 
     public List<String> findSimilarNames(String name, int maxResults) {

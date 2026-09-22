@@ -200,15 +200,13 @@ public class ChunkMapHelpScreen extends Screen {
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        context.fill(0, 0, this.width, this.height, 0xC0101010);
+        super.render(context, mouseX, mouseY, delta);
 
         context.enableScissor(0, contentTop, this.width, contentBottom);
         renderText(context);
         context.disableScissor();
 
         drawScrollbar(context);
-
-        super.render(context, mouseX, mouseY, delta);
     }
 
     private void renderText(DrawContext context) {
@@ -352,6 +350,12 @@ public class ChunkMapHelpScreen extends Screen {
 
     private void drawSeparator(DrawContext context, int x, int y, int width) {
         context.fill(x, y, x + width, y + 1, 0x66FFFFFF);
+    }
+
+    @Override
+    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
+        super.renderBackground(context, mouseX, mouseY, delta);
+        context.fill(0, 0, this.width, this.height, 0xC0101010);
     }
 
     @Override
