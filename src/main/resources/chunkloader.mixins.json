@@ -1,0 +1,33 @@
+{
+    "required":  true,
+    "minVersion":  "0.8",
+    "package":  "de.chunkloader.mixin",
+    "compatibilityLevel":  "JAVA_21",
+    "mixins":  [
+                   "ChunkMapMixin",
+                   "EntityLoginPoseMixin",
+                   "MobTargetFakePlayerMixin",
+                   "PlayerAdvancementsMixin",
+                   "PlayerListBroadcastMixin",
+                   "PlayerListPlaceNewPlayerMixin",
+                   "ServerCommonPacketListenerImplMixin",
+                   "ServerGamePacketListenerImplMixin",
+                   "ServerLevelPlayersMixin",
+                   "ServerLevelTickChunkMixin",
+                   "ServerChunkCacheSpawnCountMixin",
+                   "ServerPlayerListedMixin",
+                   "SleepStatusMixin",
+                   "ServerLevelRandomTickMixin"
+               ],
+    "client":  [
+                   "client.GuiMixin",
+                   "client.PlayerClientMixin",
+                   "client.AbstractClientPlayerEntitySkinMixin",
+                   "client.PlayerListEntrySkinMixin",
+                   "client.PlayerModelEasterEggEmoteMixin",
+                   "client.PlayerModelPartMixin"
+               ],
+    "injectors":  {
+                      "defaultRequire":  1
+                  }
+}
