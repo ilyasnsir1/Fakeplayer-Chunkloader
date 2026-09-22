@@ -7,7 +7,7 @@ version = project.mod_version
 group = project.maven_group
 
 base {
-    archivesName = "fakeplayerchunkloader26.1.x-fabric"
+    archivesName = "fakeplayerchunkloader26.1.0-26.1.2-fabric"
 }
 
 repositories {

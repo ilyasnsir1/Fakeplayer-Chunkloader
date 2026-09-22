@@ -4,8 +4,8 @@ import com.mojang.authlib.GameProfile;
 import de.chunkloader.ChunkloaderMod;
 import de.chunkloader.ChunkloaderConstants;
 import de.chunkloader.config.ChunkloaderConfig;
-import de.chunkloader.config.CustomFakePlayerSkinStore;
 import de.chunkloader.config.ChunkloaderTarget;
+import de.chunkloader.config.CustomFakePlayerSkinStore;
 import de.chunkloader.fakeplayer.ChunkloaderFakePlayer;
 import de.chunkloader.network.ChunkMapCell;
 import de.chunkloader.network.ChunkMapData;
@@ -834,8 +834,8 @@ public class ChunkloaderManager {
                     }
 
                     AABB box = new AABB(
-                            cx * 16.0, Double.NEGATIVE_INFINITY, cz * 16.0,
-                            cx * 16.0 + 16.0, Double.POSITIVE_INFINITY, cz * 16.0 + 16.0);
+                            cx * 16.0, world.getMinY(), cz * 16.0,
+                            cx * 16.0 + 16.0, world.getMaxY() + 1, cz * 16.0 + 16.0);
 
                     List<Mob> mobs = world.getEntitiesOfClass(Mob.class, box, m -> true);
                     if (mobs == null || mobs.isEmpty()) {
@@ -1443,7 +1443,8 @@ public class ChunkloaderManager {
     public boolean removeChunkloader(int x, int z, String dimension) {
         ChunkloaderTarget entryToRemove = config.getEntry(x, z, dimension);
         String removedName = entryToRemove != null ? entryToRemove.name() : null;
-        boolean removed = config.removeEntry(x, z, dimension);
+        ChunkloaderConfig.RemoveResult removeResult = config.removeEntry(x, z, dimension);
+        boolean removed = removeResult.removed();
 
         if (removed) {
             chunkMapGeneration++;
@@ -1455,6 +1456,9 @@ public class ChunkloaderManager {
             if (removedName != null && !removedName.isBlank()) {
                 customSkinStore.remove(removedName);
                 ChunkloaderNetworking.broadcastClearCustomSkin(server, removedName);
+            }
+            for (ChunkloaderConfig.NameRename rename : removeResult.renames()) {
+                migrateCustomSkinName(rename.oldName(), rename.newName());
             }
             ChunkloaderNetworking.closeOpenChunkMapsFor(server, x, z, dimension);
             ChunkloaderNetworking.refreshOpenChunkMapMarkers(server, this);
@@ -1563,9 +1567,6 @@ public class ChunkloaderManager {
 
             fakePlayer.setVisibleAsMarker(true);
             fakePlayer.setMobTarget(entry.allowMobSpawning() && entry.mobTarget());
-
-            String plainName = displayName;
-            de.chunkloader.network.ChunkloaderNetworking.broadcastFakePlayerVisibility(server, plainName, nameVisible);
 
             try {
                 activeFakePlayers.put(key, fakePlayer);
@@ -2501,10 +2502,12 @@ public class ChunkloaderManager {
                     .getPlayers()) {
                 if (!(onlinePlayer instanceof ChunkloaderFakePlayer) &&
                         entry.name().equalsIgnoreCase(onlinePlayer.getGameProfile().name())) {
+                    String oldSkinName = entry.name();
                     String suffix = entry.allowMobSpawning() ? "_Fakeplayer" : "_Chunkplayer";
-                    String newName = entry.name() + suffix;
+                    String newName = oldSkinName + suffix;
                     boolean success = config.updateEntryNameForced(entry.chunkX(), entry.chunkZ(), entry.dimension(), newName);
                     if (success) {
+                        migrateCustomSkinName(oldSkinName, newName);
 
                         String type = entry.allowMobSpawning() ? "Fakeplayer" : "Chunkplayer";
                         net.minecraft.network.chat.Component message = net.minecraft.network.chat.Component.literal(type + " '")
@@ -3097,6 +3100,9 @@ public class ChunkloaderManager {
         ChunkloaderFakePlayer existingFakePlayer = activeFakePlayers.get(key);
         boolean nameChanged = entry.name() != null && updatedEntry.name() != null
                 && !entry.name().equals(updatedEntry.name());
+        if (nameChanged) {
+            migrateCustomSkinName(entry.name(), updatedEntry.name());
+        }
         if (nameChanged && existingFakePlayer != null && existingFakePlayer.isAlive()) {
             respawnMarkerForChunkloader(key, updatedEntry);
             existingFakePlayer = activeFakePlayers.get(key);
@@ -3118,9 +3124,9 @@ public class ChunkloaderManager {
             if (existingFakePlayer != null && existingFakePlayer.isAlive()) {
                 if (modeChanged) {
                     applyEasterEggAfterSpawn(key, existingFakePlayer, true, true);
-                    ChunkloaderNetworking.broadcastEasterEggEmote(server, existingFakePlayer.getUUID(),
-                            existingFakePlayer.level().getGameTime());
-                    noteEasterEggEmoteStart(existingFakePlayer.getUUID(), existingFakePlayer.level().getGameTime());
+                    long emoteStart = existingFakePlayer.level().getGameTime();
+                    ChunkloaderNetworking.broadcastEasterEggEmote(server, existingFakePlayer.getUUID(), emoteStart);
+                    noteEasterEggEmoteStart(existingFakePlayer.getUUID(), emoteStart);
                 } else {
                     Integer easterEggIdx = easterEggSkinByKey.get(key);
                     if (easterEggIdx != null) {
@@ -3146,9 +3152,9 @@ public class ChunkloaderManager {
             if (existingFakePlayer != null && existingFakePlayer.isAlive()) {
                 if (modeChanged) {
                     applyEasterEggAfterSpawn(key, existingFakePlayer, true, true);
-                    ChunkloaderNetworking.broadcastEasterEggEmote(server, existingFakePlayer.getUUID(),
-                            existingFakePlayer.level().getGameTime());
-                    noteEasterEggEmoteStart(existingFakePlayer.getUUID(), existingFakePlayer.level().getGameTime());
+                    long emoteStart = existingFakePlayer.level().getGameTime();
+                    ChunkloaderNetworking.broadcastEasterEggEmote(server, existingFakePlayer.getUUID(), emoteStart);
+                    noteEasterEggEmoteStart(existingFakePlayer.getUUID(), emoteStart);
                 } else {
                     Integer easterEggIdx = easterEggSkinByKey.get(key);
                     if (easterEggIdx != null) {
@@ -3253,6 +3259,7 @@ public class ChunkloaderManager {
             }
         }
         ChunkloaderNetworking.invalidateChunkCache();
+
         ChunkloaderNetworking.refreshOpenChunkMapMarkers(server, this);
         return true;
     }
@@ -4194,7 +4201,13 @@ public class ChunkloaderManager {
         }
 
         if (oldChunkX != newChunkX || oldChunkZ != newChunkZ) {
-            config.removeEntry(oldChunkX, oldChunkZ, entry.dimension());
+            ChunkloaderConfig.RemoveResult oldRemoveResult = config.removeEntry(oldChunkX, oldChunkZ, entry.dimension());
+
+            for (ChunkloaderConfig.NameRename rename : oldRemoveResult.renames()) {
+
+                migrateCustomSkinName(rename.oldName(), rename.newName());
+
+            }
         }
 
         ChunkloaderMod.LOGGER.info("Updated disabled chunkloader coordinates from ({}, {}) to ({}, {})",

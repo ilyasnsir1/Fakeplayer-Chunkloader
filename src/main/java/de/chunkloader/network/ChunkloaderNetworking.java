@@ -536,6 +536,7 @@ public final class ChunkloaderNetworking {
         entry = config.getEntry(payload.chunkX(), payload.chunkZ(), dimension);
         if (entry != null && entry.enabled()) {
             sendOpenChunkMap(player, manager.buildChunkMapData(entry));
+
             refreshOpenChunkMapMarkers(player.level().getServer(), manager);
         }
     }

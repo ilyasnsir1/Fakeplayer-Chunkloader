@@ -173,6 +173,7 @@ public class ChunkMapHelpScreen extends Screen {
         helpLines.add(Component.literal("Spawn direction:").withStyle(ChatFormatting.YELLOW)
             .append(content(" /fp add spawns the fakeplayer facing your current cardinal direction (N/S/E/W)")));
     }
+
     public Screen getParentScreen() {
         return parent;
     }

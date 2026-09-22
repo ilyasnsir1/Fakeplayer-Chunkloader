@@ -34,20 +34,13 @@ public class ChunkplayerSkinScreen extends Screen {
     private static final int PANEL_MAX_WIDTH = 460;
     private static final int PANEL_MAX_HEIGHT = 370;
     private static final float PREVIEW_MODEL_HEIGHT = 2.125F;
-    private static final float PREVIEW_MODEL_WIDTH = 1.5F;
     private static final float PREVIEW_FIT_MARGIN = 0.97F;
     private static final float PREVIEW_Y_PIVOT = -1.0625F;
-
-    private static final float PREVIEW_VISUAL_CENTER_BIAS = 1.601F + PREVIEW_Y_PIVOT + 0.10F;
-
-    private static final float PREVIEW_CLAMP_HEIGHT = 2.0F;
-    private static final float PREVIEW_CLAMP_WIDTH = 1.2F;
-
-    private static final float PREVIEW_EDGE_PAD_PX = 4.0F;
-    private static final float MIN_PREVIEW_ZOOM = 0.6F;
-    private static final float MAX_PREVIEW_ZOOM = 2.25F;
+    private static final float PREVIEW_OPTICAL_NUDGE = 0.012F;
     private static final float PREVIEW_ROTATION_SENSITIVITY = 2.5F;
-    private static final float PREVIEW_PITCH_LIMIT = 50.0F;
+    private static final float PREVIEW_PITCH_LIMIT = 90.0F;
+    private static final float DEFAULT_PREVIEW_PITCH = -5.0F;
+    private static final float DEFAULT_PREVIEW_YAW = 30.0F;
 
     private static final int LAYER_CHEVRON_SIZE = 11;
     private static final int LAYER_ROW_HEIGHT = 12;
@@ -72,12 +65,9 @@ public class ChunkplayerSkinScreen extends Screen {
     private PlayerModel slimPreviewModel;
     private String selectedPath;
     private boolean previewDragging;
-    private boolean previewPanning;
-    private float previewPitch = -5.0F;
-    private float previewYaw = 30.0F;
+    private float previewPitch = DEFAULT_PREVIEW_PITCH;
+    private float previewYaw = DEFAULT_PREVIEW_YAW;
     private float previewScale = 70.0F;
-    private float previewOffsetX;
-    private float previewOffsetY;
     private boolean fileDialogOpen;
     private boolean layersMenuOpen;
     private int previewLayerMask = SkinLayerMask.DEFAULT_MASK;
@@ -230,7 +220,7 @@ public class ChunkplayerSkinScreen extends Screen {
         drawPreview(context, previewBounds);
         drawLayerControls(context, previewBounds);
 
-        Component controlsHint = Component.literal("Drag: rotate  |  Alt/MMB+drag: pan  |  Scroll: zoom  |  Double click: reset");
+        Component controlsHint = Component.literal("Drag: rotate  |  Double-click: reset");
         context.text(
             renderer,
             controlsHint,
@@ -285,12 +275,10 @@ public class ChunkplayerSkinScreen extends Screen {
             if (click.button() == 0 && doubleClick) {
                 resetPreviewCamera();
                 previewDragging = false;
-                previewPanning = false;
                 return true;
             }
-            if (click.button() == 0 || click.button() == 2) {
+            if (click.button() == 0) {
                 previewDragging = true;
-                previewPanning = click.button() == 2 || click.hasAltDown();
                 return true;
             }
         }
@@ -300,18 +288,12 @@ public class ChunkplayerSkinScreen extends Screen {
     @Override
     public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double deltaX, double deltaY) {
         if (previewDragging) {
-            if (previewPanning) {
-                previewOffsetX += (float) deltaX;
-                previewOffsetY += (float) deltaY;
-                clampPreviewOffsets(getPreviewBounds());
-            } else {
-                previewYaw = wrapDegrees(previewYaw + (float) deltaX * PREVIEW_ROTATION_SENSITIVITY);
-                previewPitch = clamp(
-                    previewPitch - (float) deltaY * PREVIEW_ROTATION_SENSITIVITY,
-                    -PREVIEW_PITCH_LIMIT,
-                    PREVIEW_PITCH_LIMIT
-                );
-            }
+            previewYaw = wrapDegrees(previewYaw + (float) deltaX * PREVIEW_ROTATION_SENSITIVITY);
+            previewPitch = clamp(
+                previewPitch - (float) deltaY * PREVIEW_ROTATION_SENSITIVITY,
+                -PREVIEW_PITCH_LIMIT,
+                PREVIEW_PITCH_LIMIT
+            );
             return true;
         }
         return super.mouseDragged(click, deltaX, deltaY);
@@ -321,21 +303,11 @@ public class ChunkplayerSkinScreen extends Screen {
     public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
         if (previewDragging) {
             previewDragging = false;
-            previewPanning = false;
             return true;
         }
         return super.mouseReleased(click);
     }
 
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        PreviewBounds bounds = getPreviewBounds();
-        if (previewSkin != null && bounds.contains(mouseX, mouseY)) {
-            zoomPreviewAt(bounds, (float) mouseX, (float) mouseY, (float) verticalAmount);
-            return true;
-        }
-        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
-    }
 
     @Override
     public void onClose() {
@@ -525,8 +497,8 @@ public class ChunkplayerSkinScreen extends Screen {
 
         PlayerModel model = getPreviewModel(previewSkin.model());
         SkinLayerMask.applyToModel(model, previewLayerMask);
-        int[] drawRect = getPreviewDrawRect(bounds);
         context.enableScissor(bounds.left(), bounds.top(), bounds.right(), bounds.bottom());
+        int nudgeY = getPreviewOpticalNudgeY(bounds);
         context.skin(
             model,
             previewSkin.textureId(),
@@ -534,10 +506,10 @@ public class ChunkplayerSkinScreen extends Screen {
             previewPitch,
             previewYaw,
             PREVIEW_Y_PIVOT,
-            drawRect[0],
-            drawRect[1],
-            drawRect[2],
-            drawRect[3]
+            bounds.left(),
+            bounds.top() + nudgeY,
+            bounds.right(),
+            bounds.bottom() + nudgeY
         );
         context.disableScissor();
     }
@@ -707,16 +679,9 @@ public class ChunkplayerSkinScreen extends Screen {
     }
 
     private void resetPreviewCamera() {
-        previewPitch = -5.0F;
-        previewYaw = 30.0F;
+        previewPitch = DEFAULT_PREVIEW_PITCH;
+        previewYaw = DEFAULT_PREVIEW_YAW;
         previewScale = getFitScale(getPreviewBounds());
-        previewOffsetX = 0.0F;
-        previewOffsetY = getDefaultPreviewOffsetY();
-    }
-
-    private float getDefaultPreviewOffsetY() {
-
-        return -PREVIEW_VISUAL_CENTER_BIAS * previewScale - 2.0F;
     }
 
     private float getFitScale(PreviewBounds bounds) {
@@ -724,62 +689,8 @@ public class ChunkplayerSkinScreen extends Screen {
         return PREVIEW_FIT_MARGIN * height / PREVIEW_MODEL_HEIGHT;
     }
 
-    private float getMinPreviewScale(PreviewBounds bounds) {
-        return getFitScale(bounds) * MIN_PREVIEW_ZOOM;
-    }
-
-    private float getMaxPreviewScale(PreviewBounds bounds) {
-        return getFitScale(bounds) * MAX_PREVIEW_ZOOM;
-    }
-
-    private void zoomPreviewAt(PreviewBounds bounds, float mouseX, float mouseY, float scrollAmount) {
-        float oldScale = previewScale;
-        float fit = getFitScale(bounds);
-        float newScale = clamp(
-            oldScale + scrollAmount * (fit * 0.07F),
-            getMinPreviewScale(bounds),
-            getMaxPreviewScale(bounds)
-        );
-        if (newScale == oldScale) {
-            return;
-        }
-
-        float scaleRatio = newScale / oldScale;
-        float baseX = (bounds.left() + bounds.right()) / 2.0F;
-        float baseY = (bounds.top() + bounds.bottom()) / 2.0F;
-        float currentOriginX = baseX + previewOffsetX;
-        float currentOriginY = baseY + previewOffsetY;
-        previewOffsetX = mouseX - baseX - (mouseX - currentOriginX) * scaleRatio;
-        previewOffsetY = mouseY - baseY - (mouseY - currentOriginY) * scaleRatio;
-        previewScale = newScale;
-        clampPreviewOffsets(bounds);
-    }
-
-    private void clampPreviewOffsets(PreviewBounds bounds) {
-
-        float homeY = getDefaultPreviewOffsetY();
-        float modelHalfW = PREVIEW_CLAMP_WIDTH * previewScale * 0.5F;
-        float extentH = PREVIEW_CLAMP_HEIGHT * previewScale * 0.5F + PREVIEW_EDGE_PAD_PX;
-        float viewHalfW = bounds.width() * 0.5F;
-        float viewHalfH = bounds.height() * 0.5F;
-        float maxOffsetX = Math.abs(viewHalfW - modelHalfW);
-        float maxOffsetY = Math.abs(viewHalfH - extentH);
-        previewOffsetX = clamp(previewOffsetX, -maxOffsetX, maxOffsetX);
-        previewOffsetY = clamp(previewOffsetY, homeY - maxOffsetY, homeY + maxOffsetY);
-    }
-
-    private int[] getPreviewDrawRect(PreviewBounds bounds) {
-        float pad = previewScale * 0.75F;
-        int halfW = Math.max(bounds.width() / 2, Math.round(PREVIEW_MODEL_WIDTH * previewScale * 0.5F + pad));
-        int halfH = Math.max(bounds.height() / 2, Math.round(PREVIEW_MODEL_HEIGHT * previewScale * 0.5F + pad));
-        int centerX = (bounds.left() + bounds.right()) / 2 + Math.round(previewOffsetX);
-        int centerY = (bounds.top() + bounds.bottom()) / 2 + Math.round(previewOffsetY);
-        return new int[] {
-            centerX - halfW,
-            centerY - halfH,
-            centerX + halfW,
-            centerY + halfH
-        };
+    private int getPreviewOpticalNudgeY(PreviewBounds bounds) {
+        return Math.round(bounds.height() * PREVIEW_OPTICAL_NUDGE);
     }
 
     private void updateLoadButtonState() {
