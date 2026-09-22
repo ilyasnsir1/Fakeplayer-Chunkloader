@@ -6,11 +6,16 @@ A Minecraft mod that keeps chunks loaded with fake players while providing live 
 
 | Minecraft | Loaders |
 |-----------|---------|
-| 1.21.10 | Fabric, Forge, NeoForge |
+| 1.21 / 1.21.1 | Fabric, Forge, NeoForge |
+| 1.21.2 / 1.21.3 | Fabric, Forge, NeoForge |
+| 1.21.4 | Fabric, Forge, NeoForge |
+| 1.21.5 | Fabric, Forge, NeoForge |
+| 1.21.6 / 1.21.7 / 1.21.8 | Fabric, Forge, NeoForge |
+| 1.21.9 / 1.21.10 | Fabric, Forge, NeoForge |
 | 1.21.11 | Fabric, Forge, NeoForge |
-| 26.1 / 26.1.1 / 26.1.2 / 26.2 | Fabric |
-
-Each version lives in its own Gradle project under `fakeplayer chunkloader <version>/<loader>/`.
+| 26.1 / 26.1.1 / 26.1.2 | Fabric, Forge, NeoForge |
+| 26.2 | Fabric, Forge, NeoForge |
+| 26.3 | Fabric |
 
 ## Highlights
 
