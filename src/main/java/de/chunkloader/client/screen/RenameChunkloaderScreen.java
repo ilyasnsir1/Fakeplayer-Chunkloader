@@ -2,6 +2,7 @@ package de.chunkloader.client.screen;
 
 import de.chunkloader.client.FakePlayerNameCache;
 import de.chunkloader.client.FakePlayerVisibilityCache;
+import de.chunkloader.mixin.client.EditBoxAccessor;
 import de.chunkloader.network.ChunkloaderNetworking;
 import de.chunkloader.network.payload.RenameChunkloaderResponsePayload;
 import net.minecraft.client.gui.GuiGraphics;
@@ -12,6 +13,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
 
 public class RenameChunkloaderScreen extends Screen {
+
+    private static final int WARNING_PADDING = 4;
 
     private final Screen parent;
     private final int chunkX;
@@ -47,7 +50,17 @@ public class RenameChunkloaderScreen extends Screen {
         int centerX = this.width / 2;
         int centerY = this.height / 2;
 
-        nameField = new EditBox(this.font, centerX - fieldWidth / 2, centerY - 30, fieldWidth, fieldHeight, Component.literal("Name"));
+        nameField = new EditBox(this.font, centerX - fieldWidth / 2, centerY - 30, fieldWidth, fieldHeight, Component.literal("Name")) {
+            @Override
+            protected void onDrag(double mouseX, double mouseY, double deltaX, double deltaY) {
+                int textX = getX() + (isBordered() ? 4 : 0);
+                int widthAtMouse = Math.clamp((int) Math.floor(mouseX) - textX, 0, getInnerWidth());
+                int firstVisible = ((EditBoxAccessor) this).chunkloader$getFirstVisibleCharacter();
+                String visibleText = getValue().substring(firstVisible);
+                int selectionIndex = firstVisible + RenameChunkloaderScreen.this.font.plainSubstrByWidth(visibleText, widthAtMouse).length();
+                setCursorPosition(selectionIndex);
+            }
+        };
         nameField.setMaxLength(16);
         nameField.setValue(currentName);
         nameField.setResponder(text -> {
@@ -58,11 +71,12 @@ public class RenameChunkloaderScreen extends Screen {
 
         int buttonWidth = 100;
         int buttonSpacing = 110;
+        int buttonY = nameField.getY() + nameField.getHeight() + this.font.lineHeight + 2 * WARNING_PADDING;
 
         saveButton = Button.builder(
                 Component.literal("Save"),
                 btn -> save())
-            .bounds(centerX - buttonSpacing, centerY + 20, buttonWidth, 20)
+            .bounds(centerX - buttonSpacing, buttonY, buttonWidth, 20)
             .build();
         updateSaveButtonState();
         this.addRenderableWidget(saveButton);
@@ -73,7 +87,7 @@ public class RenameChunkloaderScreen extends Screen {
                     isClosed = true;
                     this.minecraft.setScreen(parent);
                 })
-            .bounds(centerX + buttonSpacing - buttonWidth, centerY + 20, buttonWidth, 20)
+            .bounds(centerX + buttonSpacing - buttonWidth, buttonY, buttonWidth, 20)
             .build()
         );
 
@@ -126,7 +140,7 @@ public class RenameChunkloaderScreen extends Screen {
             FakePlayerNameCache.clear();
             FakePlayerVisibilityCache.clear();
             isClosed = true;
-            this.minecraft.setScreen(null);
+            this.onClose();
         } else {
             hasServerWarning = true;
             warningMessage = payload.message() != null ? payload.message() : "This name is already in use or invalid.";
@@ -164,7 +178,8 @@ public class RenameChunkloaderScreen extends Screen {
         if (warningMessage != null) {
             Component warning = Component.literal(warningMessage).withStyle(ChatFormatting.RED);
             int warningWidth = this.font.width(warning);
-            graphics.drawString(this.font, warning, centerX - warningWidth / 2, centerY + 5, 0xFFFFFFFF, false);
+            int warningY = nameField.getY() + nameField.getHeight() + WARNING_PADDING;
+            graphics.drawString(this.font, warning, centerX - warningWidth / 2, warningY, 0xFFFFFFFF, false);
         }
 
         super.render(graphics, mouseX, mouseY, delta);
@@ -193,5 +208,11 @@ public class RenameChunkloaderScreen extends Screen {
     public boolean isPauseScreen() {
         return false;
     }
+
+    public void onClose() {
+        isClosed = true;
+        this.minecraft.setScreen(parent);
+    }
+
 }
 
