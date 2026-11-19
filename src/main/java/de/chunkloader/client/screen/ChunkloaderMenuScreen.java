@@ -1,12 +1,11 @@
 package de.chunkloader.client.screen;
 
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.network.chat.Component;
-import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.api.distmarker.OnlyIn;
-import org.jetbrains.annotations.NotNull;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.network.chat.Component;
 
 @OnlyIn(Dist.CLIENT)
 public class ChunkloaderMenuScreen extends Screen {
@@ -14,7 +13,7 @@ public class ChunkloaderMenuScreen extends Screen {
     private final Screen parent;
 
     public ChunkloaderMenuScreen(Screen parent) {
-        super(Component.literal("Mod Menu"));
+        super(Component.literal("Fakeplayer Chunkloader"));
         this.parent = parent;
     }
 
@@ -53,29 +52,26 @@ public class ChunkloaderMenuScreen extends Screen {
             .build()
         );
 
-        int backButtonWidth = 100;
-        int backButtonX = (this.width - backButtonWidth) / 2;
-        int backButtonY = this.height - 30;
-        this.addRenderableWidget(Button.builder(
-                Component.literal("Back"),
-                btn -> this.minecraft.setScreen(parent))
-            .bounds(backButtonX, backButtonY, backButtonWidth, buttonHeight)
-            .build()
-        );
+        ScreenNavigation.addBackAndCloseButtons(this, this::addRenderableWidget);
     }
 
     @Override
-    public void render(@NotNull GuiGraphics graphics, int mouseX, int mouseY, float delta) {
-        drawDimBackground(graphics);
-        super.render(graphics, mouseX, mouseY, delta);
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
+        drawDimBackground(context);
+        super.render(context, mouseX, mouseY, delta);
     }
 
-    private void drawDimBackground(@NotNull GuiGraphics graphics) {
-        graphics.fill(0, 0, this.width, this.height, 0xC0101010);
+    private void drawDimBackground(GuiGraphics context) {
+        context.fill(0, 0, this.width, this.height, 0xC0101010);
     }
 
     @Override
-    public void renderBackground(@NotNull GuiGraphics graphics, int mouseX, int mouseY, float delta) {
+    public void renderBackground(GuiGraphics context, int mouseX, int mouseY, float delta) {
+    }
+
+    @Override
+    public void onClose() {
+        this.minecraft.setScreen(parent);
     }
 
     @Override

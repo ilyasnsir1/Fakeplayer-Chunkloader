@@ -85,4 +85,40 @@ public class PlayerListPlaceNewPlayerMixin {
         }
         player.setServerLevel(level);
     }
+
+    @Redirect(
+        method = "placeNewPlayer(Lnet/minecraft/network/Connection;Lnet/minecraft/server/level/ServerPlayer;Lnet/minecraft/server/network/CommonListenerCookie;)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/server/level/ServerLevel;addNewPlayer(Lnet/minecraft/server/level/ServerPlayer;)V"
+        )
+    )
+    private void chunkloader$connectFakePlayerToOwnWorld(ServerLevel level, ServerPlayer player) {
+        if (player instanceof ChunkloaderFakePlayer) {
+            ServerLevel actual = player.serverLevel();
+            if (actual != null) {
+                actual.addNewPlayer(player);
+                return;
+            }
+        }
+        level.addNewPlayer(player);
+    }
+
+    @Redirect(
+        method = "placeNewPlayer(Lnet/minecraft/network/Connection;Lnet/minecraft/server/level/ServerPlayer;Lnet/minecraft/server/network/CommonListenerCookie;)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/server/players/PlayerList;sendLevelInfo(Lnet/minecraft/server/level/ServerPlayer;Lnet/minecraft/server/level/ServerLevel;)V"
+        )
+    )
+    private void chunkloader$sendFakePlayerWorldInfo(PlayerList list, ServerPlayer player, ServerLevel level) {
+        if (player instanceof ChunkloaderFakePlayer) {
+            ServerLevel actual = player.serverLevel();
+            if (actual != null) {
+                list.sendLevelInfo(player, actual);
+                return;
+            }
+        }
+        list.sendLevelInfo(player, level);
+    }
 }

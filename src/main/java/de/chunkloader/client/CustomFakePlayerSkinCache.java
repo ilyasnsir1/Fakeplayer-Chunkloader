@@ -11,6 +11,8 @@ import net.minecraft.resources.ResourceLocation;
 import de.chunkloader.client.SkinModelType;
 
 import java.io.IOException;
+import java.io.ByteArrayInputStream;
+import de.chunkloader.config.SkinPngValidator;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -36,23 +38,32 @@ public final class CustomFakePlayerSkinCache {
     private CustomFakePlayerSkinCache() {
     }
 
-    public record CustomSkin(ResourceLocation assetId, ResourceLocation textureId, SkinModelType model) {
+    public record CustomSkin(ResourceLocation assetId, ResourceLocation textureId, SkinModelType model, String contentHash) {
     }
 
     public static CustomSkin setPreviewSkin(UUID previewPlayerUuid, Path skinPath) throws IOException {
-        if (previewPlayerUuid == null) {
-            throw new IllegalArgumentException("Preview player UUID must not be null");
-        }
+        return setValidatedPreviewSkin(previewPlayerUuid, skinPath, SkinPngValidator.readFile(skinPath));
+    }
 
+    public static CustomSkin setPreviewSkin(UUID previewPlayerUuid, Path skinPath, byte[] pngBytes) throws IOException {
+        SkinPngValidator.validate(pngBytes);
+        return setValidatedPreviewSkin(previewPlayerUuid, skinPath, pngBytes);
+    }
+
+    private static CustomSkin setValidatedPreviewSkin(UUID previewPlayerUuid, Path skinPath, byte[] pngBytes) throws IOException {
+        if (previewPlayerUuid == null) throw new IllegalArgumentException("Preview player UUID must not be null");
         String normalizedPath = normalizeSkinPath(skinPath);
-        CustomSkin skin = loadSkin(normalizedPath);
+        CustomSkin skin = loadSkinBytes(normalizedPath, pngBytes);
         String previousPath = previewPathByPlayerUuid.put(previewPlayerUuid, normalizedPath);
         failedPaths.remove(normalizedPath);
-
-        if (previousPath != null && !previousPath.equals(normalizedPath)) {
-            releaseIfUnused(previousPath);
-        }
+        if (previousPath != null && !previousPath.equals(normalizedPath)) releaseIfUnused(previousPath);
         return skin;
+    }
+
+    public static String getSkinFingerprint(String playerName) {
+        String path = getSkinPath(playerName);
+        CustomSkin skin = path == null ? null : skinByPath.get(path);
+        return skin == null ? null : skin.contentHash();
     }
 
     public static void clearPreviewSkin(UUID previewPlayerUuid) {
@@ -73,8 +84,7 @@ public final class CustomFakePlayerSkinCache {
     public static void setSkin(String playerName, Path skinPath, int layerMask) throws IOException {
         String normalizedName = normalizePlayerName(playerName);
         String normalizedPath = normalizeSkinPath(skinPath);
-        invalidateCachedSkin(normalizedPath);
-        loadSkin(normalizedPath);
+        loadSkinBytes(normalizedPath, SkinPngValidator.readFile(skinPath));
         skinPathByPlayerName.put(normalizedName, normalizedPath);
         layerMaskByPlayerName.put(normalizedName, SkinLayerMask.sanitize(layerMask));
         failedPaths.remove(normalizedPath);
@@ -82,29 +92,19 @@ public final class CustomFakePlayerSkinCache {
     }
 
     public static void applySyncedSkin(String playerName, byte[] pngBytes, int layerMask) throws IOException {
-        if (pngBytes == null || pngBytes.length == 0) {
-            throw new IOException("Empty skin data");
-        }
+        SkinPngValidator.validate(pngBytes);
         String normalizedName = normalizePlayerName(playerName);
         Path dir = syncedSkinsDirectory();
-        if (dir == null) {
-            throw new IOException("Client unavailable");
-        }
+        if (dir == null) throw new IOException("Client unavailable");
         Files.createDirectories(dir);
         Path file = dir.resolve(safeSyncedFileName(normalizedName) + ".png");
         String normalizedPath = normalizeSkinPath(file);
-        boolean samePixels = Files.isRegularFile(file)
-            && skinByPath.containsKey(normalizedPath)
-            && java.util.Arrays.equals(Files.readAllBytes(file), pngBytes);
         Files.write(file, pngBytes);
-        if (samePixels) {
-            skinPathByPlayerName.put(normalizedName, normalizedPath);
-            layerMaskByPlayerName.put(normalizedName, SkinLayerMask.sanitize(layerMask));
-            failedPaths.remove(normalizedPath);
-            refreshBindings();
-            return;
-        }
-        setSkin(normalizedName, file, layerMask);
+        loadSkinBytes(normalizedPath, pngBytes);
+        skinPathByPlayerName.put(normalizedName, normalizedPath);
+        layerMaskByPlayerName.put(normalizedName, SkinLayerMask.sanitize(layerMask));
+        failedPaths.remove(normalizedPath);
+        refreshBindings();
     }
 
     private static Path syncedSkinsDirectory() {
@@ -188,13 +188,20 @@ public final class CustomFakePlayerSkinCache {
     }
 
     public static void clearAllSkins() {
-        for (String path : new HashSet<>(skinByPath.keySet())) {
-            releaseIfUnused(path);
+        Minecraft client = Minecraft.getInstance();
+        if (client != null && !client.isSameThread()) {
+            client.execute(CustomFakePlayerSkinCache::clearAllSkins);
+            return;
         }
         skinPathByPlayerName.clear();
         layerMaskByPlayerName.clear();
         previewPathByPlayerUuid.clear();
         clearRuntimeBindings();
+        Set<String> paths = new HashSet<>(skinByPath.keySet());
+        paths.addAll(dynamicTextureByPath.keySet());
+        for (String path : paths) releaseIfUnused(path);
+        skinByPath.clear();
+        dynamicTextureByPath.clear();
         failedPaths.clear();
         clearSyncedSkinsDirectory();
     }
@@ -295,6 +302,11 @@ public final class CustomFakePlayerSkinCache {
             return;
         }
 
+        if (failedPaths.contains(path)) {
+            skinByPlayerUuid.remove(playerUuid);
+            playerNameByUuid.remove(playerUuid);
+            return;
+        }
         try {
             skinByPlayerUuid.put(playerUuid, loadSkin(path));
             playerNameByUuid.put(playerUuid, normalizedName);
@@ -314,25 +326,24 @@ public final class CustomFakePlayerSkinCache {
 
     private static CustomSkin loadSkin(String normalizedPath) throws IOException {
         CustomSkin cachedSkin = skinByPath.get(normalizedPath);
-        if (cachedSkin != null) {
-            return cachedSkin;
-        }
+        if (cachedSkin != null) return cachedSkin;
+        return loadSkinBytes(normalizedPath, SkinPngValidator.readFile(Path.of(normalizedPath)));
+    }
 
-        Path skinPath = Path.of(normalizedPath);
-        if (!Files.isRegularFile(skinPath)) {
-            throw new IOException("File does not exist");
-        }
-
+    private static CustomSkin loadSkinBytes(String normalizedPath, byte[] pngBytes) throws IOException {
+        String fingerprint = SkinPngValidator.fingerprint(pngBytes);
+        CustomSkin cached = skinByPath.get(normalizedPath);
+        if (cached != null && fingerprint.equals(cached.contentHash())) return cached;
         NativeImage skinImage;
-        try (InputStream input = Files.newInputStream(skinPath)) {
+        try (var input = new ByteArrayInputStream(pngBytes)) {
             skinImage = NativeImage.read(input);
         }
-
         if (skinImage.getWidth() != 64 || (skinImage.getHeight() != 64 && skinImage.getHeight() != 32)) {
             skinImage.close();
             throw new IOException("Skin must be 64x64 or 64x32 pixels");
         }
 
+        invalidateCachedSkin(normalizedPath);
         SkinModelType model = detectModel(skinImage);
         skinImage = normalizeSkinImage(skinImage);
         ResourceLocation assetId = ResourceLocation.fromNamespaceAndPath(
@@ -347,13 +358,12 @@ public final class CustomFakePlayerSkinCache {
             texture.close();
             throw e;
         }
-        CustomSkin skin = new CustomSkin(assetId, textureId, model);
+        CustomSkin skin = new CustomSkin(assetId, textureId, model, fingerprint);
         skinByPath.put(normalizedPath, skin);
         dynamicTextureByPath.put(normalizedPath, texture);
         return skin;
     }
 
-    
     public static boolean isSyncedSkinPath(String path) {
         if (path == null || path.isBlank()) {
             return false;
@@ -370,7 +380,6 @@ public final class CustomFakePlayerSkinCache {
         }
     }
 
-    
     private static volatile String cachedUserPicturesDirectory;
 
     public static String getUserPicturesDirectory() {
@@ -386,7 +395,7 @@ public final class CustomFakePlayerSkinCache {
     }
 
     private static String resolveUserPicturesDirectory() {
-        
+
         String[] candidates = {
             System.getenv("USERPROFILE") != null ? System.getenv("USERPROFILE") + java.io.File.separator + "Pictures" : null,
             System.getProperty("user.home") != null ? System.getProperty("user.home") + java.io.File.separator + "Pictures" : null,
@@ -465,15 +474,10 @@ public final class CustomFakePlayerSkinCache {
         }
         CustomSkin skin = skinByPath.remove(normalizedPath);
         DynamicTexture texture = dynamicTextureByPath.remove(normalizedPath);
-        if (skin != null) {
-            skinByPlayerUuid.entrySet().removeIf(entry -> entry.getValue() == skin);
-            Minecraft client = Minecraft.getInstance();
-            if (client != null) {
-                client.getTextureManager().release(skin.textureId());
-            }
-        } else if (texture != null) {
-            texture.close();
-        }
+        if (skin != null) skinByPlayerUuid.entrySet().removeIf(entry -> entry.getValue() == skin);
+        Minecraft client = Minecraft.getInstance();
+        if (skin != null && client != null) client.getTextureManager().release(skin.textureId());
+        else if (texture != null) texture.close();
         failedPaths.remove(normalizedPath);
     }
 
