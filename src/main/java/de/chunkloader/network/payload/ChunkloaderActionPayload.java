@@ -39,6 +39,7 @@ public record ChunkloaderActionPayload(int chunkX, int chunkZ, @NonNull String d
         TOGGLE_ENABLED,
         TOGGLE_MOB_SPAWNING,
         TOGGLE_MOB_TARGET,
+        TOGGLE_MOB_AI,
         RADIUS_INCREMENT,
         RADIUS_DECREMENT,
         TOGGLE_NAME_VISIBLE,
