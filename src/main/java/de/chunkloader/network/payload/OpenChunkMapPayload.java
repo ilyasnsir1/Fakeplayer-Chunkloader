@@ -7,24 +7,29 @@ import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.util.Identifier;
 
-public record OpenChunkMapPayload(ChunkMapData data) implements CustomPayload {
+public record OpenChunkMapPayload(ChunkMapData data, boolean canModify, boolean includeAccess, boolean shared) implements CustomPayload {
 
     public static final CustomPayload.Id<OpenChunkMapPayload> ID =
         new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "open_chunk_map"));
-    public static final PacketCodec<RegistryByteBuf, OpenChunkMapPayload> CODEC =
-        PacketCodec.of(OpenChunkMapPayload::write, OpenChunkMapPayload::read);
+    public static final CustomPayload.Id<OpenChunkMapPayload> WITH_ACCESS =
+        new CustomPayload.Id<>(Identifier.of(ChunkloaderMod.MOD_ID, "open_chunk_map_with_access"));
+    public static final PacketCodec<RegistryByteBuf, OpenChunkMapPayload> CODEC = codec(false);
+    public static final PacketCodec<RegistryByteBuf, OpenChunkMapPayload> ACCESS_CODEC = codec(true);
 
-    private static void write(OpenChunkMapPayload payload, RegistryByteBuf buf) {
-        payload.data().write(buf);
-    }
-
-    private static OpenChunkMapPayload read(RegistryByteBuf buf) {
-        return new OpenChunkMapPayload(ChunkMapData.read(buf));
+    private static PacketCodec<RegistryByteBuf, OpenChunkMapPayload> codec(boolean includeAccess) {
+        return PacketCodec.of((payload, buf) -> {
+            payload.data().write(buf);
+            buf.writeBoolean(payload.canModify());
+            if (includeAccess) {
+                buf.writeBoolean(payload.shared());
+            }
+        }, buf -> new OpenChunkMapPayload(ChunkMapData.read(buf), buf.readBoolean(),
+                includeAccess, includeAccess && buf.readBoolean()));
     }
 
     @Override
     public Id<OpenChunkMapPayload> getId() {
-        return ID;
+        return includeAccess ? WITH_ACCESS : ID;
     }
 }
 

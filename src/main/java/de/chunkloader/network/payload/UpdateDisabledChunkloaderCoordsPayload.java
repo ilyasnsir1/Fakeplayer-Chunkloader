@@ -14,7 +14,8 @@ public record UpdateDisabledChunkloaderCoordsPayload(
     int newChunkZ,
     int newBlockX,
     int newBlockY,
-    int newBlockZ
+    int newBlockZ,
+    String newDimension
 ) implements CustomPayload {
 
     public static final CustomPayload.Id<UpdateDisabledChunkloaderCoordsPayload> ID =
@@ -30,6 +31,7 @@ public record UpdateDisabledChunkloaderCoordsPayload(
             buf.writeInt(payload.newBlockX());
             buf.writeInt(payload.newBlockY());
             buf.writeInt(payload.newBlockZ());
+            buf.writeString(payload.newDimension() != null ? payload.newDimension() : "minecraft:overworld", 256);
         }, buf -> {
             int oldChunkX = buf.readInt();
             int oldChunkZ = buf.readInt();
@@ -39,10 +41,11 @@ public record UpdateDisabledChunkloaderCoordsPayload(
             int newBlockX = buf.readInt();
             int newBlockY = buf.readInt();
             int newBlockZ = buf.readInt();
+            String newDimension = buf.readString(256);
             return new UpdateDisabledChunkloaderCoordsPayload(
                 oldChunkX, oldChunkZ, oldDimension,
                 newChunkX, newChunkZ,
-                newBlockX, newBlockY, newBlockZ
+                newBlockX, newBlockY, newBlockZ, newDimension
             );
         });
 

@@ -59,11 +59,11 @@ public class ChunkplayerSkinScreen extends Screen {
     private final String targetPlayerName;
 
     private TextFieldWidget pathField;
-    private ButtonWidget loadButtonWidget;
-    private ButtonWidget chooseFileButtonWidget;
-    private ButtonWidget applyButtonWidget;
-    private ButtonWidget removeButtonWidget;
-    private ButtonWidget backButtonWidget;
+    private ButtonWidget loadButton;
+    private ButtonWidget chooseFileButton;
+    private ButtonWidget applyButton;
+    private ButtonWidget removeButton;
+    private ButtonWidget backButton;
 
     private CustomFakePlayerSkinCache.CustomSkin previewSkin;
     private static final EntityModelLayer PLAYER_WIDE_LAYER = EntityModelLayers.PLAYER;
@@ -80,13 +80,17 @@ public class ChunkplayerSkinScreen extends Screen {
     private boolean fileDialogOpen;
     private boolean layersMenuOpen;
     private int previewLayerMask = SkinLayerMask.DEFAULT_MASK;
+    private static int skinRequestSequence;
+    private int pendingSkinRequest;
+    private boolean pendingSkinRemoval;
+    private long pendingSkinSince;
     private String lastAppliedPath;
     private int lastAppliedLayerMask = Integer.MIN_VALUE;
     private String statusMessage = "Select a PNG file or enter a path.";
     private int statusColor = 0xFFCCCCCC;
 
     public ChunkplayerSkinScreen(Screen parent, ClientConfig clientConfig, String targetPlayerName) {
-        super(Text.literal("Chunkplayer Skin"));
+        super(Text.literal("Player Skin"));
         this.parent = parent;
         this.clientConfig = clientConfig != null ? clientConfig : ClientConfig.load();
         this.targetPlayerName = targetPlayerName;
@@ -123,7 +127,7 @@ public class ChunkplayerSkinScreen extends Screen {
         if (clientConfig != null) {
             pathField.setEditableColor(clientConfig.getSkinSearchbarTextColor());
         }
-        pathField.setChangedListener(text -> updateLoadButtonWidgetState());
+        pathField.setChangedListener(text -> updateLoadButtonState());
         String displayPath = selectedPath;
         if (CustomFakePlayerSkinCache.isSyncedSkinPath(displayPath)) {
             displayPath = "";
@@ -131,43 +135,43 @@ public class ChunkplayerSkinScreen extends Screen {
         setPathFieldValue(displayPath != null ? displayPath : "");
         addDrawableChild(pathField);
 
-        loadButtonWidget = ButtonWidget.builder(
+        loadButton = ButtonWidget.builder(
             Text.literal("Load"),
             button -> loadSkinFromPath(pathField.getText())
         ).dimensions(rowX + fieldWidth + 8, fileFieldY, loadWidth, 20).build();
-        addDrawableChild(loadButtonWidget);
+        addDrawableChild(loadButton);
 
-        chooseFileButtonWidget = ButtonWidget.builder(
+        chooseFileButton = ButtonWidget.builder(
             Text.literal("Choose PNG"),
             button -> openFilePicker()
         ).dimensions(rowX + fieldWidth + loadWidth + 16, fileFieldY, chooseWidth, 20).build();
-        addDrawableChild(chooseFileButtonWidget);
+        addDrawableChild(chooseFileButton);
 
         int actionWidth = 100;
         int actionGap = 8;
         int actionY = panelY + getPanelHeight() - 36;
         int actionStartX = panelX + (panelWidth - (actionWidth * 3 + actionGap * 2)) / 2;
 
-        applyButtonWidget = ButtonWidget.builder(
+        applyButton = ButtonWidget.builder(
             Text.literal("Apply"),
             button -> applySkin()
         ).dimensions(actionStartX, actionY, actionWidth, 20).build();
-        addDrawableChild(applyButtonWidget);
+        addDrawableChild(applyButton);
 
-        removeButtonWidget = ButtonWidget.builder(
+        removeButton = ButtonWidget.builder(
             Text.literal("Remove"),
             button -> removeSkin()
         ).dimensions(actionStartX + actionWidth + actionGap, actionY, actionWidth, 20).build();
-        addDrawableChild(removeButtonWidget);
+        addDrawableChild(removeButton);
 
-        backButtonWidget = ButtonWidget.builder(
+        backButton = ButtonWidget.builder(
             Text.literal("Back"),
             button -> this.client.setScreen(parent)
         ).dimensions(actionStartX + (actionWidth + actionGap) * 2, actionY, actionWidth, 20).build();
-        addDrawableChild(backButtonWidget);
+        addDrawableChild(backButton);
 
-        updateLoadButtonWidgetState();
-        updateActionButtonWidgetState();
+        updateLoadButtonState();
+        updateActionButtonState();
 
         if (selectedPath != null && !selectedPath.isBlank()) {
             loadSkinFromPath(selectedPath);
@@ -261,8 +265,6 @@ public class ChunkplayerSkinScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        
-        
 
         if (button == 0) {
             if (pathField != null && !pathField.isMouseOver(mouseX, mouseY)) {
@@ -316,7 +318,6 @@ public class ChunkplayerSkinScreen extends Screen {
         return super.mouseReleased(mouseX, mouseY, button);
     }
 
-
     public void close() {
         this.client.setScreen(parent);
     }
@@ -337,7 +338,7 @@ public class ChunkplayerSkinScreen extends Screen {
         }
 
         fileDialogOpen = true;
-        updateLoadButtonWidgetState();
+        updateLoadButtonState();
         setStatus("Opening file picker...", 0xFFCCCCCC);
 
         try {
@@ -355,11 +356,11 @@ public class ChunkplayerSkinScreen extends Screen {
 
     private void finishFilePicker(String selectedFilePath, String pickerMessage) {
         fileDialogOpen = false;
-        if (chooseFileButtonWidget != null) {
-            chooseFileButtonWidget.setFocused(false);
+        if (chooseFileButton != null) {
+            chooseFileButton.setFocused(false);
         }
         this.setFocused(null);
-        updateLoadButtonWidgetState();
+        updateLoadButtonState();
         if (this.client.currentScreen != this) {
             return;
         }
@@ -398,8 +399,8 @@ public class ChunkplayerSkinScreen extends Screen {
             resetPreviewCamera();
             String modelName = previewSkin.model() == SkinModelType.SLIM ? "Slim" : "Standard";
             setStatus("Preview loaded (" + modelName + " arms).", 0xFF55FF55);
-            updateLoadButtonWidgetState();
-            updateActionButtonWidgetState();
+            updateLoadButtonState();
+            updateActionButtonState();
         } catch (IOException e) {
             setStatus("Failed to load skin PNG: " + e.getMessage(), 0xFFFF7777);
         }
@@ -419,7 +420,7 @@ public class ChunkplayerSkinScreen extends Screen {
             return null;
         }
 
-        if (!skinPath.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".png")) {
+        if (skinPath.getFileName() == null || !skinPath.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".png")) {
             setStatus("Please select a PNG file.", 0xFFFF7777);
             return null;
         }
@@ -431,59 +432,41 @@ public class ChunkplayerSkinScreen extends Screen {
     }
 
     private void applySkin() {
-        if (targetPlayerName == null || targetPlayerName.isBlank()) {
-            setStatus("The selected player is unavailable.", 0xFFFF7777);
-            return;
-        }
-        if (selectedPath == null || selectedPath.isBlank()) {
+        if (pendingSkinRequest != 0) return;
+        if (targetPlayerName == null || targetPlayerName.isBlank() || selectedPath == null || previewSkin == null) {
             setStatus("Load a valid skin PNG first.", 0xFFFF7777);
             return;
         }
-
         try {
-            Path skinPath = Path.of(selectedPath);
-            byte[] pngBytes = Files.readAllBytes(skinPath);
-            if (pngBytes.length > de.chunkloader.config.CustomFakePlayerSkinStore.MAX_PNG_BYTES) {
-                setStatus("Skin file too large (max 128 KiB).", 0xFFFF7777);
-                return;
+            Path path = Path.of(selectedPath);
+            byte[] bytes = de.chunkloader.config.SkinPngValidator.readFile(path);
+            String hash = de.chunkloader.config.SkinPngValidator.fingerprint(bytes);
+            if (!hash.equals(previewSkin.contentHash())) {
+                previewSkin = CustomFakePlayerSkinCache.setPreviewSkin(PREVIEW_CACHE_UUID, path, bytes);
             }
-            String model = previewSkin != null && previewSkin.model() == SkinModelType.SLIM ? "slim" : "wide";
+            String model = previewSkin.model() == SkinModelType.SLIM ? "slim" : "wide";
+            pendingSkinRequest = nextSkinRequestId();
+            pendingSkinRemoval = false;
+            pendingSkinSince = System.currentTimeMillis();
+            setStatus("Applying skin...", 0xFFCCCCCC);
+            updateLoadButtonState();
+            updateActionButtonState();
             de.chunkloader.network.ChunkloaderNetworking.sendApplyCustomSkin(
-                targetPlayerName,
-                previewLayerMask,
-                model,
-                pngBytes
-            );
-            setStatus("Skin applied for " + targetPlayerName + ".", 0xFF55FF55);
-            lastAppliedPath = selectedPath;
-            lastAppliedLayerMask = SkinLayerMask.sanitize(previewLayerMask);
-            updateActionButtonWidgetState();
-        } catch (InvalidPathException e) {
-            setStatus("The saved path is invalid.", 0xFFFF7777);
-        } catch (IOException e) {
+                targetPlayerName, previewLayerMask, model, bytes, pendingSkinRequest);
+        } catch (IOException | InvalidPathException e) {
             setStatus("Failed to apply skin: " + e.getMessage(), 0xFFFF7777);
         }
     }
 
     private void removeSkin() {
-        if (targetPlayerName == null || targetPlayerName.isBlank()) {
-            return;
-        }
-
-        CustomFakePlayerSkinCache.removeSkin(targetPlayerName);
-        CustomFakePlayerSkinCache.clearPreviewSkin(PREVIEW_CACHE_UUID);
-        previewSkin = null;
-        layersMenuOpen = false;
-        previewLayerMask = SkinLayerMask.DEFAULT_MASK;
-        selectedPath = null;
-        lastAppliedPath = null;
-        lastAppliedLayerMask = Integer.MIN_VALUE;
-        setPathFieldValue("");
-        resetPreviewCamera();
-        de.chunkloader.network.ChunkloaderNetworking.sendClearCustomSkin(targetPlayerName);
-        setStatus("Custom skin removed.", 0xFFCCCCCC);
-        updateLoadButtonWidgetState();
-        updateActionButtonWidgetState();
+        if (pendingSkinRequest != 0 || targetPlayerName == null || targetPlayerName.isBlank()) return;
+        pendingSkinRequest = nextSkinRequestId();
+        pendingSkinRemoval = true;
+        pendingSkinSince = System.currentTimeMillis();
+        setStatus("Removing skin...", 0xFFCCCCCC);
+        updateLoadButtonState();
+        updateActionButtonState();
+        de.chunkloader.network.ChunkloaderNetworking.sendClearCustomSkin(targetPlayerName, pendingSkinRequest);
     }
 
     private void drawPreview(DrawContext context, PreviewBounds bounds) {
@@ -641,7 +624,7 @@ public class ChunkplayerSkinScreen extends Screen {
         }
 
         previewLayerMask = SkinLayerMask.toggle(previewLayerMask, SkinLayerMask.EDITABLE_PARTS[index]);
-        updateActionButtonWidgetState();
+        updateActionButtonState();
         return true;
     }
 
@@ -706,54 +689,34 @@ public class ChunkplayerSkinScreen extends Screen {
     }
 
     private float getPreviewMatrixCenterY(PreviewBounds bounds) {
-        // Fit scale uses PREVIEW_MODEL_HEIGHT (2.125) but the player BB is 1.8; small downward slack for centering.
+
         float geometric = (bounds.top() + bounds.bottom()) / 2.0F;
         float slack = (PREVIEW_MODEL_HEIGHT - PREVIEW_PLAYER_BB_HEIGHT) * 0.15F * previewScale;
         return geometric + slack;
     }
 
-
-    private void updateLoadButtonWidgetState() {
-        if (loadButtonWidget != null && pathField != null) {
-            String pathText = pathField.getText().trim();
-            boolean pathChanged = selectedPath == null || selectedPath.isBlank()
-                || !pathText.equals(selectedPath.trim());
-            loadButtonWidget.active = !pathText.isEmpty() && pathChanged && !fileDialogOpen;
+    private void updateLoadButtonState() {
+        if (loadButton != null && pathField != null) {
+            loadButton.active = !pathField.getText().isBlank() && !fileDialogOpen && pendingSkinRequest == 0;
         }
-        if (chooseFileButtonWidget != null) {
-            chooseFileButtonWidget.active = !fileDialogOpen;
-        }
+        if (chooseFileButton != null) chooseFileButton.active = !fileDialogOpen && pendingSkinRequest == 0;
     }
 
-    private void updateActionButtonWidgetState() {
+    private void updateActionButtonState() {
         boolean hasTarget = targetPlayerName != null && !targetPlayerName.isBlank();
         boolean hasPreview = selectedPath != null && !selectedPath.isBlank() && previewSkin != null;
-        if (applyButtonWidget != null) {
-            applyButtonWidget.active = hasTarget && hasPreview && !isPreviewAlreadyApplied();
+        if (applyButton != null) {
+            applyButton.active = pendingSkinRequest == 0 && hasTarget && hasPreview && !isPreviewAlreadyApplied();
         }
-        if (removeButtonWidget != null) {
-            removeButtonWidget.active = hasTarget && CustomFakePlayerSkinCache.hasSkin(targetPlayerName);
+        if (removeButton != null) {
+            removeButton.active = pendingSkinRequest == 0 && hasTarget && CustomFakePlayerSkinCache.hasSkin(targetPlayerName);
         }
     }
 
     private boolean isPreviewAlreadyApplied() {
-        if (targetPlayerName == null || targetPlayerName.isBlank() || selectedPath == null || selectedPath.isBlank()) {
-            return false;
-        }
-        int mask = SkinLayerMask.sanitize(previewLayerMask);
-        if (lastAppliedPath != null && !lastAppliedPath.isBlank()
-                && mask == lastAppliedLayerMask
-                && pathsEqual(selectedPath, lastAppliedPath)) {
-            return true;
-        }
-        String appliedPath = CustomFakePlayerSkinCache.getSkinPath(targetPlayerName);
-        if (appliedPath == null || appliedPath.isBlank()) {
-            return false;
-        }
-        if (mask != CustomFakePlayerSkinCache.getLayerMaskForPlayerName(targetPlayerName)) {
-            return false;
-        }
-        return pathsEqual(selectedPath, appliedPath);
+        return previewSkin != null && targetPlayerName != null
+            && previewSkin.contentHash().equals(CustomFakePlayerSkinCache.getSkinFingerprint(targetPlayerName))
+            && SkinLayerMask.sanitize(previewLayerMask) == CustomFakePlayerSkinCache.getLayerMaskForPlayerName(targetPlayerName);
     }
 
     private static boolean pathsEqual(String left, String right) {
@@ -767,7 +730,6 @@ public class ChunkplayerSkinScreen extends Screen {
             return left.equals(right);
         }
     }
-
 
     private void drawDimBackground(DrawContext context) {
         context.fill(0, 0, width, height, 0xC0101010);
@@ -876,5 +838,46 @@ public class ChunkplayerSkinScreen extends Screen {
         private int height() {
             return bottom - top;
         }
+    }
+
+    private static int nextSkinRequestId() {
+        skinRequestSequence = skinRequestSequence == Integer.MAX_VALUE ? 1 : skinRequestSequence + 1;
+        return skinRequestSequence;
+    }
+
+    public static void receiveSkinChangeResult(de.chunkloader.network.payload.SkinChangeResultPayload payload) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        if (client != null && client.currentScreen instanceof ChunkplayerSkinScreen screen) screen.acceptSkinChangeResult(payload);
+    }
+
+    private void acceptSkinChangeResult(de.chunkloader.network.payload.SkinChangeResultPayload payload) {
+        if (pendingSkinRequest == 0 || payload.requestId() != pendingSkinRequest
+                || payload.removed() != pendingSkinRemoval || !payload.playerName().equalsIgnoreCase(targetPlayerName)) return;
+        pendingSkinRequest = 0;
+        if (payload.success() && payload.removed()) {
+            CustomFakePlayerSkinCache.clearPreviewSkin(PREVIEW_CACHE_UUID);
+            previewSkin = null;
+            selectedPath = null;
+            layersMenuOpen = false;
+            previewLayerMask = SkinLayerMask.DEFAULT_MASK;
+            lastAppliedPath = null;
+            lastAppliedLayerMask = Integer.MIN_VALUE;
+            setPathFieldValue("");
+            resetPreviewCamera();
+        }
+        setStatus(payload.message(), payload.success() ? 0xFF55FF55 : 0xFFFF7777);
+        updateLoadButtonState();
+        updateActionButtonState();
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (pendingSkinRequest != 0 && System.currentTimeMillis() - pendingSkinSince > 10000L) {
+            pendingSkinRequest = 0;
+            setStatus("No response from the server. Please try again.", 0xFFFF7777);
+            updateLoadButtonState();
+        }
+        updateActionButtonState();
     }
 }

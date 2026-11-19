@@ -11,11 +11,12 @@ import net.minecraft.util.Formatting;
 @Environment(EnvType.CLIENT)
 public class SimulationStatusHUD {
 
-    private static boolean enabled = false;
-    private static SimulationStatusResponsePayload lastStatus = null;
-    private static long lastUpdateTime = 0;
-    private static boolean requestPending = false;
-    private static long requestPendingTime = 0;
+    private static volatile boolean enabled = false;
+    private static volatile long activationOrder;
+    private static volatile SimulationStatusResponsePayload lastStatus = null;
+    private static volatile long lastUpdateTime = 0;
+    private static volatile boolean requestPending = false;
+    private static volatile long requestPendingTime = 0;
     private static final long REQUEST_TIMEOUT_MS = 2000;
     private static final long UPDATE_INTERVAL_MS_CLOSE = 250;
     private static final long UPDATE_INTERVAL_MS_FAR = 1000;
@@ -31,14 +32,29 @@ public class SimulationStatusHUD {
     }
 
     public static void toggle() {
-        enabled = !enabled;
+        setEnabled(!enabled);
     }
 
     public static void setEnabled(boolean value) {
-        enabled = value;
-        if (!value) {
-            lastStatus = null;
+        if (enabled == value) {
+            return;
         }
+        resetStatus();
+        if (value) {
+            activationOrder = StatusHudLayout.nextActivationOrder();
+        }
+        enabled = value;
+    }
+
+    public static long getActivationOrder() {
+        return activationOrder;
+    }
+
+    public static void resetStatus() {
+        lastStatus = null;
+        lastUpdateTime = 0;
+        requestPending = false;
+        requestPendingTime = 0;
     }
 
     public static boolean isEnabled() {
@@ -46,6 +62,9 @@ public class SimulationStatusHUD {
     }
 
     public static void updateStatus(SimulationStatusResponsePayload status) {
+        if (!enabled) {
+            return;
+        }
         lastStatus = status;
         lastUpdateTime = System.currentTimeMillis();
         requestPending = false;
@@ -67,28 +86,22 @@ public class SimulationStatusHUD {
     }
 
     public static void render(DrawContext context, TextRenderer textRenderer, int screenWidth, int screenHeight) {
-        if (!enabled || lastStatus == null) {
+        render(context, textRenderer, screenWidth, screenHeight, StatusHudLayout.simulationOffset());
+    }
+
+    public static void render(DrawContext context, TextRenderer textRenderer, int screenWidth, int screenHeight, int offsetY) {
+        SimulationStatusResponsePayload status = lastStatus;
+        if (!enabled || status == null) {
             return;
         }
 
         int padding = 5;
         int x = padding;
-        int y = padding;
+        int y = padding + offsetY;
 
         int boxWidth = 200;
-        int boxHeight = 60;
-
         int lineHeight = 12;
-        int contentHeight = lineHeight;
-        if (lastStatus.inSimulatedChunk()) {
-            contentHeight += lineHeight;
-            contentHeight += lineHeight;
-            contentHeight += lineHeight;
-            if (lastStatus.distance() >= 0) {
-                contentHeight += lineHeight;
-            }
-        }
-        boxHeight = contentHeight + padding * 2;
+        int boxHeight = getHeight();
 
         context.fill(x, y, x + boxWidth, y + boxHeight, 0x80000000);
 
@@ -97,7 +110,7 @@ public class SimulationStatusHUD {
         context.fill(x, y, x + 1, y + boxHeight, 0xFF000000);
         context.fill(x + boxWidth - 1, y, x + boxWidth, y + boxHeight, 0xFF000000);
 
-        int borderColor = lastStatus.inSimulatedChunk() ? 0xFF00FF00 : 0xFFFF0000;
+        int borderColor = status.inSimulatedChunk() ? 0xFF00FF00 : 0xFFFF0000;
         context.fill(x + 1, y + 1, x + boxWidth - 1, y + 2, borderColor);
         context.fill(x + 1, y + boxHeight - 2, x + boxWidth - 1, y + boxHeight - 1, borderColor);
         context.fill(x + 1, y + 1, x + 2, y + boxHeight - 1, borderColor);
@@ -110,7 +123,7 @@ public class SimulationStatusHUD {
         long now = System.currentTimeMillis();
         boolean shouldBlink = isUpdating && ((now / 500) % 2 == 0);
 
-        if (lastStatus.inSimulatedChunk()) {
+        if (status.inSimulatedChunk()) {
             Text statusText = Text.literal("● Simulation: ACTIVE").formatted(Formatting.GREEN, Formatting.BOLD);
             context.drawText(textRenderer, statusText, textX, textY, 0xFFFFFFFF, false);
 
@@ -121,10 +134,10 @@ public class SimulationStatusHUD {
 
             textY += lineHeight;
 
-            if (lastStatus.fakeplayerName() != null && !lastStatus.fakeplayerName().isEmpty()) {
+            if (status.fakeplayerName() != null && !status.fakeplayerName().isEmpty()) {
                 Text fakeplayerLabel = Text.literal("Fakeplayer: ").formatted(Formatting.GRAY);
                 Formatting nameFormatting = Formatting.GREEN;
-                Text fakeplayerValue = Text.literal(lastStatus.fakeplayerName()).formatted(nameFormatting);
+                Text fakeplayerValue = Text.literal(status.fakeplayerName()).formatted(nameFormatting);
                 int labelWidth = textRenderer.getWidth(fakeplayerLabel);
                 int valueColor = 0xFF55FF55;
                 context.drawText(textRenderer, fakeplayerLabel, textX, textY, 0xFFCCCCCC, false);
@@ -133,22 +146,22 @@ public class SimulationStatusHUD {
             }
 
             Text chunkLabel = Text.literal("Chunk: ").formatted(Formatting.GRAY);
-            Text chunkValue = Text.literal(lastStatus.chunkX() + ", " + lastStatus.chunkZ()).formatted(Formatting.WHITE);
+            Text chunkValue = Text.literal(status.chunkX() + ", " + status.chunkZ()).formatted(Formatting.WHITE);
             int chunkLabelWidth = textRenderer.getWidth(chunkLabel);
             context.drawText(textRenderer, chunkLabel, textX, textY, 0xFFCCCCCC, false);
             context.drawText(textRenderer, chunkValue, textX + chunkLabelWidth, textY, 0xFFFFFFFF, false);
             textY += lineHeight;
 
             Text sdLabel = Text.literal("SD: ").formatted(Formatting.GRAY);
-            Text sdValue = Text.literal(lastStatus.simulationDistance() + " chunks").formatted(Formatting.WHITE);
+            Text sdValue = Text.literal(StatusHudLayout.describeDistance(status.simulationDistance())).formatted(Formatting.WHITE);
             int sdLabelWidth = textRenderer.getWidth(sdLabel);
             context.drawText(textRenderer, sdLabel, textX, textY, 0xFFCCCCCC, false);
             context.drawText(textRenderer, sdValue, textX + sdLabelWidth, textY, 0xFFFFFFFF, false);
             textY += lineHeight;
 
-            if (lastStatus.distance() >= 0) {
+            if (status.distance() >= 0) {
                 Text distanceLabel = Text.literal("Distance: ").formatted(Formatting.GRAY);
-                Text distanceValue = Text.literal(lastStatus.distance() + " chunks").formatted(Formatting.WHITE);
+                Text distanceValue = Text.literal(status.distance() + " chunks").formatted(Formatting.WHITE);
                 int distanceLabelWidth = textRenderer.getWidth(distanceLabel);
                 context.drawText(textRenderer, distanceLabel, textX, textY, 0xFFCCCCCC, false);
                 context.drawText(textRenderer, distanceValue, textX + distanceLabelWidth, textY, 0xFFFFFFFF, false);
@@ -165,7 +178,7 @@ public class SimulationStatusHUD {
     }
 
     public static boolean needsUpdate() {
-        if (!enabled) {
+        if (!enabled || isRequestPending()) {
             return false;
         }
         long now = System.currentTimeMillis();
@@ -183,21 +196,27 @@ public class SimulationStatusHUD {
     }
 
     public static int getHeight() {
-        if (!enabled || lastStatus == null) {
+        SimulationStatusResponsePayload status = lastStatus;
+        if (!enabled || status == null) {
             return 0;
         }
-        int padding = 5;
-        int lineHeight = 12;
-        int contentHeight = lineHeight;
-        if (lastStatus.inSimulatedChunk()) {
-            contentHeight += lineHeight * 4;
+        int lines = 1;
+        if (status.inSimulatedChunk()) {
+            lines += 2;
+            if (status.fakeplayerName() != null && !status.fakeplayerName().isEmpty()) {
+                lines++;
+            }
+            if (status.distance() >= 0) {
+                lines++;
+            }
         }
-        return contentHeight + padding * 2;
+        return lines * 12 + 10;
     }
 
     public static void forceUpdate() {
         if (enabled) {
             lastUpdateTime = 0;
+            requestPending = false;
         }
     }
 }

@@ -2,6 +2,7 @@ package de.chunkloader.mixin.client;
 
 import de.chunkloader.client.hud.ChunkplayerStatusHUD;
 import de.chunkloader.client.hud.SimulationStatusHUD;
+import de.chunkloader.client.hud.StatusHudLayout;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.gui.DrawContext;
@@ -26,7 +27,7 @@ public class InGameHudMixin {
             return;
         }
 
-        int offsetY = 0;
+        int chunkplayerOffsetY = StatusHudLayout.chunkplayerOffset();
 
         if (SimulationStatusHUD.isEnabled()) {
             SimulationStatusHUD.render(
@@ -35,7 +36,6 @@ public class InGameHudMixin {
                 client.getWindow().getScaledWidth(),
                 client.getWindow().getScaledHeight()
             );
-            offsetY = SimulationStatusHUD.getHeight() + 5;
         }
 
         if (ChunkplayerStatusHUD.isEnabled()) {
@@ -44,7 +44,7 @@ public class InGameHudMixin {
                 client.textRenderer,
                 client.getWindow().getScaledWidth(),
                 client.getWindow().getScaledHeight(),
-                offsetY
+                chunkplayerOffsetY
             );
         }
     }

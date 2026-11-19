@@ -85,4 +85,40 @@ public class PlayerListPlaceNewPlayerMixin {
         }
         player.setServerWorld(world);
     }
+
+    @Redirect(
+        method = "onPlayerConnect(Lnet/minecraft/network/ClientConnection;Lnet/minecraft/server/network/ServerPlayerEntity;Lnet/minecraft/server/network/ConnectedClientData;)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/server/world/ServerWorld;onPlayerConnected(Lnet/minecraft/server/network/ServerPlayerEntity;)V"
+        )
+    )
+    private void chunkloader$connectFakePlayerToOwnWorld(ServerWorld world, ServerPlayerEntity player) {
+        if (player instanceof ChunkloaderFakePlayer) {
+            ServerWorld actual = player.getServerWorld();
+            if (actual != null) {
+                actual.onPlayerConnected(player);
+                return;
+            }
+        }
+        world.onPlayerConnected(player);
+    }
+
+    @Redirect(
+        method = "onPlayerConnect(Lnet/minecraft/network/ClientConnection;Lnet/minecraft/server/network/ServerPlayerEntity;Lnet/minecraft/server/network/ConnectedClientData;)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/server/PlayerManager;sendWorldInfo(Lnet/minecraft/server/network/ServerPlayerEntity;Lnet/minecraft/server/world/ServerWorld;)V"
+        )
+    )
+    private void chunkloader$sendFakePlayerWorldInfo(PlayerManager manager, ServerPlayerEntity player, ServerWorld world) {
+        if (player instanceof ChunkloaderFakePlayer) {
+            ServerWorld actual = player.getServerWorld();
+            if (actual != null) {
+                manager.sendWorldInfo(player, actual);
+                return;
+            }
+        }
+        manager.sendWorldInfo(player, world);
+    }
 }

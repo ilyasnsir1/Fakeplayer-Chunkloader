@@ -176,14 +176,14 @@ public abstract class PlayerEntityModelEasterEggEmoteMixin {
                 return;
             }
         }
-        float tickDelta = client.getRenderTickCounter().getTickDelta(false);
-        Float tick = FakePlayerEasterEggEmoteCache.getEmoteTick(
+        Float startAge = FakePlayerEasterEggEmoteCache.getOrInitStartAge(
                 player.getUuid(),
-                client.world.getTime(),
-                tickDelta);
-        if (tick == null) {
+                animationProgress,
+                client.world.getTime());
+        if (startAge == null) {
             return;
         }
+        float tick = animationProgress - startAge;
         if (tick < BEGIN_TICK) {
             return;
         }
