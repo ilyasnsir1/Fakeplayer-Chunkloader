@@ -9,5 +9,8 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface ServerChunkManagerAccessor {
     @Accessor("ticketManager")
     ChunkTicketManager chunkloader$getTicketManager();
+
+    @Accessor("chunkLoadingManager")
+    net.minecraft.server.world.ServerChunkLoadingManager chunkloader$getChunkLoadingManager();
 }
 

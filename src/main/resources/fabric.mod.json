@@ -8,7 +8,12 @@
     "ilyasnsir1"
   ],
   "license": "All Rights Reserved",
-  "icon": "assets/chunkloader/textures/gui/button_on.png",
+  "icon": "assets/chunkloader/icon.png",
+  "contact": {
+    "homepage": "https://github.com/ilyasnsir1/Fakeplayer-Chunkloader",
+    "sources": "https://github.com/ilyasnsir1/Fakeplayer-Chunkloader",
+    "issues": "https://github.com/ilyasnsir1/Fakeplayer-Chunkloader/issues"
+  },
   "environment": "*",
   "entrypoints": {
     "main": [

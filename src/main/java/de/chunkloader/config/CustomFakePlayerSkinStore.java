@@ -59,26 +59,30 @@ public final class CustomFakePlayerSkinStore {
                 ? root.getAsJsonObject("skins")
                 : root;
             for (Map.Entry<String, JsonElement> entry : entries.entrySet()) {
-                if (entry.getValue() == null || !entry.getValue().isJsonObject()) {
-                    continue;
+                try {
+                    if (entry.getValue() == null || !entry.getValue().isJsonObject()) {
+                        continue;
+                    }
+                    String name = normalizeName(entry.getKey());
+                    if (name == null) {
+                        continue;
+                    }
+                    JsonObject meta = entry.getValue().getAsJsonObject();
+                    int layerMask = sanitizeLayerMask(meta.has("layerMask") ? meta.get("layerMask").getAsInt() : EDITABLE_LAYER_MASK);
+                    String model = meta.has("model") ? meta.get("model").getAsString() : "";
+                    Path pngPath = skinsDir.resolve(safeFileName(name) + ".png");
+                    if (!Files.isRegularFile(pngPath)) {
+                        continue;
+                    }
+                    byte[] pngBytes = SkinPngValidator.readFile(pngPath);
+                    if (!isValidSkinPng(pngBytes)) {
+                        ChunkloaderMod.LOGGER.warn("Skipping invalid stored skin PNG for '{}'", name);
+                        continue;
+                    }
+                    skinsByName.put(name, new StoredSkin(name, layerMask, model != null ? model : "", pngBytes));
+                } catch (Exception invalidEntry) {
+                    ChunkloaderMod.LOGGER.warn("Skipping invalid stored skin entry '{}': {}", entry.getKey(), invalidEntry.getMessage());
                 }
-                String name = normalizeName(entry.getKey());
-                if (name == null) {
-                    continue;
-                }
-                JsonObject meta = entry.getValue().getAsJsonObject();
-                int layerMask = sanitizeLayerMask(meta.has("layerMask") ? meta.get("layerMask").getAsInt() : EDITABLE_LAYER_MASK);
-                String model = meta.has("model") ? meta.get("model").getAsString() : "";
-                Path pngPath = skinsDir.resolve(safeFileName(name) + ".png");
-                if (!Files.isRegularFile(pngPath)) {
-                    continue;
-                }
-                byte[] pngBytes = Files.readAllBytes(pngPath);
-                if (!isValidSkinPng(pngBytes)) {
-                    ChunkloaderMod.LOGGER.warn("Skipping invalid stored skin PNG for '{}'", name);
-                    continue;
-                }
-                skinsByName.put(name, new StoredSkin(name, layerMask, model != null ? model : "", pngBytes));
             }
         } catch (Exception e) {
             ChunkloaderMod.LOGGER.warn("Failed to load custom skins meta {}: {}", metaPath, e.getMessage());
@@ -225,29 +229,7 @@ public final class CustomFakePlayerSkinStore {
     }
 
     public static boolean isValidSkinPng(byte[] pngBytes) {
-        if (pngBytes == null || pngBytes.length < 24) {
-            return false;
-        }
-
-        byte[] sig = {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A};
-        for (int i = 0; i < sig.length; i++) {
-            if (pngBytes[i] != sig[i]) {
-                return false;
-            }
-        }
-
-        ByteBuffer buf = ByteBuffer.wrap(pngBytes, 8, 16).order(ByteOrder.BIG_ENDIAN);
-        int length = buf.getInt();
-        if (length < 13) {
-            return false;
-        }
-        int type = buf.getInt();
-        if (type != 0x49484452) {
-            return false;
-        }
-        int width = buf.getInt();
-        int height = buf.getInt();
-        return width == 64 && (height == 64 || height == 32);
+        return SkinPngValidator.isValid(pngBytes);
     }
 
     public static byte[] readLimited(InputStream in, int maxBytes) throws IOException {
