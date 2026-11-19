@@ -1,32 +1,45 @@
 {
-  "required": true,
-  "minVersion": "0.8",
-  "package": "de.chunkloader.mixin",
-  "compatibilityLevel": "JAVA_21",
-  "mixins": [
-    "ChunkMapMixin",
+    "required":  true,
+    "minVersion":  "0.8",
+    "package":  "de.chunkloader.mixin",
+    "compatibilityLevel":  "JAVA_21",
+    "mixins": [
+        "ServerLevelPlayerTrackingMixin",
+    "ServerChunkManagerAccessor",
+    "TicketStorageAccessor",
+    "SkeletonTrapGoalMixin",
+    "SculkShriekerBlockEntityMixin",
+    "WardenSpawnTrackerMixin",
+    "VillageSiegeMixin",
+    "PatrolSpawnerMixin",
+    "MinecraftServerStatusMixin",
+                   "ChunkMapMixin",
                    "MobTargetFakePlayerMixin",
-    "PlayerAdvancementsMixin",
-    "PlayerListBroadcastMixin",
-    "PlayerListPlaceNewPlayerMixin",
-    "ServerCommonPacketListenerImplMixin",
-    "ServerGamePacketListenerImplMixin",
-    "ServerLevelPlayersMixin",
-    "ServerLevelTickChunkMixin",
-    "ServerChunkCacheSpawnCountMixin",
-    "ServerPlayerListedMixin",
-    "SleepStatusMixin",
-    "ServerLevelRandomTickMixin"
-  ],
-  "client": [
-    "client.GuiMixin",
-    "client.PlayerClientMixin",
-    "client.AbstractClientPlayerEntitySkinMixin",
-    "client.PlayerListEntrySkinMixin",
-    "client.PlayerModelPartMixin",
-    "client.PlayerModelEasterEggEmoteMixin"
-  ],
-  "injectors": {
-    "defaultRequire": 1
-  }
+                   "PlayerAdvancementsMixin",
+                   "PlayerListBroadcastMixin",
+                   "PlayerListJoinLimitMixin",
+                   "PlayerListPlaceNewPlayerMixin",
+                   "PlayerListRemoveMixin",
+                   "ServerCommonPacketListenerImplMixin",
+                   "ServerGamePacketListenerImplMixin",
+                   "ServerLevelPlayersMixin",
+                   "NaturalSpawnerMixin",
+                   "TrialSpawnerPlayerDetectorMixin",
+                   "ServerLevelTickChunkMixin",
+                   "ServerChunkCacheSpawnCountMixin",
+                   "ServerPlayerListedMixin",
+                   "SleepStatusMixin"
+               ],
+    "client":  [
+                   "client.PlayerRendererNameMixin",
+                   "client.GuiMixin",
+                   "client.PlayerClientMixin",
+                   "client.AbstractClientPlayerEntitySkinMixin",
+                   "client.PlayerListEntrySkinMixin",
+                   "client.PlayerModelEasterEggEmoteMixin",
+                   "client.PlayerModelPartMixin"
+               ],
+    "injectors":  {
+                      "defaultRequire":  1
+                  }
 }

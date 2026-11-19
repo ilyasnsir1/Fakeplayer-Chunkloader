@@ -6,17 +6,19 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.Identifier;
 
-public record ClearCustomSkinPayload(String playerName) implements CustomPacketPayload {
+public record ClearCustomSkinPayload(String playerName, int requestId) implements CustomPacketPayload {
+
     public static final Identifier ID = Identifier.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "clear_custom_skin");
     public static final Type<ClearCustomSkinPayload> TYPE = new Type<>(ID);
 
-    public static final StreamCodec<FriendlyByteBuf, ClearCustomSkinPayload> STREAM_CODEC = StreamCodec.of(
-        (buf, payload) -> buf.writeUtf(payload.playerName() != null ? payload.playerName() : ""),
-        buf -> new ClearCustomSkinPayload(buf.readUtf())
-    );
-
-    @Override
-    public Type<ClearCustomSkinPayload> type() {
-        return TYPE;
+        public static final StreamCodec<FriendlyByteBuf, ClearCustomSkinPayload> STREAM_CODEC = StreamCodec.of(ClearCustomSkinPayload::write, ClearCustomSkinPayload::read);
+    public ClearCustomSkinPayload(String playerName) { this(playerName, 0); }
+    private static void write(FriendlyByteBuf buf, ClearCustomSkinPayload payload) {
+        buf.writeUtf(payload.playerName() != null ? payload.playerName() : "", 16);
+        buf.writeVarInt(payload.requestId());
     }
+    private static ClearCustomSkinPayload read(FriendlyByteBuf buf) {
+        return new ClearCustomSkinPayload(buf.readUtf(16), buf.readVarInt());
+    }
+    @Override public Type<ClearCustomSkinPayload> type() { return TYPE; }
 }
