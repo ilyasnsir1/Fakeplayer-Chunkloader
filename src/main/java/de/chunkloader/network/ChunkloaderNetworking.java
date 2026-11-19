@@ -1,12 +1,17 @@
 package de.chunkloader.network;
+import de.chunkloader.network.payload.ClearCustomSkinPayload;
+import de.chunkloader.network.payload.ApplyCustomSkinPayload;
 
+import java.util.ArrayList;
 import de.chunkloader.ChunkloaderForgeMod;
 import de.chunkloader.manager.ChunkloaderManager;
 import de.chunkloader.network.payload.ChunkloaderActionPayload;
 import de.chunkloader.network.payload.CloseChunkMapPayload;
+import de.chunkloader.network.payload.OpenHelpPayload;
 import de.chunkloader.network.payload.CloseChunkMapRequestPayload;
 import de.chunkloader.network.payload.FakePlayerVisibilityPayload;
 import de.chunkloader.network.payload.OpenChunkMapPayload;
+import de.chunkloader.network.payload.ChunkMapLoaderDetailsPayload;
 import de.chunkloader.permissions.PermissionManager;
 import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
@@ -26,8 +31,18 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 public class ChunkloaderNetworking {
-    private static final String PROTOCOL_VERSION = "1";
+    private static final String PROTOCOL_VERSION = "5";
     private static final ResourceLocation CHANNEL_NAME = ResourceLocation.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "main");
+
+    private static volatile java.util.function.Consumer<de.chunkloader.network.payload.SkinChangeResultPayload> skinChangeResultClientHook = payload -> {};
+
+    public static void setSkinChangeResultClientHook(java.util.function.Consumer<de.chunkloader.network.payload.SkinChangeResultPayload> hook) {
+        skinChangeResultClientHook = java.util.Objects.requireNonNull(hook);
+    }
+
+    public static void handleSkinChangeResultClient(de.chunkloader.network.payload.SkinChangeResultPayload payload) {
+        skinChangeResultClientHook.accept(payload);
+    }
 
     private static volatile Consumer<String> clearCustomSkinClientHook;
 
@@ -37,9 +52,12 @@ public class ChunkloaderNetworking {
         .clientAcceptedVersions(Channel.VersionTest.exact(Integer.parseInt(PROTOCOL_VERSION)))
         .serverAcceptedVersions(Channel.VersionTest.exact(Integer.parseInt(PROTOCOL_VERSION)))
         .simpleChannel();
+    private static final SimpleChannel HELP_CHANNEL = ChannelBuilder.named(ResourceLocation.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "help"))
+        .networkProtocolVersion(1)
+        .optional()
+        .simpleChannel();
 
-    private static final Map<UUID, de.chunkloader.network.payload.SimulationStatusResponsePayload> lastSimulationStatus = new ConcurrentHashMap<>();
-    private static final Map<UUID, de.chunkloader.network.payload.ChunkplayerStatusResponsePayload> lastChunkplayerStatus = new ConcurrentHashMap<>();
+    private static volatile Runnable openHelpHandler = () -> {};
 
     private static final Map<String, de.chunkloader.network.payload.SimulationStatusResponsePayload> chunkSimulationCache = new ConcurrentHashMap<>();
     private static final Map<String, de.chunkloader.network.payload.ChunkplayerStatusResponsePayload> chunkChunkplayerCache = new ConcurrentHashMap<>();
@@ -47,6 +65,7 @@ public class ChunkloaderNetworking {
     private static final Map<UUID, Long> actionCooldownUntilMs = new ConcurrentHashMap<>();
     private static final long ACTION_COOLDOWN_MS = 250L;
 
+    private static volatile Consumer<ChunkMapLoaderDetailsPayload> loaderDetailsHandler = payload -> {};
     private static volatile java.util.function.Consumer<OpenChunkMapPayload> openChunkMapHandler = payload -> {};
     private static volatile java.util.function.Consumer<CloseChunkMapPayload> closeChunkMapHandler = payload -> {};
     private static volatile java.util.function.Consumer<FakePlayerVisibilityPayload> fakePlayerVisibilityHandler = payload -> {};
@@ -54,6 +73,7 @@ public class ChunkloaderNetworking {
     private static volatile java.util.function.Consumer<de.chunkloader.network.payload.EasterEggEmotePayload> easterEggEmoteHandler = payload -> {};
     private static volatile java.util.function.Consumer<de.chunkloader.network.payload.SimulationStatusResponsePayload> simulationStatusHandler = payload -> {};
     private static volatile java.util.function.Consumer<de.chunkloader.network.payload.ChunkplayerStatusResponsePayload> chunkplayerStatusHandler = payload -> {};
+    private static volatile java.util.function.Consumer<de.chunkloader.network.payload.ActiveChunkloadersListPayload> activeChunkloadersListHandler = payload -> {};
     private static volatile java.util.function.Consumer<de.chunkloader.network.payload.DisabledChunkloadersListPayload> disabledChunkloadersListHandler = payload -> {};
     private static volatile java.util.function.Consumer<de.chunkloader.network.payload.UpdateDisabledChunkloaderCoordsResponsePayload> updateDisabledChunkloaderCoordsResponseHandler = payload -> {};
     private static volatile java.util.function.Consumer<de.chunkloader.network.payload.RenameChunkloaderResponsePayload> renameChunkloaderResponseHandler = payload -> {};
@@ -65,6 +85,15 @@ public class ChunkloaderNetworking {
 
     @SuppressWarnings("deprecation")
     public static void init() {
+        HELP_CHANNEL.messageBuilder(OpenHelpPayload.class, 0, net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT)
+            .encoder((payload, buf) -> OpenHelpPayload.STREAM_CODEC.encode(buf, payload))
+            .decoder(buf -> OpenHelpPayload.STREAM_CODEC.decode(buf))
+            .consumerMainThread((payload, ctx) -> {
+                ctx.enqueueWork(openHelpHandler);
+                ctx.setPacketHandled(true);
+            })
+            .add();
+
         CHANNEL.messageBuilder(OpenChunkMapPayload.class, messageId++, net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT)
             .encoder((payload, buf) -> OpenChunkMapPayload.STREAM_CODEC.encode(buf, payload))
             .decoder(buf -> OpenChunkMapPayload.STREAM_CODEC.decode(buf))
@@ -189,6 +218,26 @@ public class ChunkloaderNetworking {
             })
             .add();
 
+        CHANNEL.messageBuilder(de.chunkloader.network.payload.ActiveChunkloadersListRequestPayload.class, messageId++, net.minecraftforge.network.NetworkDirection.PLAY_TO_SERVER)
+            .encoder((payload, buf) -> de.chunkloader.network.payload.ActiveChunkloadersListRequestPayload.STREAM_CODEC.encode(buf, payload))
+            .decoder(buf -> de.chunkloader.network.payload.ActiveChunkloadersListRequestPayload.STREAM_CODEC.decode(buf))
+            .consumerMainThread((payload, ctx) -> {
+                ServerPlayer player = ctx.getSender();
+                if (player == null) return;
+                handleActiveChunkloadersListRequest(player);
+            })
+            .add();
+
+        CHANNEL.messageBuilder(de.chunkloader.network.payload.OpenChunkMapRequestPayload.class, messageId++, net.minecraftforge.network.NetworkDirection.PLAY_TO_SERVER)
+            .encoder((payload, buf) -> de.chunkloader.network.payload.OpenChunkMapRequestPayload.STREAM_CODEC.encode(buf, payload))
+            .decoder(buf -> de.chunkloader.network.payload.OpenChunkMapRequestPayload.STREAM_CODEC.decode(buf))
+            .consumerMainThread((payload, ctx) -> {
+                ServerPlayer player = ctx.getSender();
+                if (player == null) return;
+                handleOpenChunkMapRequest(player, payload);
+            })
+            .add();
+
         CHANNEL.messageBuilder(de.chunkloader.network.payload.DisabledChunkloadersListRequestPayload.class, messageId++, net.minecraftforge.network.NetworkDirection.PLAY_TO_SERVER)
             .encoder((payload, buf) -> de.chunkloader.network.payload.DisabledChunkloadersListRequestPayload.STREAM_CODEC.encode(buf, payload))
             .decoder(buf -> de.chunkloader.network.payload.DisabledChunkloadersListRequestPayload.STREAM_CODEC.decode(buf))
@@ -226,6 +275,15 @@ public class ChunkloaderNetworking {
                 ServerPlayer player = ctx.getSender();
                 if (player == null) return;
                 handleUpdateDisabledChunkloaderCoords(player, payload);
+            })
+            .add();
+
+        CHANNEL.messageBuilder(de.chunkloader.network.payload.ActiveChunkloadersListPayload.class, messageId++, net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT)
+            .encoder((payload, buf) -> de.chunkloader.network.payload.ActiveChunkloadersListPayload.STREAM_CODEC.encode(buf, payload))
+            .decoder(buf -> de.chunkloader.network.payload.ActiveChunkloadersListPayload.STREAM_CODEC.decode(buf))
+            .consumerMainThread((payload, ctx) -> {
+                ctx.enqueueWork(() -> activeChunkloadersListHandler.accept(payload));
+                ctx.setPacketHandled(true);
             })
             .add();
 
@@ -291,6 +349,15 @@ public class ChunkloaderNetworking {
             })
             .add();
 
+        CHANNEL.messageBuilder(de.chunkloader.network.payload.SkinChangeResultPayload.class, messageId++, net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT)
+            .encoder((payload, buf) -> de.chunkloader.network.payload.SkinChangeResultPayload.STREAM_CODEC.encode(buf, payload))
+            .decoder(buf -> de.chunkloader.network.payload.SkinChangeResultPayload.STREAM_CODEC.decode(buf))
+            .consumerMainThread((payload, ctx) -> {
+                ctx.enqueueWork(() -> skinChangeResultClientHook.accept(payload));
+                ctx.setPacketHandled(true);
+            })
+            .add();
+
         CHANNEL.messageBuilder(de.chunkloader.network.payload.ApplyCustomSkinPayload.class, messageId++, net.minecraftforge.network.NetworkDirection.PLAY_TO_SERVER)
             .encoder((payload, buf) -> de.chunkloader.network.payload.ApplyCustomSkinPayload.STREAM_CODEC.encode(buf, payload))
             .decoder(buf -> de.chunkloader.network.payload.ApplyCustomSkinPayload.STREAM_CODEC.decode(buf))
@@ -308,7 +375,7 @@ public class ChunkloaderNetworking {
             .consumerMainThread((payload, ctx) -> {
                 ServerPlayer player = ctx.getSender();
                 if (player != null) {
-                    handleClearCustomSkin(player, new de.chunkloader.network.payload.ClearCustomSkinPayload(payload.playerName()));
+                    handleClearCustomSkin(player, new de.chunkloader.network.payload.ClearCustomSkinPayload(payload.playerName(), payload.requestId()));
                 }
             })
             .add();
@@ -322,6 +389,14 @@ public class ChunkloaderNetworking {
             })
             .add();
 
+        CHANNEL.messageBuilder(ChunkMapLoaderDetailsPayload.class, messageId++, net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT)
+            .encoder((payload, buf) -> ChunkMapLoaderDetailsPayload.CODEC.encode(buf, payload))
+            .decoder(ChunkMapLoaderDetailsPayload.CODEC::decode)
+            .consumerMainThread((payload, ctx) -> {
+                ctx.enqueueWork(() -> loaderDetailsHandler.accept(payload));
+                ctx.setPacketHandled(true);
+            })
+            .add();
     }
 
     private static String createChunkKey(int chunkX, int chunkZ, String dimension) {
@@ -346,30 +421,6 @@ public class ChunkloaderNetworking {
         openChunkMaps.remove(player.getUUID());
     }
 
-    public static void broadcastOpenChunkMapUpdate(MinecraftServer server, ChunkloaderManager manager, de.chunkloader.config.ChunkloaderTarget entry) {
-        if (server == null || manager == null || entry == null) {
-            return;
-        }
-        String key = createChunkKey(entry.chunkX(), entry.chunkZ(), entry.dimension());
-        ChunkMapData data;
-        try {
-            data = manager.buildChunkMapData(entry);
-        } catch (Exception e) {
-            return;
-        }
-
-        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            if (player instanceof de.chunkloader.fakeplayer.ChunkloaderFakePlayer) {
-                continue;
-            }
-            String openKey = openChunkMaps.get(player.getUUID());
-            if (key.equals(openKey)) {
-                CHANNEL.send(new OpenChunkMapPayload(data), PacketDistributor.PLAYER.with(player));
-                trackOpenChunkMap(player, data);
-            }
-        }
-    }
-
     public static void refreshOpenChunkMapMarkers(MinecraftServer server, ChunkloaderManager manager) {
         if (server == null || manager == null || server.getPlayerList() == null) {
             return;
@@ -381,33 +432,40 @@ public class ChunkloaderNetworking {
         }
     }
 
-    private static void refreshOpenChunkMapMarkersNow(MinecraftServer server, ChunkloaderManager manager) {
+    private static void refreshOpenChunkMapMarkersNow(net.minecraft.server.MinecraftServer server, de.chunkloader.manager.ChunkloaderManager manager) {
         if (server == null || manager == null || server.getPlayerList() == null || openChunkMaps.isEmpty()) {
             return;
         }
-        java.util.List<java.util.Map.Entry<UUID, String>> open = new java.util.ArrayList<>(openChunkMaps.entrySet());
-        for (java.util.Map.Entry<UUID, String> tracked : open) {
-            ServerPlayer player = server.getPlayerList().getPlayer(tracked.getKey());
+        for (UUID playerId : new ArrayList<>(openChunkMaps.keySet())) {
+            ServerPlayer player = server.getPlayerList().getPlayer(playerId);
             if (player == null || player.connection == null) {
-                openChunkMaps.remove(tracked.getKey());
-                continue;
+                openChunkMaps.remove(playerId);
+            } else {
+                refreshOpenChunkMap(player, manager);
             }
-            if (player instanceof de.chunkloader.fakeplayer.ChunkloaderFakePlayer) {
-                continue;
-            }
-            String openKey = tracked.getValue();
-            if (openKey == null || openKey.isBlank()) {
-                continue;
-            }
-            de.chunkloader.config.ChunkloaderTarget entry = resolveOpenChunkMapEntry(openKey);
-            if (entry == null || !entry.enabled()) {
-                continue;
-            }
-            try {
-                sendOpenChunkMap(player, manager.buildChunkMapData(entry));
-            } catch (Exception e) {
-                com.mojang.logging.LogUtils.getLogger().warn("Failed to refresh open chunk map markers for {}: {}", player.getName().getString(), e.toString());
-            }
+        }
+    }
+
+    public static void refreshOpenChunkMap(ServerPlayer player, de.chunkloader.manager.ChunkloaderManager manager) {
+        if (player.connection == null || player instanceof de.chunkloader.fakeplayer.ChunkloaderFakePlayer) {
+            return;
+        }
+        String openKey = openChunkMaps.get(player.getUUID());
+        if (openKey == null || openKey.isBlank()) {
+            return;
+        }
+        if (!PermissionManager.canUse(player)) {
+            sendCloseChunkMap(player);
+            return;
+        }
+        var entry = resolveOpenChunkMapEntry(openKey);
+        if (entry == null || !entry.enabled()) {
+            return;
+        }
+        try {
+            sendOpenChunkMap(player, manager.buildChunkMapData(entry, player));
+        } catch (Exception e) {
+            com.mojang.logging.LogUtils.getLogger().warn("Failed to refresh open chunk map for {}: {}", player.getName().getString(), e.toString());
         }
     }
 
@@ -430,6 +488,14 @@ public class ChunkloaderNetworking {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    public static void setLoaderDetailsHandler(Consumer<ChunkMapLoaderDetailsPayload> handler) {
+        loaderDetailsHandler = handler;
+    }
+
+    public static void setOpenHelpHandler(Runnable handler) {
+        openHelpHandler = handler;
     }
 
     public static void registerClientHandlers(
@@ -462,9 +528,31 @@ public class ChunkloaderNetworking {
         invalidateCacheHandler = java.util.Objects.requireNonNull(invalidateCache);
     }
 
+    public static boolean tryOpenHelp(ServerPlayer player) {
+        if (!HELP_CHANNEL.isRemotePresent(player.connection.getConnection())) {
+            return false;
+        }
+        HELP_CHANNEL.send(new OpenHelpPayload(), PacketDistributor.PLAYER.with(player));
+        return true;
+    }
+
     public static void sendOpenChunkMap(ServerPlayer player, ChunkMapData data) {
         if (player != null) {
-            CHANNEL.send(new OpenChunkMapPayload(data), PacketDistributor.PLAYER.with(player));
+            var config = ChunkloaderForgeMod.getConfig();
+            var entry = config != null
+                    ? config.getEntry(data.fakeplayerChunkX(), data.fakeplayerChunkZ(), data.dimensionKey())
+                    : null;
+            boolean canModify = PermissionManager.canUse(player) && PermissionManager.canModifyEntry(player, entry);
+            CHANNEL.send(new OpenChunkMapPayload(data, canModify,
+                    !canModify && PermissionManager.canOperateEntry(player, entry)), PacketDistributor.PLAYER.with(player));
+            if (entry != null) {
+                var manager = ChunkloaderForgeMod.getChunkloaderManager();
+                if (manager != null) {
+                    var details = manager.buildMapLoaderDetails(data, entry, player,
+                        PermissionManager.canOperateEntry(player, entry));
+                    CHANNEL.send(details, PacketDistributor.PLAYER.with(player));
+                }
+            }
             trackOpenChunkMap(player, data);
         }
     }
@@ -505,19 +593,6 @@ public class ChunkloaderNetworking {
 
     public static void sendCloseChunkMapToServer() {
         CHANNEL.send(new CloseChunkMapRequestPayload(), PacketDistributor.SERVER.noArg());
-    }
-
-    public static void broadcastCloseChunkMap(MinecraftServer server) {
-        if (server == null || server.getPlayerList() == null) {
-            return;
-        }
-        CloseChunkMapPayload payload = new CloseChunkMapPayload();
-        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            if (player != null) {
-                CHANNEL.send(payload, PacketDistributor.PLAYER.with(player));
-                clearOpenChunkMap(player);
-            }
-        }
     }
 
     public static void broadcastFakePlayerVisibility(MinecraftServer server, String fakePlayerName, boolean visible) {
@@ -662,18 +737,7 @@ public class ChunkloaderNetworking {
     }
 
     private static boolean canModifyEntry(ServerPlayer player, de.chunkloader.config.ChunkloaderTarget entry) {
-        if (player == null || entry == null) {
-            return false;
-        }
-        if (PermissionManager.isAdmin(player)) {
-            return true;
-        }
-        String ownerName = entry.ownerName();
-        if (ownerName == null || ownerName.isBlank()) {
-            return true;
-        }
-        String playerName = player.getName().getString();
-        return playerName != null && playerName.equalsIgnoreCase(ownerName);
+        return PermissionManager.canModifyEntry(player, entry);
     }
 
     private static boolean hasMatchingOpenChunkMap(ServerPlayer player, int chunkX, int chunkZ, String dimension) {
@@ -692,10 +756,6 @@ public class ChunkloaderNetworking {
             player.sendSystemMessage(Component.literal("You don't have permission to use player actions."), false);
             return;
         }
-        if (isOnActionCooldown(player)) {
-            return;
-        }
-        markActionCooldown(player);
 
         ChunkloaderManager manager = ChunkloaderForgeMod.getChunkloaderManager();
         if (manager == null) {
@@ -713,7 +773,12 @@ public class ChunkloaderNetworking {
         if (entry == null) {
             return;
         }
-        if (!canModifyEntry(player, entry)) {
+        boolean canChange = switch (payload.action()) {
+            case DELETE, RESET_TO_DEFAULTS -> canModifyEntry(player, entry);
+            case TOGGLE_VISUALIZE, TOGGLE_VISUALIZE3D -> true;
+            default -> PermissionManager.canOperateEntry(player, entry);
+        };
+        if (!canChange) {
             player.sendSystemMessage(Component.literal("You don't own this player.").withStyle(ChatFormatting.RED), false);
             return;
         }
@@ -724,8 +789,22 @@ public class ChunkloaderNetworking {
 
         switch (payload.action()) {
             case TOGGLE_ENABLED -> {
+                if (!entry.enabled()) {
+                    String limitMessage = config.getActivationLimitMessage(entry.ownerUuid(), entry.ownerName());
+                    if (limitMessage != null) {
+                        player.sendSystemMessage(Component.literal(limitMessage).withStyle(ChatFormatting.RED), false);
+                        return;
+                    }
+                }
                 manager.toggleChunkloaderAt(payload.chunkX(), payload.chunkZ(), dimension);
                 var entryAfter = config.getEntry(payload.chunkX(), payload.chunkZ(), dimension);
+                if (entryAfter == null || entryAfter.enabled() == entry.enabled()) {
+                    String limitMessage = config.getActivationLimitMessage(entry.ownerUuid(), entry.ownerName());
+                    player.sendSystemMessage(Component.literal(limitMessage != null
+                            ? limitMessage : "Could not change this player's status.").withStyle(ChatFormatting.RED), false);
+                    return;
+                }
+
                 if (entryAfter != null && !entryAfter.enabled()) {
                     String keyName = de.chunkloader.util.KeybindHelper.getDisabledChunkloadersKeyName();
                     player.sendSystemMessage(Component.literal("Player disabled (Press " + keyName + " to open disabled list)"), false);
@@ -742,11 +821,20 @@ public class ChunkloaderNetworking {
                 }
             }
             case TOGGLE_MOB_TARGET -> manager.toggleChunkloaderMobTarget(payload.chunkX(), payload.chunkZ(), dimension);
+            case TOGGLE_MOB_AI -> manager.toggleChunkloaderMobAi(payload.chunkX(), payload.chunkZ(), dimension);
             case RADIUS_INCREMENT -> manager.adjustChunkloaderRadius(payload.chunkX(), payload.chunkZ(), dimension, Math.max(1, payload.value()));
             case RADIUS_DECREMENT -> manager.adjustChunkloaderRadius(payload.chunkX(), payload.chunkZ(), dimension, -Math.max(1, payload.value()));
             case TOGGLE_NAME_VISIBLE -> manager.toggleChunkloaderNameVisible(payload.chunkX(), payload.chunkZ(), dimension);
-            case TOGGLE_VISUALIZE -> manager.toggleChunkloaderVisualize(payload.chunkX(), payload.chunkZ(), dimension);
-            case TOGGLE_VISUALIZE3D -> manager.toggleChunkloaderVisualize3D(payload.chunkX(), payload.chunkZ(), dimension);
+            case TOGGLE_VISUALIZE -> {
+                manager.toggleVisualization(player, entry);
+                refreshOpenChunkMap(player, manager);
+                return;
+            }
+            case TOGGLE_VISUALIZE3D -> {
+                manager.toggleVisualization3D(player, entry);
+                refreshOpenChunkMap(player, manager);
+                return;
+            }
             case TOGGLE_HIDE_OTHER_DOTS -> {  }
             case RESET_TO_DEFAULTS -> manager.resetChunkloaderToDefaults(payload.chunkX(), payload.chunkZ(), dimension);
             case DELETE -> {
@@ -758,7 +846,6 @@ public class ChunkloaderNetworking {
 
         entry = config.getEntry(payload.chunkX(), payload.chunkZ(), dimension);
         if (entry != null && entry.enabled()) {
-            sendOpenChunkMap(player, manager.buildChunkMapData(entry));
             refreshOpenChunkMapMarkers(player.level().getServer(), manager);
         }
     }
@@ -784,6 +871,16 @@ public class ChunkloaderNetworking {
     }
 
     @net.minecraftforge.api.distmarker.OnlyIn(net.minecraftforge.api.distmarker.Dist.CLIENT)
+    public static void requestActiveChunkloadersList() {
+        CHANNEL.send(new de.chunkloader.network.payload.ActiveChunkloadersListRequestPayload(), PacketDistributor.SERVER.noArg());
+    }
+
+    @net.minecraftforge.api.distmarker.OnlyIn(net.minecraftforge.api.distmarker.Dist.CLIENT)
+    public static void requestOpenChunkMap(int chunkX, int chunkZ, String dimension) {
+        CHANNEL.send(new de.chunkloader.network.payload.OpenChunkMapRequestPayload(chunkX, chunkZ, dimension), PacketDistributor.SERVER.noArg());
+    }
+
+    @net.minecraftforge.api.distmarker.OnlyIn(net.minecraftforge.api.distmarker.Dist.CLIENT)
     public static void sendDeleteDisabledChunkloader(int chunkX, int chunkZ, String dimension) {
         CHANNEL.send(new de.chunkloader.network.payload.DeleteDisabledChunkloaderPayload(chunkX, chunkZ, dimension), PacketDistributor.SERVER.noArg());
     }
@@ -794,8 +891,8 @@ public class ChunkloaderNetworking {
     }
 
     @net.minecraftforge.api.distmarker.OnlyIn(net.minecraftforge.api.distmarker.Dist.CLIENT)
-    public static void sendUpdateDisabledChunkloaderCoords(int oldChunkX, int oldChunkZ, String oldDimension, int newChunkX, int newChunkZ, int newBlockX, int newBlockY, int newBlockZ) {
-        CHANNEL.send(new de.chunkloader.network.payload.UpdateDisabledChunkloaderCoordsPayload(oldChunkX, oldChunkZ, oldDimension, newChunkX, newChunkZ, newBlockX, newBlockY, newBlockZ), PacketDistributor.SERVER.noArg());
+    public static void sendUpdateDisabledChunkloaderCoords(int oldChunkX, int oldChunkZ, String oldDimension, int newChunkX, int newChunkZ, int newBlockX, int newBlockY, int newBlockZ, String newDimension) {
+        CHANNEL.send(new de.chunkloader.network.payload.UpdateDisabledChunkloaderCoordsPayload(oldChunkX, oldChunkZ, oldDimension, newChunkX, newChunkZ, newBlockX, newBlockY, newBlockZ, newDimension), PacketDistributor.SERVER.noArg());
     }
 
     @net.minecraftforge.api.distmarker.OnlyIn(net.minecraftforge.api.distmarker.Dist.CLIENT)
@@ -805,108 +902,97 @@ public class ChunkloaderNetworking {
 
     @net.minecraftforge.api.distmarker.OnlyIn(net.minecraftforge.api.distmarker.Dist.CLIENT)
     public static void sendApplyCustomSkin(String playerName, int layerMask, String model, byte[] pngBytes) {
-        CHANNEL.send(new de.chunkloader.network.payload.ApplyCustomSkinPayload(playerName, layerMask, model, pngBytes),
+        sendApplyCustomSkin(playerName, layerMask, model, pngBytes, 0);
+    }
+
+    public static void sendApplyCustomSkin(String playerName, int layerMask, String model, byte[] pngBytes, int requestId) {
+        CHANNEL.send(new de.chunkloader.network.payload.ApplyCustomSkinPayload(playerName, layerMask, model, pngBytes, requestId),
             PacketDistributor.SERVER.noArg());
     }
 
     @net.minecraftforge.api.distmarker.OnlyIn(net.minecraftforge.api.distmarker.Dist.CLIENT)
     public static void sendClearCustomSkin(String playerName) {
-        CHANNEL.send(new de.chunkloader.network.payload.RequestClearCustomSkinPayload(playerName), PacketDistributor.SERVER.noArg());
+        sendClearCustomSkin(playerName, 0);
     }
 
-    private static void handleApplyCustomSkin(ServerPlayer player, de.chunkloader.network.payload.ApplyCustomSkinPayload payload) {
-        if (!PermissionManager.canUse(player)) {
-            player.sendSystemMessage(Component.literal("You don't have permission to change skins.")
-                .withStyle(ChatFormatting.RED), false);
+    public static void sendClearCustomSkin(String playerName, int requestId) {
+        CHANNEL.send(new de.chunkloader.network.payload.RequestClearCustomSkinPayload(playerName, requestId), PacketDistributor.SERVER.noArg());
+    }
+
+        private static void sendSkinChangeResult(ServerPlayer player, String name, int requestId,
+            boolean removed, boolean success, String message) {
+        if (requestId == 0) {
+            if (!success) player.sendSystemMessage(Component.literal(message).withStyle(ChatFormatting.RED));
             return;
         }
-        if (payload == null || payload.playerName() == null || payload.playerName().isBlank()) {
-            return;
-        }
-        if (isOnActionCooldown(player)) {
+        var response = new de.chunkloader.network.payload.SkinChangeResultPayload(name, requestId, removed, success, message);
+        CHANNEL.send(response, PacketDistributor.PLAYER.with(player));
+    }
+
+private static void handleApplyCustomSkin(ServerPlayer player, ApplyCustomSkinPayload payload) {
+        if (payload == null) return;
+        String name = payload.playerName() == null ? "" : payload.playerName().trim();
+        String error = null;
+        if (!PermissionManager.canUse(player)) error = "You don't have permission to change skins.";
+        else if (isOnActionCooldown(player)) error = "Please wait a moment before changing the skin again.";
+        if (error != null) {
+            sendSkinChangeResult(player, name, payload.requestId(), false, false, error);
             return;
         }
         markActionCooldown(player);
-
         var config = ChunkloaderForgeMod.getConfig();
-        if (config == null) {
+        var entry = config == null ? null : config.getEntryByName(name);
+        if (entry == null) error = "The selected player is unavailable.";
+        else if (!PermissionManager.canOperateEntry(player, entry)) error = "You don't have permission to change this player.";
+        if (error != null) {
+            sendSkinChangeResult(player, name, payload.requestId(), false, false, error);
             return;
         }
-        var entry = config.getEntryByName(payload.playerName());
-        if (entry == null) {
-            player.sendSystemMessage(Component.literal("Unknown player.").withStyle(ChatFormatting.RED), false);
-            return;
-        }
-        if (!canModifyEntry(player, entry)) {
-            player.sendSystemMessage(Component.literal("You don't own this player.").withStyle(ChatFormatting.RED), false);
-            return;
-        }
-
         var manager = ChunkloaderForgeMod.getChunkloaderManager();
-        if (manager == null) {
-            return;
-        }
-        boolean ok = manager.applyCustomSkin(
-            entry.name() != null ? entry.name() : payload.playerName(),
-            payload.pngBytes(),
-            payload.layerMask(),
-            payload.model()
-        );
-        if (!ok) {
-            player.sendSystemMessage(Component.literal("Failed to apply custom skin.").withStyle(ChatFormatting.RED), false);
-        }
+        boolean ok = manager != null && manager.applyCustomSkin(entry.name(), payload.pngBytes(), payload.layerMask(), payload.model());
+        sendSkinChangeResult(player, name, payload.requestId(), false, ok,
+            ok ? "Skin applied for " + entry.name() + "." : "Failed to apply the skin.");
     }
 
-    private static void handleClearCustomSkin(ServerPlayer player, de.chunkloader.network.payload.ClearCustomSkinPayload payload) {
-        if (!PermissionManager.canUse(player)) {
-            player.sendSystemMessage(Component.literal("You don't have permission to change skins.")
-                .withStyle(ChatFormatting.RED), false);
-            return;
-        }
-        if (payload == null || payload.playerName() == null || payload.playerName().isBlank()) {
-            return;
-        }
-        if (isOnActionCooldown(player)) {
+    private static void handleClearCustomSkin(ServerPlayer player, ClearCustomSkinPayload payload) {
+        if (payload == null) return;
+        String name = payload.playerName() == null ? "" : payload.playerName().trim();
+        String error = null;
+        if (!PermissionManager.canUse(player)) error = "You don't have permission to change skins.";
+        else if (isOnActionCooldown(player)) error = "Please wait a moment before changing the skin again.";
+        if (error != null) {
+            sendSkinChangeResult(player, name, payload.requestId(), true, false, error);
             return;
         }
         markActionCooldown(player);
-
         var config = ChunkloaderForgeMod.getConfig();
-        if (config == null) {
-            return;
-        }
-        var entry = config.getEntryByName(payload.playerName());
-        if (entry == null) {
-            var manager = ChunkloaderForgeMod.getChunkloaderManager();
-            if (manager != null) {
-                manager.clearCustomSkin(payload.playerName());
-            } else {
-                broadcastClearCustomSkin(player.level().getServer(), payload.playerName());
-            }
-            return;
-        }
-        if (!canModifyEntry(player, entry)) {
-            player.sendSystemMessage(Component.literal("You don't own this player.").withStyle(ChatFormatting.RED), false);
-            return;
-        }
+        var entry = config == null ? null : config.getEntryByName(name);
+        if (entry == null) error = "The selected player is unavailable.";
+        else if (!PermissionManager.canOperateEntry(player, entry)) error = "You don't have permission to change this player.";
         var manager = ChunkloaderForgeMod.getChunkloaderManager();
-        if (manager != null) {
-            manager.clearCustomSkin(entry.name() != null ? entry.name() : payload.playerName());
+        if (manager == null && error == null) error = "The selected player is unavailable.";
+        if (error != null) {
+            sendSkinChangeResult(player, name, payload.requestId(), true, false, error);
+            return;
         }
+        manager.clearCustomSkin(entry.name());
+        sendSkinChangeResult(player, name, payload.requestId(), true, true, "Custom skin removed.");
     }
 
     private static void handleRenameChunkloader(ServerPlayer player, de.chunkloader.network.payload.RenameChunkloaderPayload payload) {
         if (!PermissionManager.canUse(player)) {
-            player.sendSystemMessage(Component.literal("You don't have permission to rename players."), false);
+            CHANNEL.send(new de.chunkloader.network.payload.RenameChunkloaderResponsePayload(false, "You don't have permission to rename players."), PacketDistributor.PLAYER.with(player));
             return;
         }
         if (isOnActionCooldown(player)) {
+            CHANNEL.send(new de.chunkloader.network.payload.RenameChunkloaderResponsePayload(false, "Please wait a moment and try again."), PacketDistributor.PLAYER.with(player));
             return;
         }
         markActionCooldown(player);
 
         var config = ChunkloaderForgeMod.getConfig();
         if (config == null) {
+            CHANNEL.send(new de.chunkloader.network.payload.RenameChunkloaderResponsePayload(false, "Rename is temporarily unavailable."), PacketDistributor.PLAYER.with(player));
             return;
         }
         String dimension = payload.dimension() != null && !payload.dimension().isBlank()
@@ -916,7 +1002,7 @@ public class ChunkloaderNetworking {
             CHANNEL.send(new de.chunkloader.network.payload.RenameChunkloaderResponsePayload(false, "Player not found."), PacketDistributor.PLAYER.with(player));
             return;
         }
-        if (!canModifyEntry(player, entry)) {
+        if (!PermissionManager.canOperateEntry(player, entry)) {
             CHANNEL.send(new de.chunkloader.network.payload.RenameChunkloaderResponsePayload(false, "You don't own this player."), PacketDistributor.PLAYER.with(player));
             return;
         }
@@ -927,6 +1013,7 @@ public class ChunkloaderNetworking {
 
         ChunkloaderManager manager = ChunkloaderForgeMod.getChunkloaderManager();
         if (manager == null) {
+            CHANNEL.send(new de.chunkloader.network.payload.RenameChunkloaderResponsePayload(false, "Rename is temporarily unavailable."), PacketDistributor.PLAYER.with(player));
             return;
         }
 
@@ -941,11 +1028,6 @@ public class ChunkloaderNetworking {
         boolean success = manager.renameChunkloader(payload.chunkX(), payload.chunkZ(), dimension, newName);
         if (success) {
             CHANNEL.send(new de.chunkloader.network.payload.RenameChunkloaderResponsePayload(true, null), PacketDistributor.PLAYER.with(player));
-            var updated = config.getEntry(payload.chunkX(), payload.chunkZ(), dimension);
-            if (updated != null) {
-                broadcastOpenChunkMapUpdate(player.level().getServer(), manager, updated);
-                refreshOpenChunkMapMarkers(player.level().getServer(), manager);
-            }
         } else {
             String errorMessage = "This name is already in use or invalid.";
             CHANNEL.send(new de.chunkloader.network.payload.RenameChunkloaderResponsePayload(false, errorMessage), PacketDistributor.PLAYER.with(player));
@@ -983,32 +1065,7 @@ public class ChunkloaderNetworking {
             chunkSimulationCache.put(chunkKey, response);
         }
 
-        UUID playerId = player.getUUID();
-        de.chunkloader.network.payload.SimulationStatusResponsePayload lastStatus = lastSimulationStatus.get(playerId);
-
-        if (forceResponse || lastStatus == null || !statusEquals(lastStatus, response)) {
-            lastSimulationStatus.put(playerId, response);
-            CHANNEL.send(response, PacketDistributor.PLAYER.with(player));
-        }
-    }
-
-    private static boolean statusEquals(de.chunkloader.network.payload.SimulationStatusResponsePayload a, de.chunkloader.network.payload.SimulationStatusResponsePayload b) {
-        if (a.inSimulatedChunk() != b.inSimulatedChunk()) {
-            return false;
-        }
-        if (!java.util.Objects.equals(a.fakeplayerName(), b.fakeplayerName())) {
-            return false;
-        }
-        if (a.chunkX() != b.chunkX() || a.chunkZ() != b.chunkZ()) {
-            return false;
-        }
-        if (a.simulationDistance() != b.simulationDistance()) {
-            return false;
-        }
-        if (a.distance() != b.distance()) {
-            return false;
-        }
-        return true;
+        CHANNEL.send(response, PacketDistributor.PLAYER.with(player));
     }
 
     private static void handleChunkplayerStatusRequest(ServerPlayer player, boolean forceResponse) {
@@ -1042,41 +1099,18 @@ public class ChunkloaderNetworking {
             chunkChunkplayerCache.put(chunkKey, response);
         }
 
-        UUID playerId = player.getUUID();
-        de.chunkloader.network.payload.ChunkplayerStatusResponsePayload lastStatus = lastChunkplayerStatus.get(playerId);
-
-        if (forceResponse || lastStatus == null || !chunkplayerStatusEquals(lastStatus, response)) {
-            lastChunkplayerStatus.put(playerId, response);
-            CHANNEL.send(response, PacketDistributor.PLAYER.with(player));
-        }
-    }
-
-    private static boolean chunkplayerStatusEquals(de.chunkloader.network.payload.ChunkplayerStatusResponsePayload a, de.chunkloader.network.payload.ChunkplayerStatusResponsePayload b) {
-        if (a.inLoadedChunk() != b.inLoadedChunk()) {
-            return false;
-        }
-        if (!java.util.Objects.equals(a.chunkplayerName(), b.chunkplayerName())) {
-            return false;
-        }
-        if (a.chunkX() != b.chunkX() || a.chunkZ() != b.chunkZ()) {
-            return false;
-        }
-        if (a.radius() != b.radius()) {
-            return false;
-        }
-        if (a.distance() != b.distance()) {
-            return false;
-        }
-        return true;
+        CHANNEL.send(response, PacketDistributor.PLAYER.with(player));
     }
 
     public static void clearPlayerCache(Player player) {
         if (player != null) {
             UUID playerId = player.getUUID();
-            lastSimulationStatus.remove(playerId);
-            lastChunkplayerStatus.remove(playerId);
             openChunkMaps.remove(playerId);
             actionCooldownUntilMs.remove(playerId);
+            var manager = ChunkloaderForgeMod.getChunkloaderManager();
+            if (manager != null) {
+                manager.clearViewerVisualizations(playerId);
+            }
         }
     }
 
@@ -1108,6 +1142,31 @@ public class ChunkloaderNetworking {
         }
     }
 
+    public static void setActiveChunkloadersListHandler(java.util.function.Consumer<de.chunkloader.network.payload.ActiveChunkloadersListPayload> handler) {
+        activeChunkloadersListHandler = java.util.Objects.requireNonNull(handler);
+    }
+
+    private static void handleActiveChunkloadersListRequest(ServerPlayer player) {
+        if (!PermissionManager.canUse(player)) {
+            player.sendSystemMessage(Component.literal("You don't have permission to view players."), false);
+            return;
+        }
+        ChunkloaderManager manager = ChunkloaderForgeMod.getChunkloaderManager();
+        if (manager == null) return;
+        CHANNEL.send(new de.chunkloader.network.payload.ActiveChunkloadersListPayload(manager.getActiveChunkloadersList(player)), PacketDistributor.PLAYER.with(player));
+    }
+
+    private static void handleOpenChunkMapRequest(ServerPlayer player, de.chunkloader.network.payload.OpenChunkMapRequestPayload payload) {
+        if (!PermissionManager.canUse(player)) return;
+        var config = ChunkloaderForgeMod.getConfig();
+        ChunkloaderManager manager = ChunkloaderForgeMod.getChunkloaderManager();
+        if (config == null || manager == null) return;
+        String dimension = payload.dimension() != null && !payload.dimension().isBlank() ? payload.dimension() : "minecraft:overworld";
+        var entry = config.getEntry(payload.chunkX(), payload.chunkZ(), dimension);
+        if (entry == null || !entry.enabled() || !PermissionManager.canOperateEntry(player, entry)) return;
+        sendOpenChunkMap(player, manager.buildChunkMapData(entry, player));
+    }
+
     private static void handleDisabledChunkloadersListRequest(ServerPlayer player) {
         if (!PermissionManager.canUse(player)) {
             player.sendSystemMessage(Component.literal("You don't have permission to view disabled players."), false);
@@ -1117,14 +1176,14 @@ public class ChunkloaderNetworking {
         if (manager == null) {
             return;
         }
-        List<ChunkloaderManager.DisabledChunkloaderEntry> disabled = manager.getDisabledChunkloadersList();
+        List<ChunkloaderManager.DisabledChunkloaderEntry> disabled = manager.getDisabledChunkloadersList(player);
         List<de.chunkloader.network.payload.DisabledChunkloadersListPayload.DisabledChunkloaderEntry> payloadEntries = new java.util.ArrayList<>();
         for (ChunkloaderManager.DisabledChunkloaderEntry entry : disabled) {
             payloadEntries.add(new de.chunkloader.network.payload.DisabledChunkloadersListPayload.DisabledChunkloaderEntry(
                 entry.chunkX(), entry.chunkZ(),
                 entry.blockX(), entry.blockY(), entry.blockZ(),
                 entry.name(), entry.allowMobSpawning(), entry.dimension(), entry.isFakeplayer(),
-                entry.easterEggSkinIndex()
+                entry.easterEggSkinIndex(), entry.sharedBy()
             ));
         }
         CHANNEL.send(new de.chunkloader.network.payload.DisabledChunkloadersListPayload(payloadEntries), PacketDistributor.PLAYER.with(player));
@@ -1183,7 +1242,7 @@ public class ChunkloaderNetworking {
         if (entry == null || entry.enabled()) {
             return;
         }
-        if (!canModifyEntry(player, entry)) {
+        if (!PermissionManager.canOperateEntry(player, entry)) {
             player.sendSystemMessage(Component.literal("You don't own this player.").withStyle(ChatFormatting.RED), false);
             return;
         }
@@ -1192,7 +1251,16 @@ public class ChunkloaderNetworking {
         if (manager == null) {
             return;
         }
-        manager.restoreDisabledChunkloader(payload.chunkX(), payload.chunkZ(), dimension);
+        String limitMessage = config.getActivationLimitMessage(entry.ownerUuid(), entry.ownerName());
+        if (limitMessage != null) {
+            player.sendSystemMessage(Component.literal(limitMessage).withStyle(ChatFormatting.RED), false);
+            return;
+        }
+        if (!manager.restoreDisabledChunkloader(payload.chunkX(), payload.chunkZ(), dimension)) {
+            String failure = config.getActivationLimitMessage(entry.ownerUuid(), entry.ownerName());
+            player.sendSystemMessage(Component.literal(failure != null
+                    ? failure : "Could not restore this player.").withStyle(ChatFormatting.RED), false);
+        }
         handleDisabledChunkloadersListRequest(player);
     }
 
@@ -1218,7 +1286,7 @@ public class ChunkloaderNetworking {
             CHANNEL.send(new de.chunkloader.network.payload.UpdateDisabledChunkloaderCoordsResponsePayload(false, "Player not found."), PacketDistributor.PLAYER.with(player));
             return;
         }
-        if (!canModifyEntry(player, entry)) {
+        if (!PermissionManager.canOperateEntry(player, entry)) {
             CHANNEL.send(new de.chunkloader.network.payload.UpdateDisabledChunkloaderCoordsResponsePayload(false, "You don't own this player."), PacketDistributor.PLAYER.with(player));
             return;
         }
@@ -1228,15 +1296,21 @@ public class ChunkloaderNetworking {
             CHANNEL.send(new de.chunkloader.network.payload.UpdateDisabledChunkloaderCoordsResponsePayload(false, "Player manager not available."), PacketDistributor.PLAYER.with(player));
             return;
         }
-        String errorMessage = manager.updateDisabledChunkloaderCoordsWithMessage(
+        String newDimension = payload.newDimension() != null && !payload.newDimension().isBlank()
+                    ? payload.newDimension() : oldDimension;
+            String errorMessage = manager.updateDisabledChunkloaderCoordsWithMessage(
             payload.oldChunkX(), payload.oldChunkZ(), oldDimension,
             payload.newChunkX(), payload.newChunkZ(),
-            payload.newBlockX(), payload.newBlockY(), payload.newBlockZ()
+            payload.newBlockX(), payload.newBlockY(), payload.newBlockZ(),
+                newDimension
         );
         boolean success = errorMessage == null;
         CHANNEL.send(new de.chunkloader.network.payload.UpdateDisabledChunkloaderCoordsResponsePayload(success, success ? "Coordinates updated successfully." : errorMessage), PacketDistributor.PLAYER.with(player));
         if (success) {
-            handleDisabledChunkloadersListRequest(player);
+            refreshOpenChunkMapMarkers(player.level().getServer(), manager);
+            var moved = config.getEntry(payload.newChunkX(), payload.newChunkZ(), newDimension);
+            if (moved != null && moved.enabled()) handleActiveChunkloadersListRequest(player);
+            else handleDisabledChunkloadersListRequest(player);
         }
     }
 }

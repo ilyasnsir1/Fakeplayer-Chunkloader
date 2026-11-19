@@ -34,7 +34,8 @@ public record ChunkMapData(
     List<ChunkloaderPosition> otherChunkloaders,
     String ownerName,
     boolean easterEgg,
-    boolean mobTarget
+    boolean mobTarget,
+    boolean mobAi
 ) {
 
     public void write(FriendlyByteBuf buf) {
@@ -75,6 +76,7 @@ public record ChunkMapData(
         buf.writeUtf(ownerName != null ? ownerName : "");
         buf.writeBoolean(easterEgg);
         buf.writeBoolean(mobTarget);
+        buf.writeBoolean(mobAi);
     }
 
     public static ChunkMapData read(FriendlyByteBuf buf) {
@@ -118,6 +120,7 @@ public record ChunkMapData(
         String ownerName = buf.readUtf(32767);
         boolean easterEgg = buf.readBoolean();
         boolean mobTarget = buf.readBoolean();
+        boolean mobAi = buf.readBoolean();
         return new ChunkMapData(
             name,
             enabled,
@@ -146,7 +149,8 @@ public record ChunkMapData(
             Collections.unmodifiableList(otherChunkloaders),
             ownerName.isEmpty() ? null : ownerName,
             easterEgg,
-            mobTarget
+            mobTarget,
+            mobAi
         );
     }
 }

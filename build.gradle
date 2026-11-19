@@ -8,7 +8,7 @@ version = mod_version
 group = mod_group_id
 
 base {
-    archivesName = "fakeplayerchunkloader1.21.2-1.21.3-forge"
+    archivesName = "fakeplayerchunkloader1.21.3-forge"
 }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
