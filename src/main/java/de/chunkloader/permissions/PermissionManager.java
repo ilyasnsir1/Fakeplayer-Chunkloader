@@ -31,7 +31,7 @@ public class PermissionManager {
     }
 
     public static void initConfig(MinecraftServer server) {
-        if (permissionConfig == null && server != null) {
+        if (server != null) {
             permissionConfig = PermissionConfig.load(server);
             ChunkloaderMod.LOGGER.info("Built-in permission system initialized.");
         }
@@ -107,6 +107,29 @@ public class PermissionManager {
 
     public static boolean isAdmin(ServerPlayerEntity player) {
         return hasPermission(player, PERMISSION_ADMIN);
+    }
+
+    public static boolean canOperateEntry(ServerPlayerEntity player, de.chunkloader.config.ChunkloaderTarget entry) {
+        return canUse(player) && (canModifyEntry(player, entry)
+                || (entry != null && entry.sharedWith().containsKey(player.getUuid())));
+    }
+
+    public static boolean canModifyEntry(ServerPlayerEntity player, de.chunkloader.config.ChunkloaderTarget entry) {
+        if (player == null || entry == null) {
+            return false;
+        }
+        if (isAdmin(player)) {
+            return true;
+        }
+        if (entry.ownerUuid() != null) {
+            return player.getUuid().equals(entry.ownerUuid());
+        }
+        String ownerName = entry.ownerName();
+        if (ownerName == null || ownerName.isBlank()) {
+            return false;
+        }
+        String playerName = player.getGameProfile().name();
+        return playerName != null && playerName.equalsIgnoreCase(ownerName);
     }
 }
 

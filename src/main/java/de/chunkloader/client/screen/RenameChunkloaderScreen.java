@@ -16,6 +16,8 @@ import net.minecraft.util.Formatting;
 @Environment(EnvType.CLIENT)
 public class RenameChunkloaderScreen extends Screen {
 
+    private static final int WARNING_PADDING = 4;
+
     private final Screen parent;
     private final int chunkX;
     private final int chunkZ;
@@ -60,11 +62,12 @@ public class RenameChunkloaderScreen extends Screen {
 
         int buttonWidth = 100;
         int buttonSpacing = 110;
+        int buttonY = nameField.getY() + nameField.getHeight() + this.textRenderer.fontHeight + 2 * WARNING_PADDING;
 
         saveButtonWidget = ButtonWidget.builder(
                 Text.literal("Save"),
                 btn -> save())
-            .dimensions(centerX - buttonSpacing, centerY + 20, buttonWidth, 20)
+            .dimensions(centerX - buttonSpacing, buttonY, buttonWidth, 20)
             .build();
         updateSaveButtonWidgetState();
         this.addDrawableChild(saveButtonWidget);
@@ -75,7 +78,7 @@ public class RenameChunkloaderScreen extends Screen {
                     isClosed = true;
                     this.client.setScreen(parent);
                 })
-            .dimensions(centerX + buttonSpacing - buttonWidth, centerY + 20, buttonWidth, 20)
+            .dimensions(centerX + buttonSpacing - buttonWidth, buttonY, buttonWidth, 20)
             .build()
         );
 
@@ -138,7 +141,7 @@ public class RenameChunkloaderScreen extends Screen {
             FakePlayerNameCache.clear();
             FakePlayerVisibilityCache.clear();
             isClosed = true;
-            this.client.setScreen(null);
+            this.close();
         } else {
             hasServerWarning = true;
             warningMessage = payload.message() != null ? payload.message() : "This name is already in use or invalid.";
@@ -169,7 +172,8 @@ public class RenameChunkloaderScreen extends Screen {
         if (warningMessage != null) {
             Text warning = Text.literal(warningMessage).formatted(Formatting.RED);
             int warningWidth = this.textRenderer.getWidth(warning);
-            context.drawText(this.textRenderer, warning, centerX - warningWidth / 2, centerY + 5, 0xFFFFFFFF, false);
+            int warningY = nameField.getY() + nameField.getHeight() + WARNING_PADDING;
+            context.drawText(this.textRenderer, warning, centerX - warningWidth / 2, warningY, 0xFFFFFFFF, false);
         }
 
         super.render(context, mouseX, mouseY, delta);
@@ -199,5 +203,11 @@ public class RenameChunkloaderScreen extends Screen {
     public boolean shouldPause() {
         return false;
     }
+
+    public void close() {
+        isClosed = true;
+        this.client.setScreen(parent);
+    }
+
 }
 

@@ -55,12 +55,7 @@ public class ChunkloaderConfirmationScreen extends Screen {
 
         this.addDrawableChild(ButtonWidget.builder(
                 Text.literal("Cancel"),
-                btn -> {
-                    if (onCancel != null) {
-                        onCancel.run();
-                    }
-                    this.client.setScreen(parent);
-                })
+                btn -> this.close())
             .dimensions(buttonX + buttonWidth + buttonSpacing, buttonY, buttonWidth, 20)
             .build()
         );
@@ -95,6 +90,14 @@ public class ChunkloaderConfirmationScreen extends Screen {
 
     @Override
     public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
+    }
+
+    @Override
+    public void close() {
+        if (onCancel != null) {
+            onCancel.run();
+        }
+        this.client.setScreen(parent);
     }
 
     @Override
