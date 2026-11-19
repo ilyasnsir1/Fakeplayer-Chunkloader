@@ -3,20 +3,16 @@ package de.chunkloader.client;
 import de.chunkloader.ChunkloaderForgeMod;
 import net.minecraft.client.KeyMapping;
 import com.mojang.blaze3d.platform.InputConstants;
-import net.neoforged.api.distmarker.Dist;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
 import org.lwjgl.glfw.GLFW;
 
-@EventBusSubscriber(modid = ChunkloaderForgeMod.MODID, value = Dist.CLIENT)
 public class ChunkloaderKeyMappings {
 
     public static KeyMapping simulationStatusHUDToggleKey;
     public static KeyMapping chunkplayerStatusHUDToggleKey;
     public static KeyMapping disabledChunkloadersKey;
+    public static KeyMapping activeChunkloadersKey;
 
-    @SubscribeEvent
     public static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
         simulationStatusHUDToggleKey = new KeyMapping(
             "key.chunkloader.simulation_status_hud_toggle",
@@ -41,6 +37,14 @@ public class ChunkloaderKeyMappings {
             "key.categories.misc"
         );
         event.register(disabledChunkloadersKey);
+
+        activeChunkloadersKey = new KeyMapping(
+            "key.chunkloader.active_chunkloaders",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_F9,
+            "key.categories.misc"
+        );
+        event.register(activeChunkloadersKey);
     }
 }
 

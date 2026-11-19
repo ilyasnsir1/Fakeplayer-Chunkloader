@@ -3,10 +3,20 @@ package de.chunkloader.client.screen;
 import de.chunkloader.client.network.ChunkloaderClientNetworking;
 import de.chunkloader.network.payload.DisabledChunkloadersListPayload;
 import de.chunkloader.network.payload.UpdateDisabledChunkloaderCoordsResponsePayload;
+import java.lang.reflect.Field;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import net.minecraft.client.gui.components.ChatComponent;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.GuiMessage;
 import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
 
@@ -19,6 +29,32 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
     private EditBox blockYField;
     private EditBox blockZField;
     private Button saveButton;
+    private Button cancelButton;
+    private Button chatButton;
+    private int contentTop;
+    private int fieldY;
+    private int buttonY;
+    private boolean chatOpen;
+    private int chatScroll;
+    private int chatLineHeight;
+    private boolean selectingChat;
+    private int anchorIndex = -1;
+    private int anchorChar;
+    private int focusIndex = -1;
+    private int focusChar;
+    private final List<ChatRow> chatRows = new ArrayList<>();
+    private boolean applyingPaste;
+    private static final Pattern NUMBER = Pattern.compile("-?\\d+");
+    private String draftX;
+    private String draftY;
+    private String draftZ;
+    private String selectedDimension;
+    private static final String[] DIMENSION_IDS = {
+        "minecraft:overworld",
+        "minecraft:the_nether",
+        "minecraft:the_end"
+    };
+    private static final String[] DIMENSION_LABELS = {"Overworld", "Nether", "End"};
 
     private String warningMessage = null;
     private boolean isClosed = false;
@@ -26,43 +62,34 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
     private long updateStartTime = 0;
     private static final long UPDATE_DISPLAY_DURATION_MS = 1500;
 
-    private void drawDimBackground(GuiGraphics graphics) {
-        graphics.fill(0, 0, this.width, this.height, 0xC0101010);
-    }
-
     public EditDisabledChunkloaderCoordsScreen(Screen parent, DisabledChunkloadersListPayload.DisabledChunkloaderEntry entry) {
         super(Component.literal("Edit Coordinates"));
         this.parent = parent;
         this.entry = entry;
+        this.selectedDimension = normalizeDimension(entry.dimension());
     }
 
     @Override
     protected void init() {
         super.init();
 
-        int fieldWidth = 100;
+        layout();
+        int fieldWidth = 72;
         int fieldHeight = 20;
-        int centerX = this.width / 2;
-        int startY = this.height / 2 - 60;
-        int spacing = 30;
+        int gap = 18;
+        int rowWidth = fieldWidth * 3 + gap * 2;
+        int rowX = (this.width - rowWidth) / 2;
+        Font renderer = this.font;
 
-        var font = this.font;
-
-        int labelWidth = Math.max(
-                    font.width("Block X:"),
-                    Math.max(
-                        font.width("Block Y:"),
-                        font.width("Block Z:")
-            )
-        ) + 5;
-        int totalWidth = labelWidth + 10 + fieldWidth;
-        int labelX = centerX - totalWidth / 2;
-        int fieldX = labelX + labelWidth + 10;
-
-        blockXField = new EditBox(font, fieldX, startY, fieldWidth, fieldHeight, Component.literal("X coordinate"));
+        blockXField = new EditBox(renderer, rowX, fieldY, fieldWidth, fieldHeight, Component.literal("X"));
+        blockXField.setCanLoseFocus(true);
         blockXField.setMaxLength(11);
-        blockXField.setValue("");
+        blockXField.setValue(draftX != null ? draftX : Integer.toString(entry.blockX()));
+        blockXField.setHint(Component.literal("X coordinate").withStyle(ChatFormatting.GRAY));
         blockXField.setResponder(text -> {
+            if (fillFieldsFromText(text)) {
+                return;
+            }
             if (!text.matches("^-?\\d*$")) {
                 String filtered = text.replaceAll("[^-\\d]", "");
                 blockXField.setValue(filtered);
@@ -73,10 +100,15 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
         });
         this.addWidget(blockXField);
 
-        blockYField = new EditBox(font, fieldX, startY + spacing, fieldWidth, fieldHeight, Component.literal("Y coordinate"));
+        blockYField = new EditBox(renderer, rowX + fieldWidth + gap, fieldY, fieldWidth, fieldHeight, Component.literal("Y"));
+        blockYField.setCanLoseFocus(true);
         blockYField.setMaxLength(11);
-        blockYField.setValue("");
+        blockYField.setValue(draftY != null ? draftY : Integer.toString(entry.blockY()));
+        blockYField.setHint(Component.literal("Y coordinate").withStyle(ChatFormatting.GRAY));
         blockYField.setResponder(text -> {
+            if (fillFieldsFromText(text)) {
+                return;
+            }
             if (!text.matches("^-?\\d*$")) {
                 String filtered = text.replaceAll("[^-\\d]", "");
                 blockYField.setValue(filtered);
@@ -86,10 +118,15 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
         });
         this.addWidget(blockYField);
 
-        blockZField = new EditBox(font, fieldX, startY + spacing * 2, fieldWidth, fieldHeight, Component.literal("Z coordinate"));
+        blockZField = new EditBox(renderer, rowX + (fieldWidth + gap) * 2, fieldY, fieldWidth, fieldHeight, Component.literal("Z"));
+        blockZField.setCanLoseFocus(true);
         blockZField.setMaxLength(11);
-        blockZField.setValue("");
+        blockZField.setValue(draftZ != null ? draftZ : Integer.toString(entry.blockZ()));
+        blockZField.setHint(Component.literal("Z coordinate").withStyle(ChatFormatting.GRAY));
         blockZField.setResponder(text -> {
+            if (fillFieldsFromText(text)) {
+                return;
+            }
             if (!text.matches("^-?\\d*$")) {
                 String filtered = text.replaceAll("[^-\\d]", "");
                 blockZField.setValue(filtered);
@@ -100,26 +137,163 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
         });
         this.addWidget(blockZField);
 
-        int buttonWidth = 100;
-        int buttonSpacing = 110;
+        int buttonWidth = 72;
+        int buttonGap = 8;
+        int buttonsWidth = buttonWidth * 3 + buttonGap * 2;
+        int buttonX = (this.width - buttonsWidth) / 2;
+
+        chatButton = Button.builder(
+                Component.literal("Chat"),
+                btn -> {
+                    chatOpen = !chatOpen;
+                    btn.setMessage(Component.literal(chatOpen ? "Hide" : "Chat"));
+                    btn.setFocused(false);
+                    this.setFocused(null);
+                })
+            .bounds(buttonX, buttonY, buttonWidth, 20)
+            .build();
+        this.addRenderableWidget(chatButton);
 
         saveButton = Button.builder(
                 Component.literal("Save"),
                 btn -> save())
-            .bounds(centerX - buttonSpacing, startY + spacing * 3 + 20, buttonWidth, 20)
+            .bounds(buttonX + buttonWidth + buttonGap, buttonY, buttonWidth, 20)
             .build();
         saveButton.active = false;
         this.addRenderableWidget(saveButton);
 
-        this.addRenderableWidget(Button.builder(
-                Component.literal("Cancel"),
+        cancelButton = Button.builder(
+                Component.literal("Back"),
                 btn -> {
                     isClosed = true;
                     this.minecraft.setScreen(parent);
                 })
-            .bounds(centerX + buttonSpacing - buttonWidth, startY + spacing * 3 + 20, buttonWidth, 20)
-            .build()
-        );
+            .bounds(buttonX + (buttonWidth + buttonGap) * 2, buttonY, buttonWidth, 20)
+            .build();
+        this.addRenderableWidget(cancelButton);
+
+    }
+
+    private void layout() {
+        int messageExtra = warningMessage != null ? 16 : 0;
+        int blockHeight = 142 + messageExtra;
+        contentTop = Math.max(8, (this.height - blockHeight) / 2);
+        fieldY = contentTop + 64;
+        buttonY = fieldY + 58 + messageExtra;
+        positionFields();
+        positionButtons();
+    }
+
+    private void positionFields() {
+        if (blockXField == null || blockYField == null || blockZField == null) {
+            return;
+        }
+        int fieldWidth = 72;
+        int gap = 18;
+        int rowX = (this.width - (fieldWidth * 3 + gap * 2)) / 2;
+        blockXField.setPosition(rowX, fieldY);
+        blockYField.setPosition(rowX + fieldWidth + gap, fieldY);
+        blockZField.setPosition(rowX + (fieldWidth + gap) * 2, fieldY);
+    }
+
+    private void positionButtons() {
+        if (chatButton == null || saveButton == null || cancelButton == null) {
+            return;
+        }
+        int buttonWidth = 72;
+        int buttonGap = 8;
+        int buttonX = (this.width - (buttonWidth * 3 + buttonGap * 2)) / 2;
+        chatButton.setPosition(buttonX, buttonY);
+        saveButton.setPosition(buttonX + buttonWidth + buttonGap, buttonY);
+        cancelButton.setPosition(buttonX + (buttonWidth + buttonGap) * 2, buttonY);
+    }
+
+    private boolean fillFieldsFromText(String text) {
+        if (applyingPaste || blockXField == null || blockYField == null || blockZField == null) {
+            return false;
+        }
+        Matcher matcher = NUMBER.matcher(text);
+        List<String> numbers = new ArrayList<>();
+        while (matcher.find() && numbers.size() < 3) {
+            numbers.add(matcher.group());
+        }
+        if (numbers.size() < 2) {
+            return false;
+        }
+        applyingPaste = true;
+        blockXField.setValue(numbers.get(0));
+        blockYField.setValue(numbers.get(1));
+        if (numbers.size() > 2) {
+            blockZField.setValue(numbers.get(2));
+        }
+        applyingPaste = false;
+        updateChunkDisplay();
+        updateSaveButtonState();
+        return true;
+    }
+
+    private void clearFieldFocus() {
+        if (this.getFocused() == blockXField || this.getFocused() == blockYField || this.getFocused() == blockZField) {
+            this.setFocused(null);
+        }
+        if (blockXField != null) {
+            blockXField.setFocused(false);
+        }
+        if (blockYField != null) {
+            blockYField.setFocused(false);
+        }
+        if (blockZField != null) {
+            blockZField.setFocused(false);
+        }
+    }
+
+    private boolean insideField(EditBox field, double mouseX, double mouseY) {
+        return field != null
+            && mouseX >= field.getX()
+            && mouseX < field.getX() + field.getWidth()
+            && mouseY >= field.getY()
+            && mouseY < field.getY() + field.getHeight();
+    }
+
+    private boolean isOverField(double mouseX, double mouseY) {
+        return insideField(blockXField, mouseX, mouseY)
+            || insideField(blockYField, mouseX, mouseY)
+            || insideField(blockZField, mouseX, mouseY);
+    }
+
+    private boolean isOverButton(double mouseX, double mouseY) {
+        return (chatButton != null && chatButton.isMouseOver(mouseX, mouseY))
+            || (saveButton != null && saveButton.isMouseOver(mouseX, mouseY))
+            || (cancelButton != null && cancelButton.isMouseOver(mouseX, mouseY));
+    }
+
+    private void drawAxisLabel(GuiGraphics context, Font renderer, String label, EditBox field) {
+        int x = field.getX() + (field.getWidth() - renderer.width(label)) / 2;
+        context.drawString(renderer, Component.literal(label), x, field.getY() - 12, 0xFFCCCCCC, false);
+    }
+
+    private int playerNameColor() {
+        if (entry.easterEggSkinIndex() >= 0) {
+            return 0xFFFFAA00;
+        }
+        if (entry.allowMobSpawning()) {
+            return entry.hasWarning() ? 0xFFFFFF55 : 0xFF55FF55;
+        }
+        return 0xFF5555FF;
+    }
+
+    private int dimensionColor(String dimension) {
+        String dim = dimension.toLowerCase();
+        if (dim.contains("overworld")) {
+            return 0xFF55FF55;
+        }
+        if (dim.contains("nether")) {
+            return 0xFFFF5555;
+        }
+        if (dim.contains("end")) {
+            return 0xFFFF55FF;
+        }
+        return 0xFFCCCCCC;
     }
 
     private void updateChunkDisplay() {
@@ -175,7 +349,8 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
             ChunkloaderClientNetworking.sendUpdateDisabledChunkloaderCoords(
                 entry.chunkX(), entry.chunkZ(), entry.dimension(),
                 newChunkX, newChunkZ,
-                newBlockX, newBlockY, newBlockZ
+                newBlockX, newBlockY, newBlockZ,
+                selectedDimension
             );
 
             warningMessage = "Updating...";
@@ -219,7 +394,11 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
         if (response.success()) {
             isClosed = true;
             this.minecraft.setScreen(parent);
-            ChunkloaderClientNetworking.requestDisabledChunkloadersList();
+            if (parent instanceof ActiveChunkloadersScreen) {
+                ChunkloaderClientNetworking.requestActiveChunkloadersList();
+            } else {
+                ChunkloaderClientNetworking.requestDisabledChunkloadersList();
+            }
         } else {
             warningMessage = response.message() != null ? response.message() : "Failed to update coordinates.";
             if (saveButton != null) {
@@ -229,144 +408,64 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
     }
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         if (pendingResponse != null && !isClosed) {
             processPendingResponse();
         }
 
-        drawDimBackground(graphics);
-
-        var font = this.font;
-        int centerX = this.width / 2;
-        int startY = this.height / 2 - 60;
-        int spacing = 30;
-        int fieldWidth = 100;
-
-        String name = entry.name() != null ? entry.name() : "Unnamed";
-        ChatFormatting nameColor;
-        if (entry.allowMobSpawning()) {
-            if (entry.hasWarning()) {
-                nameColor = ChatFormatting.YELLOW;
-            } else {
-                nameColor = ChatFormatting.GREEN;
+        context.fill(0, 0, this.width, this.height, 0xC0101010);
+        if (chatButton != null && chatButton.isFocused()) {
+            chatButton.setFocused(false);
+            if (this.getFocused() == chatButton) {
+                this.setFocused(null);
             }
-        } else {
-            nameColor = ChatFormatting.BLUE;
         }
+        layout();
 
-        Component infoText = Component.literal("⚠ Enter block coordinates, not your own coordinates!")
-            .withStyle(ChatFormatting.YELLOW, ChatFormatting.ITALIC);
-        int infoWidth = font.width(infoText);
-        graphics.drawString(font, infoText, centerX - infoWidth / 2, startY - 70, 0xFFFFFF00, false);
+        Font renderer = this.font;
+        int centerX = this.width / 2;
+        int y = contentTop;
+        String name = entry.name() != null ? entry.name() : "Unnamed";
+        Component nameText = Component.literal(name).withStyle(ChatFormatting.BOLD);
+        context.drawString(renderer, nameText, centerX - renderer.width(nameText) / 2, y, playerNameColor(), false);
+        context.fill(centerX - 120, y + 16, centerX + 120, y + 17, 0x33FFFFFF);
 
-        Component title = Component.literal("Edit Coordinates: ").withStyle(ChatFormatting.BOLD)
-            .append(Component.literal(name).withStyle(nameColor));
-        int titleWidth = font.width(title);
-        graphics.drawString(font, title, centerX - titleWidth / 2, startY - 30, 0xFFFFFFFF, false);
+        drawAxisLabel(context, renderer, "X", blockXField);
+        drawAxisLabel(context, renderer, "Y", blockYField);
+        drawAxisLabel(context, renderer, "Z", blockZField);
 
-        int labelWidth = Math.max(
-                    font.width("Block X:"),
-                    Math.max(
-                        font.width("Block Y:"),
-                        font.width("Block Z:")
-            )
-        ) + 5;
-        int totalWidth = labelWidth + 10 + fieldWidth;
-        int labelX = centerX - totalWidth / 2;
-        int fieldX = labelX + labelWidth + 10;
-        int labelY = startY + 5;
+        blockXField.render(context, mouseX, mouseY, delta);
+        blockYField.render(context, mouseX, mouseY, delta);
+        blockZField.render(context, mouseX, mouseY, delta);
 
-        int chunkX = 0;
-        int chunkZ = 0;
+        int chunkX = entry.blockX() >> 4;
+        int chunkZ = entry.blockZ() >> 4;
         try {
             String blockXText = blockXField.getValue().trim();
             String blockZText = blockZField.getValue().trim();
             if (!blockXText.isEmpty() && !blockZText.isEmpty()) {
-                int blockX = Integer.parseInt(blockXText);
-                int blockZ = Integer.parseInt(blockZText);
-                chunkX = blockX >> 4;
-                chunkZ = blockZ >> 4;
-            } else {
-                chunkX = entry.blockX() >> 4;
-                chunkZ = entry.blockZ() >> 4;
+                chunkX = Integer.parseInt(blockXText) >> 4;
+                chunkZ = Integer.parseInt(blockZText) >> 4;
             }
-        } catch (NumberFormatException e) {
-            chunkX = entry.blockX() >> 4;
-            chunkZ = entry.blockZ() >> 4;
+        } catch (NumberFormatException ignored) {
         }
 
-        Component chunkInfo = Component.literal("Chunk: " + chunkX + ", " + chunkZ).withStyle(ChatFormatting.GRAY);
-        int chunkInfoWidth = font.width(chunkInfo);
-        graphics.drawString(font, chunkInfo, centerX - chunkInfoWidth / 2, startY - 15, 0xFFCCCCCC, false);
+        String chunkLabel = "Chunk " + chunkX + ", " + chunkZ;
+        context.drawString(renderer, Component.literal(chunkLabel), centerX - renderer.width(chunkLabel) / 2, fieldY + 26, 0xFFCCCCCC, false);
+        drawDimensionSwitcher(context, renderer, fieldY + 42, mouseX, mouseY);
 
-        graphics.drawString(font, Component.literal("Block X:"), labelX, labelY, 0xFFCCCCCC, false);
-        graphics.drawString(font, Component.literal("Block Y:"), labelX, labelY + spacing, 0xFFCCCCCC, false);
-        graphics.drawString(font, Component.literal("Block Z:"), labelX, labelY + spacing * 2, 0xFFCCCCCC, false);
-
-        blockXField.render(graphics, mouseX, mouseY, delta);
-        blockYField.render(graphics, mouseX, mouseY, delta);
-        blockZField.render(graphics, mouseX, mouseY, delta);
-
-        int fieldHeight = 20;
-        int fieldPadding = 4;
-
-        if (blockXField.getValue().isEmpty() && !blockXField.isFocused()) {
-            Component placeholder = Component.literal("X coordinate").withStyle(ChatFormatting.GRAY);
-            int fieldY = blockXField.getY();
-            int textY = fieldY + (fieldHeight - 8) / 2;
-            graphics.drawString(font, placeholder, fieldX + fieldPadding, textY, 0xFF808080, false);
-        }
-        if (blockYField.getValue().isEmpty() && !blockYField.isFocused()) {
-            Component placeholder = Component.literal("Y coordinate").withStyle(ChatFormatting.GRAY);
-            int fieldY = blockYField.getY();
-            int textY = fieldY + (fieldHeight - 8) / 2;
-            graphics.drawString(font, placeholder, fieldX + fieldPadding, textY, 0xFF808080, false);
-        }
-        if (blockZField.getValue().isEmpty() && !blockZField.isFocused()) {
-            Component placeholder = Component.literal("Z coordinate").withStyle(ChatFormatting.GRAY);
-            int fieldY = blockZField.getY();
-            int textY = fieldY + (fieldHeight - 8) / 2;
-            graphics.drawString(font, placeholder, fieldX + fieldPadding, textY, 0xFF808080, false);
-        }
+        String note = "Block coordinates, not your position.";
+        context.drawString(renderer, Component.literal(note), centerX - renderer.width(note) / 2, fieldY - 36, 0xFFFFFF55, false);
 
         if (warningMessage != null) {
-            ChatFormatting color = warningMessage.startsWith("Updating") ? ChatFormatting.YELLOW : ChatFormatting.RED;
-            Component warning = Component.literal(warningMessage).withStyle(color);
-            int warningWidth = font.width(warning);
-            graphics.drawString(font, warning, centerX - warningWidth / 2, startY + spacing * 3 + 5, 0xFFFFFFFF, false);
+            int warningColor = warningMessage.startsWith("Updating") ? 0xFFFFFF55 : 0xFFFF5555;
+            context.drawString(renderer, Component.literal(warningMessage), centerX - renderer.width(warningMessage) / 2, fieldY + 56, warningColor, false);
         }
 
-        super.render(graphics, mouseX, mouseY, delta);
-    }
-
-    @Override
-    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
-    }
-
-    @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 0) {
-            boolean clickedAnyField = (blockXField != null && blockXField.isMouseOver(mouseX, mouseY))
-                || (blockYField != null && blockYField.isMouseOver(mouseX, mouseY))
-                || (blockZField != null && blockZField.isMouseOver(mouseX, mouseY));
-
-            if (!clickedAnyField) {
-                if (this.getFocused() == blockXField || this.getFocused() == blockYField || this.getFocused() == blockZField) {
-                    this.setFocused(null);
-                }
-                if (blockXField != null) {
-                    blockXField.setFocused(false);
-                }
-                if (blockYField != null) {
-                    blockYField.setFocused(false);
-                }
-                if (blockZField != null) {
-                    blockZField.setFocused(false);
-                }
-            }
+        super.render(context, mouseX, mouseY, delta);
+        if (chatOpen) {
+            drawChatPanel(context, renderer);
         }
-
-        return super.mouseClicked(mouseX, mouseY, button);
     }
 
     public Screen getParent() {
@@ -374,13 +473,376 @@ public class EditDisabledChunkloaderCoordsScreen extends Screen {
     }
 
     @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        int dimensionStep = dimensionArrowAt(mouseX, mouseY);
+        if (dimensionStep != 0) {
+            int index = selectedDimensionIndex();
+            int count = DIMENSION_IDS.length;
+            selectedDimension = DIMENSION_IDS[(index + dimensionStep + count) % count];
+            clearFieldFocus();
+            return true;
+        }
+        if (chatOpen && startChatSelection(mouseX, mouseY)) {
+            clearFieldFocus();
+            return true;
+        }
+        boolean outside = !isOverField(mouseX, mouseY) && !isOverButton(mouseX, mouseY);
+        if (outside) {
+            clearFieldFocus();
+        }
+        boolean handled = super.mouseClicked(mouseX, mouseY, button);
+        if (this.getFocused() == chatButton) {
+            this.setFocused(null);
+        }
+        if (chatButton != null) {
+            chatButton.setFocused(false);
+        }
+        if (outside) {
+            clearFieldFocus();
+        }
+        return handled;
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
+        if (selectingChat) {
+            moveChatSelection(mouseX, mouseY);
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (selectingChat) {
+            moveChatSelection(mouseX, mouseY);
+            copyChatSelection();
+            selectingChat = false;
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        boolean typing = (blockXField != null && blockXField.isFocused())
+            || (blockYField != null && blockYField.isFocused())
+            || (blockZField != null && blockZField.isFocused());
+        if (!typing && this.minecraft != null && this.minecraft.options.keyChat.matches(keyCode, scanCode)) {
+            chatOpen = !chatOpen;
+            return true;
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        if (chatOpen && mouseY >= chatTop()) {
+            chatScroll = Math.max(0, chatScroll + (int) Math.signum(verticalAmount));
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+    }
+
+    @Override
+    public void renderBackground(GuiGraphics context, int mouseX, int mouseY, float delta) {
+    }
+
+    @Override
     public boolean isPauseScreen() {
         return false;
     }
 
-    @Override
-    public void tick() {
-        super.tick();
+    private int chatTop() {
+        return buttonY + 32;
     }
+
+    private void drawChatPanel(GuiGraphics context, Font renderer) {
+        int top = chatTop();
+        int bottom = this.height - 10;
+        int left = 28;
+        int right = this.width - 28;
+        if (bottom - top < 24) {
+            return;
+        }
+        context.fill(left, top, right, top + 1, 0x33FFFFFF);
+
+        int textRight = right - 10;
+        rebuildChatRows(renderer, textRight - left);
+        int lineHeight = renderer.lineHeight + 3;
+        chatLineHeight = lineHeight;
+        int textTop = top + 8;
+        int visible = Math.max(1, (bottom - textTop) / lineHeight);
+        int maxScroll = Math.max(0, chatRows.size() - visible);
+        if (chatScroll > maxScroll) {
+            chatScroll = maxScroll;
+        }
+        if (chatRows.isEmpty()) {
+            String empty = "No messages";
+            context.drawString(renderer, Component.literal(empty), (this.width - renderer.width(empty)) / 2, textTop, 0xFFCCCCCC, false);
+            return;
+        }
+        int shown = Math.min(visible, chatRows.size() - chatScroll);
+        int first = Math.max(0, chatRows.size() - shown - chatScroll);
+        int textY = textTop;
+        for (ChatRow row : chatRows) {
+            row.x = -1;
+            row.y = -1;
+        }
+        context.enableScissor(left, textTop - 1, textRight, bottom);
+        for (int i = first; i < first + shown; i++) {
+            ChatRow row = chatRows.get(i);
+            row.x = left;
+            row.y = textY;
+            drawChatSelection(context, renderer, i, row, lineHeight);
+            context.drawString(renderer, row.visual, left, textY, 0xFFFFFFFF, false);
+            textY += lineHeight;
+        }
+        context.disableScissor();
+
+        if (maxScroll > 0) {
+            int trackX = right - 2;
+            int trackHeight = bottom - textTop;
+            int thumbHeight = Math.max(12, (int) (visible / (float) chatRows.size() * trackHeight));
+            int travel = trackHeight - thumbHeight;
+            int thumbY = textTop + travel - (int) (chatScroll / (float) maxScroll * travel);
+            context.fill(trackX, textTop, trackX + 2, textTop + trackHeight, 0x33000000);
+            context.fill(trackX, thumbY, trackX + 2, thumbY + thumbHeight, 0xFFAAAAAA);
+        }
+    }
+
+    private void rebuildChatRows(Font renderer, int maxWidth) {
+        chatRows.clear();
+        List<GuiMessage> messages = chatMessages();
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            Component content = messages.get(i).content();
+            for (FormattedCharSequence line : renderer.split(content, maxWidth)) {
+                chatRows.add(new ChatRow(sequenceText(line), line));
+            }
+        }
+    }
+
+    private static String sequenceText(FormattedCharSequence sequence) {
+        StringBuilder builder = new StringBuilder();
+        sequence.accept((index, style, codePoint) -> {
+            builder.appendCodePoint(codePoint);
+            return true;
+        });
+        return builder.toString();
+    }
+
+    private boolean startChatSelection(double mouseX, double mouseY) {
+        int[] hit = chatHit(mouseX, mouseY);
+        if (hit == null) {
+            return false;
+        }
+        selectingChat = true;
+        anchorIndex = focusIndex = hit[0];
+        anchorChar = focusChar = hit[1];
+        return true;
+    }
+
+    private void moveChatSelection(double mouseX, double mouseY) {
+        int[] hit = chatHit(mouseX, mouseY);
+        if (hit == null) {
+            return;
+        }
+        focusIndex = hit[0];
+        focusChar = hit[1];
+    }
+
+    private void copyChatSelection() {
+        String text = selectedChatText();
+        if (text.isEmpty() && anchorIndex >= 0 && anchorIndex < chatRows.size()) {
+            text = chatRows.get(anchorIndex).text;
+        }
+        if (!text.isEmpty() && this.minecraft != null) {
+            this.minecraft.keyboardHandler.setClipboard(text);
+        }
+    }
+
+    private String selectedChatText() {
+        if (anchorIndex < 0 || focusIndex < 0 || chatRows.isEmpty()) {
+            return "";
+        }
+        int startLine = anchorIndex;
+        int startChar = anchorChar;
+        int endLine = focusIndex;
+        int endChar = focusChar;
+        if (startLine > endLine || (startLine == endLine && startChar > endChar)) {
+            int line = startLine;
+            int ch = startChar;
+            startLine = endLine;
+            startChar = endChar;
+            endLine = line;
+            endChar = ch;
+        }
+        if (startLine == endLine && startChar == endChar) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (int i = startLine; i <= endLine && i < chatRows.size(); i++) {
+            String text = chatRows.get(i).text;
+            int start = i == startLine ? Math.min(startChar, text.length()) : 0;
+            int end = i == endLine ? Math.min(endChar, text.length()) : text.length();
+            if (end > start) {
+                builder.append(text, start, end);
+            }
+            if (i < endLine) {
+                builder.append('\n');
+            }
+        }
+        return builder.toString();
+    }
+
+    private int[] chatHit(double mouseX, double mouseY) {
+        for (int i = 0; i < chatRows.size(); i++) {
+            ChatRow row = chatRows.get(i);
+            if (row.y < 0) {
+                continue;
+            }
+            if (mouseY < row.y || mouseY >= row.y + chatLineHeight) {
+                continue;
+            }
+            return new int[] { i, charIndex(row.text, mouseX - row.x) };
+        }
+        return null;
+    }
+
+    private int charIndex(String text, double relativeX) {
+        if (relativeX <= 0) {
+            return 0;
+        }
+        int index = 0;
+        while (index < text.length()) {
+            int next = text.offsetByCodePoints(index, 1);
+            if (this.font.width(text.substring(0, next)) > relativeX) {
+                return index;
+            }
+            index = next;
+        }
+        return text.length();
+    }
+
+    private void drawChatSelection(GuiGraphics context, Font renderer, int index, ChatRow row, int lineHeight) {
+        if (anchorIndex < 0 || focusIndex < 0) {
+            return;
+        }
+        int startLine = Math.min(anchorIndex, focusIndex);
+        int endLine = Math.max(anchorIndex, focusIndex);
+        if (index < startLine || index > endLine) {
+            return;
+        }
+        int startChar = index == anchorIndex && index == focusIndex
+            ? Math.min(anchorChar, focusChar)
+            : index == startLine
+                ? (anchorIndex < focusIndex ? anchorChar : focusChar)
+                : 0;
+        int endChar = index == anchorIndex && index == focusIndex
+            ? Math.max(anchorChar, focusChar)
+            : index == endLine
+                ? (anchorIndex < focusIndex ? focusChar : anchorChar)
+                : row.text.length();
+        startChar = Math.max(0, Math.min(startChar, row.text.length()));
+        endChar = Math.max(startChar, Math.min(endChar, row.text.length()));
+        if (endChar == startChar) {
+            return;
+        }
+        int x0 = row.x + renderer.width(row.text.substring(0, startChar));
+        int x1 = row.x + renderer.width(row.text.substring(0, endChar));
+        context.fill(x0, row.y - 1, x1, row.y + renderer.lineHeight, 0x664466AA);
+    }
+
+    private static final class ChatRow {
+        private final String text;
+        private final FormattedCharSequence visual;
+        private int x = -1;
+        private int y = -1;
+
+        private ChatRow(String text, FormattedCharSequence visual) {
+            this.text = text;
+            this.visual = visual;
+        }
+    }
+
+    private String normalizeDimension(String dimension) {
+        if (dimension == null) {
+            return DIMENSION_IDS[0];
+        }
+        String value = dimension.toLowerCase();
+        if (value.contains("nether")) {
+            return DIMENSION_IDS[1];
+        }
+        if (value.contains("end")) {
+            return DIMENSION_IDS[2];
+        }
+        return DIMENSION_IDS[0];
+    }
+
+    private int selectedDimensionIndex() {
+        for (int i = 0; i < DIMENSION_IDS.length; i++) {
+            if (DIMENSION_IDS[i].equals(selectedDimension)) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    private int[] dimensionArrowXs(Font renderer) {
+        String label = DIMENSION_LABELS[selectedDimensionIndex()];
+        int gap = 8;
+        int total = renderer.width("<") + gap + renderer.width(label) + gap + renderer.width(">");
+        int leftX = this.width / 2 - total / 2;
+        int labelX = leftX + renderer.width("<") + gap;
+        int rightX = labelX + renderer.width(label) + gap;
+        return new int[] { leftX, labelX, rightX };
+    }
+
+    private void drawDimensionSwitcher(GuiGraphics context, Font renderer, int y, int mouseX, int mouseY) {
+        int[] xs = dimensionArrowXs(renderer);
+        String label = DIMENSION_LABELS[selectedDimensionIndex()];
+        int leftColor = dimensionArrowAt(mouseX, mouseY) < 0 ? 0xFFFFFFFF : 0xFFCCCCCC;
+        int rightColor = dimensionArrowAt(mouseX, mouseY) > 0 ? 0xFFFFFFFF : 0xFFCCCCCC;
+        context.drawString(renderer, Component.literal("<"), xs[0], y, leftColor, false);
+        context.drawString(renderer, Component.literal(label), xs[1], y, dimensionColor(label), false);
+        context.drawString(renderer, Component.literal(">"), xs[2], y, rightColor, false);
+    }
+
+    private int dimensionArrowAt(double mouseX, double mouseY) {
+        int y = fieldY + 42;
+        if (mouseY < y - 2 || mouseY >= y + this.font.lineHeight + 2) {
+            return 0;
+        }
+        int[] xs = dimensionArrowXs(this.font);
+        int leftW = this.font.width("<");
+        int rightW = this.font.width(">");
+        if (mouseX >= xs[0] - 4 && mouseX < xs[0] + leftW + 4) {
+            return -1;
+        }
+        if (mouseX >= xs[2] - 4 && mouseX < xs[2] + rightW + 4) {
+            return 1;
+        }
+        return 0;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<GuiMessage> chatMessages() {
+        if (this.minecraft == null) {
+            return Collections.emptyList();
+        }
+        try {
+            Field field = ChatComponent.class.getDeclaredField("allMessages");
+            field.setAccessible(true);
+            return (List<GuiMessage>) field.get(this.minecraft.gui.getChat());
+        } catch (ReflectiveOperationException e) {
+            return Collections.emptyList();
+        }
+    }
+
+    public void onClose() {
+        isClosed = true;
+        this.minecraft.setScreen(parent);
+    }
+
 }
 
