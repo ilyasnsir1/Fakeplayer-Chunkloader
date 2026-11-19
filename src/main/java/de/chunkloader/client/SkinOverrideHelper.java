@@ -45,10 +45,6 @@ public final class SkinOverrideHelper {
         );
     }
 
-    /**
-     * 1.21.8 PlayerSkin uses the raw atlas id. Dynamic skins are registered under
-     * {@code textures/<path>.png}; 1.21.9+ ClientAsset added that prefix automatically.
-     */
     private static ResourceLocation toBoundTextureId(ResourceLocation id) {
         String path = id.getPath();
         if (path.startsWith("textures/")) {

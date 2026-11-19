@@ -193,10 +193,12 @@ public class ChunkloaderForgeMod {
             }
 
             if (serverPlayer.isShiftKeyDown()) {
-                var entryToDelete = chunkloaderManager.getEntryByMarkerUuid(markerUuid);
-                if (entryToDelete != null) {
-                    chunkloaderManager.removeChunkloader(entryToDelete.chunkX(), entryToDelete.chunkZ(), entryToDelete.dimension());
-                    serverPlayer.sendSystemMessage(Component.literal("Player deleted"));
+                if (chunkloaderManager.confirmMarkerDelete(serverPlayer, markerUuid, false)) {
+                    var entryToDelete = chunkloaderManager.getEntryByMarkerUuid(markerUuid);
+                    if (entryToDelete != null) {
+                        chunkloaderManager.removeChunkloader(entryToDelete.chunkX(), entryToDelete.chunkZ(), entryToDelete.dimension());
+                        serverPlayer.sendSystemMessage(Component.literal("Player deleted"));
+                    }
                 }
                 event.setCancellationResult(net.minecraft.world.InteractionResult.SUCCESS);
                 return;
@@ -235,6 +237,8 @@ public class ChunkloaderForgeMod {
             return;
         }
 
+        event.setCanceled(true);
+
         try {
             var entry = chunkloaderManager.getEntryByMarkerUuid(markerUuid);
             String entityTypeName = (entry != null && entry.allowMobSpawning()) ? "fakeplayers" : "chunkplayers";
@@ -251,8 +255,19 @@ public class ChunkloaderForgeMod {
                 return;
             }
 
+            if (!PermissionManager.canModifyEntry(serverPlayer,
+                    chunkloaderManager.getEntryByMarkerUuid(markerUuid))) {
+                serverPlayer.sendSystemMessage(Component.literal("You don't own this player."));
+                return;
+            }
+
             if (serverPlayer.isShiftKeyDown()) {
-                chunkloaderManager.removeChunkloaderByMarkerUuid(markerUuid);
+                if (!chunkloaderManager.confirmMarkerDelete(serverPlayer, markerUuid, true)) {
+                    event.setCanceled(true);
+                    return;
+                }
+                    chunkloaderManager.removeChunkloaderByMarkerUuid(markerUuid);
+                event.setCanceled(true);
             } else {
                 chunkloaderManager.handleMarkerDestroyed(markerUuid);
             }
@@ -289,15 +304,36 @@ public class ChunkloaderForgeMod {
             return;
         }
 
+        event.setAmount(0.0f);
+
         Entity attacker = event.getSource().getEntity();
         if (!(attacker instanceof Player player)) {
             event.setAmount(0.0f);
             return;
         }
 
+        if (!(attacker instanceof ServerPlayer attackerPlayer)) {
+            return;
+        }
+        if (!PermissionManager.canUse(attackerPlayer)) {
+            attackerPlayer.sendSystemMessage(Component.translatable("message.chunkloader.no_permission_interact"));
+            return;
+        }
+        if (!PermissionManager.canModifyEntry(attackerPlayer,
+                chunkloaderManager.getEntryByMarkerUuid(markerUuid))) {
+            attackerPlayer.sendSystemMessage(Component.literal("You don't own this player."));
+            return;
+        }
+
         try {
             if (player.isShiftKeyDown()) {
-                chunkloaderManager.removeChunkloaderByMarkerUuid(markerUuid);
+                if (!(player instanceof net.minecraft.server.level.ServerPlayer serverPlayer)
+                        || !chunkloaderManager.confirmMarkerDelete(serverPlayer, markerUuid, true)) {
+                    event.setCanceled(true);
+                    return;
+                }
+                    chunkloaderManager.removeChunkloaderByMarkerUuid(markerUuid);
+                event.setCanceled(true);
             } else {
                 chunkloaderManager.handleMarkerDestroyed(markerUuid);
             }
