@@ -26,6 +26,13 @@ public final class ChunkloaderClientNetworking {
         ClientPacketDistributor.sendToServer(new ChunkplayerStatusRequestPayload(false));
     }
 
+    public static void requestActiveChunkloadersList() {
+        ClientPacketDistributor.sendToServer(new de.chunkloader.network.payload.ActiveChunkloadersListRequestPayload());
+    }
+    public static void requestOpenChunkMap(int chunkX, int chunkZ, String dimension) {
+        ClientPacketDistributor.sendToServer(new de.chunkloader.network.payload.OpenChunkMapRequestPayload(chunkX, chunkZ, dimension));
+    }
+
     public static void requestDisabledChunkloadersList() {
         ClientPacketDistributor.sendToServer(new DisabledChunkloadersListRequestPayload());
     }
@@ -38,8 +45,8 @@ public final class ChunkloaderClientNetworking {
         ClientPacketDistributor.sendToServer(new RestoreDisabledChunkloaderPayload(chunkX, chunkZ, dimension));
     }
 
-    public static void sendUpdateDisabledChunkloaderCoords(int oldChunkX, int oldChunkZ, String oldDimension, int newChunkX, int newChunkZ, int newBlockX, int newBlockY, int newBlockZ) {
-        ClientPacketDistributor.sendToServer(new UpdateDisabledChunkloaderCoordsPayload(oldChunkX, oldChunkZ, oldDimension, newChunkX, newChunkZ, newBlockX, newBlockY, newBlockZ));
+    public static void sendUpdateDisabledChunkloaderCoords(int oldChunkX, int oldChunkZ, String oldDimension, int newChunkX, int newChunkZ, int newBlockX, int newBlockY, int newBlockZ, String newDimension) {
+        ClientPacketDistributor.sendToServer(new UpdateDisabledChunkloaderCoordsPayload(oldChunkX, oldChunkZ, oldDimension, newChunkX, newChunkZ, newBlockX, newBlockY, newBlockZ, newDimension));
     }
 
     public static void sendRenameChunkloader(int chunkX, int chunkZ, String dimension, String newName) {
@@ -51,11 +58,19 @@ public final class ChunkloaderClientNetworking {
     }
 
     public static void sendApplyCustomSkin(String playerName, int layerMask, String model, byte[] pngBytes) {
+        sendApplyCustomSkin(playerName, layerMask, model, pngBytes, 0);
+    }
+
+    public static void sendApplyCustomSkin(String playerName, int layerMask, String model, byte[] pngBytes, int requestId) {
         ClientPacketDistributor.sendToServer(
-            new de.chunkloader.network.payload.ApplyCustomSkinPayload(playerName, layerMask, model, pngBytes));
+            new de.chunkloader.network.payload.ApplyCustomSkinPayload(playerName, layerMask, model, pngBytes, requestId));
     }
 
     public static void sendClearCustomSkin(String playerName) {
-        ClientPacketDistributor.sendToServer(new de.chunkloader.network.payload.ClearCustomSkinPayload(playerName));
+        sendClearCustomSkin(playerName, 0);
+    }
+
+    public static void sendClearCustomSkin(String playerName, int requestId) {
+        ClientPacketDistributor.sendToServer(new de.chunkloader.network.payload.ClearCustomSkinPayload(playerName, requestId));
     }
 }
