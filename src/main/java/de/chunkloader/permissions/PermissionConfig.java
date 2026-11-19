@@ -94,7 +94,7 @@ public class PermissionConfig {
         }
     }
 
-    public void save() throws IOException {
+    public synchronized void save() throws IOException {
         Path parent = configPath.getParent();
         if (parent != null) {
             Files.createDirectories(parent);
@@ -123,8 +123,19 @@ public class PermissionConfig {
 
         json.add("permissions", permissionsObj);
 
-        try (FileWriter writer = new FileWriter(configFile)) {
-            GSON.toJson(json, writer);
+        Path tempPath = configPath.resolveSibling(CONFIG_FILE + ".tmp");
+        try {
+            try (var writer = java.nio.file.Files.newBufferedWriter(tempPath, java.nio.charset.StandardCharsets.UTF_8)) {
+                GSON.toJson(json, writer);
+            }
+            try {
+                java.nio.file.Files.move(tempPath, configPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+                java.nio.file.Files.move(tempPath, configPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            try { java.nio.file.Files.deleteIfExists(tempPath); } catch (IOException ignored) {}
         }
     }
 
@@ -163,7 +174,8 @@ public class PermissionConfig {
         }
 
         if (permissions.contains("chunkloader.*")) {
-            return permission.startsWith("chunkloader.");
+            return permission.startsWith("chunkloader.")
+                    && !PermissionManager.PERMISSION_ADMIN.equals(permission);
         }
 
         if (permissions.contains(PermissionManager.PERMISSION_ADMIN)) {

@@ -1,5 +1,9 @@
 package de.chunkloader.client.screen;
 
+import java.util.Set;
+import java.util.EnumSet;
+import com.mojang.blaze3d.platform.InputConstants;
+
 import com.mojang.blaze3d.platform.NativeImage;
 import de.chunkloader.client.SkinLayerMask;
 import de.chunkloader.client.config.ClientConfig;
@@ -38,6 +42,7 @@ final class PanelColorEditorOverlay {
     private final ClientConfig config;
     private final EnumMap<PanelColorTarget, Integer> draftColors = new EnumMap<>(PanelColorTarget.class);
     private final Map<PanelColorTarget, Integer> draftColorsView = java.util.Collections.unmodifiableMap(draftColors);
+    private final EnumSet<PanelColorTarget> draftExplicitColors = EnumSet.noneOf(PanelColorTarget.class);
 
     private PanelColorTarget currentTarget = null;
     private int currentPage = 1;
@@ -113,6 +118,7 @@ final class PanelColorEditorOverlay {
         this.owner = owner;
         this.config = config;
         this.draftColors.putAll(config.getStoredPanelColors());
+        this.draftExplicitColors.addAll(config.getExplicitPanelColors());
         initHexField();
     }
 
@@ -149,6 +155,9 @@ final class PanelColorEditorOverlay {
 
     private void putDraftColor(PanelColorTarget target, int color) {
         draftColors.put(target, color);
+        if (ClientConfig.supportsAutomaticColor(target)) {
+            draftExplicitColors.add(target);
+        }
         unsavedChangesCache = null;
     }
 
@@ -335,7 +344,7 @@ final class PanelColorEditorOverlay {
     }
 
     boolean mouseClicked(MouseButtonEvent click) {
-        if (click.button() != 0) {
+        if (click.button() != InputConstants.MOUSE_BUTTON_LEFT) {
             return true;
         }
 
@@ -344,7 +353,7 @@ final class PanelColorEditorOverlay {
         EditorLayout layout = getLayout();
 
         if (getHelpMarkBounds().contains(mouseX, mouseY)) {
-            Minecraft.getInstance().gui.setScreen(new PanelColorHelpScreen(owner));
+            owner.openPanelColorHelp();
             return true;
         }
 
@@ -384,7 +393,7 @@ final class PanelColorEditorOverlay {
             }
             focusedControl = 1;
             updateFocusState();
-            config.savePanelColors(draftColors);
+            config.savePanelColors(draftColors, draftExplicitColors);
             unsavedChangesCache = false;
             owner.closePanelColorEditor();
             return true;
@@ -476,12 +485,12 @@ final class PanelColorEditorOverlay {
 
     boolean keyPressed(KeyEvent keyInput) {
         int key = keyInput.key();
-        if (key == 256) {
+        if (key == InputConstants.KEY_ESCAPE) {
             owner.closePanelColorEditor();
             return true;
         }
 
-        if (key == 258) {
+        if (key == InputConstants.KEY_TAB) {
             boolean shift = keyInput.hasShiftDown();
             if (focusedControl == -1) {
                 focusedControl = shift ? 3 : 0;
@@ -506,9 +515,9 @@ final class PanelColorEditorOverlay {
             return true;
         }
 
-        if ((key == 257 || key == 32) && focusedControl > 0) {
+        if ((key == InputConstants.KEY_RETURN || key == InputConstants.KEY_SPACE) && focusedControl > 0) {
             if (focusedControl == 1 && hasUnsavedChanges()) {
-                config.savePanelColors(draftColors);
+                config.savePanelColors(draftColors, draftExplicitColors);
                 unsavedChangesCache = false;
                 owner.closePanelColorEditor();
                 return true;
@@ -522,10 +531,10 @@ final class PanelColorEditorOverlay {
         }
 
         if (hexField != null && hexField.isFocused()) {
-            if (key == 259 && hexField.getCursorPosition() <= 1) {
+            if (key == InputConstants.KEY_BACKSPACE && hexField.getCursorPosition() <= 1) {
                 return true;
             }
-            if (key == 257) {
+            if (key == InputConstants.KEY_RETURN) {
                 if (currentTarget == null) {
                     return true;
                 }
@@ -1189,6 +1198,10 @@ final class PanelColorEditorOverlay {
     }
 
     private boolean isTargetAtDefault(PanelColorTarget target) {
+        if (target == PanelColorTarget.LEFT_PANEL_STATUS || target == PanelColorTarget.LEFT_PANEL_DIM) {
+            int color = getRawDraftColor(target);
+            return !draftExplicitColors.contains(target) && (color == 0 || color == target.getDefaultColor());
+        }
         return getRawDraftColor(target) == target.getDefaultColor();
     }
 
@@ -1218,10 +1231,12 @@ final class PanelColorEditorOverlay {
         }
         if (currentTarget != null) {
             putDraftColor(currentTarget, currentTarget.getDefaultColor());
+            draftExplicitColors.remove(currentTarget);
         } else {
             for (PanelColorTarget target : PanelColorTarget.values()) {
                 putDraftColor(target, target.getDefaultColor());
             }
+            draftExplicitColors.clear();
         }
         updateHexFieldValue();
         if (focusedControl == 2 && !canReset()) {
@@ -1232,20 +1247,23 @@ final class PanelColorEditorOverlay {
 
     private boolean hasUnsavedChanges() {
         if (unsavedChangesCache == null) {
-            unsavedChangesCache = !draftColors.equals(config.getStoredPanelColors());
+            unsavedChangesCache = !draftColors.equals(config.getStoredPanelColors())
+                    || !draftExplicitColors.equals(config.getExplicitPanelColors());
         }
         return unsavedChangesCache;
     }
 
     private int getDraftColor(PanelColorTarget target) {
         int color = draftColors.getOrDefault(target, target.getDefaultColor());
-        if (target == PanelColorTarget.LEFT_PANEL_STATUS && (color == 0 || color == 0xFF55FF55)) {
+        if (target == PanelColorTarget.LEFT_PANEL_STATUS && !draftExplicitColors.contains(target)
+                && (color == 0 || color == 0xFF55FF55)) {
             var data = owner != null ? owner.getData() : null;
             if (data != null) {
                 return data.enabled() ? (data.allowMobSpawning() ? 0xFF55FF55 : 0xFF5555FF) : 0xFFFF5555;
             }
         }
-        if (target == PanelColorTarget.LEFT_PANEL_DIM && (color == 0 || color == 0xFF55FF55)) {
+        if (target == PanelColorTarget.LEFT_PANEL_DIM && !draftExplicitColors.contains(target)
+                && (color == 0 || color == 0xFF55FF55)) {
             var data = owner != null ? owner.getData() : null;
             if (data != null && data.dimensionKey() != null) {
                 String dimName = data.dimensionKey().toLowerCase();
@@ -1778,4 +1796,9 @@ final class PanelColorEditorOverlay {
 
     private record SampleStatus(String text, PanelColorTarget target) {
     }
+
+    Set<PanelColorTarget> getDraftExplicitColors() {
+        return java.util.Collections.unmodifiableSet(draftExplicitColors);
+    }
+
 }

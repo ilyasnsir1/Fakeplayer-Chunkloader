@@ -1,5 +1,7 @@
 package de.chunkloader.client.config;
 
+import java.util.Set;
+import java.util.EnumSet;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
@@ -75,6 +77,8 @@ public class ClientConfig {
     private int skinLayerActiveColor = 0;
     private int skinLayerInactiveColor = 0;
     private final EnumMap<PanelColorTarget, Integer> colorPreviewOverrides = new EnumMap<>(PanelColorTarget.class);
+    private final EnumSet<PanelColorTarget> explicitPanelColors = EnumSet.noneOf(PanelColorTarget.class);
+    private final EnumSet<PanelColorTarget> explicitPreviewColors = EnumSet.noneOf(PanelColorTarget.class);
 
     private String chunkMapLayoutPreset = DEFAULT_CHUNKMAP_LAYOUT_PRESET;
     private String disabledChunkloadersKeyName = DEFAULT_DISABLED_CHUNKLOADERS_KEY;
@@ -287,6 +291,18 @@ public class ClientConfig {
                     try { config.skinLayerInactiveColor = parseColor(json.get("skinLayerInactiveColor").getAsString()); } catch (Exception ignored) {}
                 }
 
+                if (json.has("explicitPanelColors") && json.get("explicitPanelColors").isJsonArray()) {
+                    for (var value : json.getAsJsonArray("explicitPanelColors")) {
+                        try {
+                            PanelColorTarget target = PanelColorTarget.valueOf(value.getAsString());
+                            if (supportsAutomaticColor(target)) {
+                                config.explicitPanelColors.add(target);
+                            }
+                        } catch (RuntimeException ignored) {
+                        }
+                    }
+                }
+
                 if (json.has("chunkMapLayoutPreset")) {
                     try {
                         String preset = json.get("chunkMapLayoutPreset").getAsString();
@@ -389,6 +405,11 @@ public class ClientConfig {
             json.addProperty("skinLayerActiveColor", String.format("#%08X", skinLayerActiveColor));
             json.addProperty("skinLayerInactiveColor", String.format("#%08X", skinLayerInactiveColor));
 
+            var explicitColors = new com.google.gson.JsonArray();
+            for (PanelColorTarget target : explicitPanelColors) {
+                explicitColors.add(target.name());
+            }
+            json.add("explicitPanelColors", explicitColors);
             json.addProperty("chunkMapLayoutPreset", chunkMapLayoutPreset);
             json.addProperty("disabledChunkloadersKeyName", disabledChunkloadersKeyName);
             json.addProperty("hideOtherDots", hideOtherDots);
@@ -538,6 +559,7 @@ public class ClientConfig {
 
     public void setLeftPanelStatusColor(int color) {
         this.leftPanelStatusColor = color;
+        explicitPanelColors.add(PanelColorTarget.LEFT_PANEL_STATUS);
         save();
     }
 
@@ -547,6 +569,7 @@ public class ClientConfig {
 
     public void setLeftPanelDimColor(int color) {
         this.leftPanelDimColor = color;
+        explicitPanelColors.add(PanelColorTarget.LEFT_PANEL_DIM);
         save();
     }
 
@@ -605,192 +628,211 @@ public class ClientConfig {
     }
 
     public int getSkinPanelColor() {
-        int base = skinPanelColor != 0 ? skinPanelColor : getPanelColor();
+        int base = hasStoredColor(PanelColorTarget.SKIN_PANEL, skinPanelColor) ? skinPanelColor : getPanelColor();
         return getColorWithPreview(PanelColorTarget.SKIN_PANEL, base);
     }
 
     public void setSkinPanelColor(int color) {
         this.skinPanelColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_PANEL);
         save();
     }
 
     public int getSkinBorderColor() {
-        int base = skinBorderColor != 0 ? skinBorderColor : getBorderColor();
+        int base = hasStoredColor(PanelColorTarget.SKIN_BORDER, skinBorderColor) ? skinBorderColor : getBorderColor();
         return getColorWithPreview(PanelColorTarget.SKIN_BORDER, base);
     }
 
     public void setSkinBorderColor(int color) {
         this.skinBorderColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_BORDER);
         save();
     }
 
     public int getSkinDividerColor() {
-        int base = skinDividerColor != 0 ? skinDividerColor : getDividerColor();
+        int base = hasStoredColor(PanelColorTarget.SKIN_DIVIDER, skinDividerColor) ? skinDividerColor : getDividerColor();
         return getColorWithPreview(PanelColorTarget.SKIN_DIVIDER, base);
     }
 
     public void setSkinDividerColor(int color) {
         this.skinDividerColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_DIVIDER);
         save();
     }
 
     public int getSkinTitleColor() {
-        int base = skinTitleColor != 0 ? skinTitleColor : 0xFFFFFFFF;
+        int base = hasStoredColor(PanelColorTarget.SKIN_TITLE, skinTitleColor) ? skinTitleColor : 0xFFFFFFFF;
         return getColorWithPreview(PanelColorTarget.SKIN_TITLE, base);
     }
 
     public void setSkinTitleColor(int color) {
         this.skinTitleColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_TITLE);
         save();
     }
 
     public int getSkinPlayerNameColor() {
-        int base = skinPlayerNameColor != 0 ? skinPlayerNameColor : getLeftPanelValueColor();
+        int base = hasStoredColor(PanelColorTarget.SKIN_PLAYER_NAME, skinPlayerNameColor) ? skinPlayerNameColor : getLeftPanelValueColor();
         return getColorWithPreview(PanelColorTarget.SKIN_PLAYER_NAME, base);
     }
 
     public void setSkinPlayerNameColor(int color) {
         this.skinPlayerNameColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_PLAYER_NAME);
         save();
     }
 
     public int getSkinSearchbarBgColor() {
-        int base = skinSearchbarBgColor != 0 ? skinSearchbarBgColor : 0xFF0A0D10;
+        int base = hasStoredColor(PanelColorTarget.SKIN_SEARCHBAR_BG, skinSearchbarBgColor) ? skinSearchbarBgColor : 0xFF0A0D10;
         return getColorWithPreview(PanelColorTarget.SKIN_SEARCHBAR_BG, base);
     }
 
     public void setSkinSearchbarBgColor(int color) {
         this.skinSearchbarBgColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_SEARCHBAR_BG);
         save();
     }
 
     public int getSkinSearchbarBorderColor() {
-        int base = skinSearchbarBorderColor != 0 ? skinSearchbarBorderColor : getActionSearchBorderColor();
+        int base = hasStoredColor(PanelColorTarget.SKIN_SEARCHBAR_BORDER, skinSearchbarBorderColor) ? skinSearchbarBorderColor : getActionSearchBorderColor();
         return getColorWithPreview(PanelColorTarget.SKIN_SEARCHBAR_BORDER, base);
     }
 
     public void setSkinSearchbarBorderColor(int color) {
         this.skinSearchbarBorderColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_SEARCHBAR_BORDER);
         save();
     }
 
     public int getSkinSearchbarTextColor() {
-        int base = skinSearchbarTextColor != 0 ? skinSearchbarTextColor : getActionSearchTextColor();
+        int base = hasStoredColor(PanelColorTarget.SKIN_SEARCHBAR_TEXT, skinSearchbarTextColor) ? skinSearchbarTextColor : getActionSearchTextColor();
         return getColorWithPreview(PanelColorTarget.SKIN_SEARCHBAR_TEXT, base);
     }
 
     public void setSkinSearchbarTextColor(int color) {
         this.skinSearchbarTextColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_SEARCHBAR_TEXT);
         save();
     }
 
     public int getSkinSearchbarPlaceholderColor() {
-        int base = skinSearchbarPlaceholderColor != 0 ? skinSearchbarPlaceholderColor : getActionSearchPlaceholderColor();
+        int base = hasStoredColor(PanelColorTarget.SKIN_SEARCHBAR_PLACEHOLDER, skinSearchbarPlaceholderColor) ? skinSearchbarPlaceholderColor : getActionSearchPlaceholderColor();
         return getColorWithPreview(PanelColorTarget.SKIN_SEARCHBAR_PLACEHOLDER, base);
     }
 
     public void setSkinSearchbarPlaceholderColor(int color) {
         this.skinSearchbarPlaceholderColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_SEARCHBAR_PLACEHOLDER);
         save();
     }
 
     public int getSkinViewportColor() {
-        int base = skinViewportColor != 0 ? skinViewportColor : getFrameColor();
+        int base = hasStoredColor(PanelColorTarget.SKIN_VIEWPORT, skinViewportColor) ? skinViewportColor : getFrameColor();
         return getColorWithPreview(PanelColorTarget.SKIN_VIEWPORT, base);
     }
 
     public void setSkinViewportColor(int color) {
         this.skinViewportColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_VIEWPORT);
         save();
     }
 
     public int getSkinTextColor() {
-        int base = skinTextColor != 0 ? skinTextColor : getLeftPanelTextColor();
+        int base = hasStoredColor(PanelColorTarget.SKIN_TEXT, skinTextColor) ? skinTextColor : getLeftPanelTextColor();
         return getColorWithPreview(PanelColorTarget.SKIN_TEXT, base);
     }
 
     public void setSkinTextColor(int color) {
         this.skinTextColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_TEXT);
         save();
     }
 
     public int getSkinStatusSuccessColor() {
-        int base = skinStatusSuccessColor != 0 ? skinStatusSuccessColor : 0xFF55FF55;
+        int base = hasStoredColor(PanelColorTarget.SKIN_STATUS_SUCCESS, skinStatusSuccessColor) ? skinStatusSuccessColor : 0xFF55FF55;
         return getColorWithPreview(PanelColorTarget.SKIN_STATUS_SUCCESS, base);
     }
 
     public void setSkinStatusSuccessColor(int color) {
         this.skinStatusSuccessColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_STATUS_SUCCESS);
         save();
     }
 
     public int getSkinStatusErrorColor() {
-        int base = skinStatusErrorColor != 0 ? skinStatusErrorColor : 0xFFFF7777;
+        int base = hasStoredColor(PanelColorTarget.SKIN_STATUS_ERROR, skinStatusErrorColor) ? skinStatusErrorColor : 0xFFFF7777;
         return getColorWithPreview(PanelColorTarget.SKIN_STATUS_ERROR, base);
     }
 
     public void setSkinStatusErrorColor(int color) {
         this.skinStatusErrorColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_STATUS_ERROR);
         save();
     }
 
     public int getSkinStatusWarningColor() {
-        int base = skinStatusWarningColor != 0 ? skinStatusWarningColor : 0xFFFFCC66;
+        int base = hasStoredColor(PanelColorTarget.SKIN_STATUS_WARNING, skinStatusWarningColor) ? skinStatusWarningColor : 0xFFFFCC66;
         return getColorWithPreview(PanelColorTarget.SKIN_STATUS_WARNING, base);
     }
 
     public void setSkinStatusWarningColor(int color) {
         this.skinStatusWarningColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_STATUS_WARNING);
         save();
     }
 
     public int getSkinLayerChevronBgColor() {
-        int base = skinLayerChevronBgColor != 0 ? skinLayerChevronBgColor : 0x99000000;
+        int base = hasStoredColor(PanelColorTarget.SKIN_LAYER_CHEVRON_BG, skinLayerChevronBgColor) ? skinLayerChevronBgColor : 0x99000000;
         return getColorWithPreview(PanelColorTarget.SKIN_LAYER_CHEVRON_BG, base);
     }
 
     public void setSkinLayerChevronBgColor(int color) {
         this.skinLayerChevronBgColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_LAYER_CHEVRON_BG);
         save();
     }
 
     public int getSkinLayerChevronColor() {
-        int base = skinLayerChevronColor != 0 ? skinLayerChevronColor : 0xFFFFFFFF;
+        int base = hasStoredColor(PanelColorTarget.SKIN_LAYER_CHEVRON, skinLayerChevronColor) ? skinLayerChevronColor : 0xFFFFFFFF;
         return getColorWithPreview(PanelColorTarget.SKIN_LAYER_CHEVRON, base);
     }
 
     public void setSkinLayerChevronColor(int color) {
         this.skinLayerChevronColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_LAYER_CHEVRON);
         save();
     }
 
     public int getSkinLayerMenuBgColor() {
-        int base = skinLayerMenuBgColor != 0 ? skinLayerMenuBgColor : 0xCC0A0D10;
+        int base = hasStoredColor(PanelColorTarget.SKIN_LAYER_MENU_BG, skinLayerMenuBgColor) ? skinLayerMenuBgColor : 0xCC0A0D10;
         return getColorWithPreview(PanelColorTarget.SKIN_LAYER_MENU_BG, base);
     }
 
     public void setSkinLayerMenuBgColor(int color) {
         this.skinLayerMenuBgColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_LAYER_MENU_BG);
         save();
     }
 
     public int getSkinLayerActiveColor() {
-        int base = skinLayerActiveColor != 0 ? skinLayerActiveColor : 0xFFFFFFFF;
+        int base = hasStoredColor(PanelColorTarget.SKIN_LAYER_ACTIVE, skinLayerActiveColor) ? skinLayerActiveColor : 0xFFFFFFFF;
         return getColorWithPreview(PanelColorTarget.SKIN_LAYER_ACTIVE, base);
     }
 
     public void setSkinLayerActiveColor(int color) {
         this.skinLayerActiveColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_LAYER_ACTIVE);
         save();
     }
 
     public int getSkinLayerInactiveColor() {
-        int base = skinLayerInactiveColor != 0 ? skinLayerInactiveColor : 0xCC808080;
+        int base = hasStoredColor(PanelColorTarget.SKIN_LAYER_INACTIVE, skinLayerInactiveColor) ? skinLayerInactiveColor : 0xCC808080;
         return getColorWithPreview(PanelColorTarget.SKIN_LAYER_INACTIVE, base);
     }
 
     public void setSkinLayerInactiveColor(int color) {
         this.skinLayerInactiveColor = color;
+        explicitPanelColors.add(PanelColorTarget.SKIN_LAYER_INACTIVE);
         save();
     }
 
@@ -803,7 +845,12 @@ public class ClientConfig {
     }
 
     public void setColorPreviewOverrides(Map<PanelColorTarget, Integer> overrides) {
+        setColorPreviewOverrides(overrides, overrides != null ? overrides.keySet() : Set.of());
+    }
+
+    public void setColorPreviewOverrides(Map<PanelColorTarget, Integer> overrides, Set<PanelColorTarget> explicitColors) {
         colorPreviewOverrides.clear();
+        explicitPreviewColors.clear();
         if (overrides == null) {
             return;
         }
@@ -812,15 +859,23 @@ public class ClientConfig {
             Integer color = overrides.get(target);
             if (color != null) {
                 colorPreviewOverrides.put(target, color);
+                if (supportsAutomaticColor(target) && explicitColors.contains(target)) {
+                    explicitPreviewColors.add(target);
+                }
             }
         }
     }
 
     public void clearColorPreviewOverrides() {
         colorPreviewOverrides.clear();
+        explicitPreviewColors.clear();
     }
 
     public void savePanelColors(Map<PanelColorTarget, Integer> colors) {
+        savePanelColors(colors, colors != null ? colors.keySet() : Set.of());
+    }
+
+    public void savePanelColors(Map<PanelColorTarget, Integer> colors, Set<PanelColorTarget> explicitColors) {
         if (colors == null) {
             return;
         }
@@ -829,6 +884,13 @@ public class ClientConfig {
             Integer color = colors.get(target);
             if (color != null) {
                 setStoredPanelColor(target, color);
+                if (supportsAutomaticColor(target)) {
+                    if (explicitColors.contains(target)) {
+                        explicitPanelColors.add(target);
+                    } else {
+                        explicitPanelColors.remove(target);
+                    }
+                }
             }
         }
         save();
@@ -844,33 +906,33 @@ public class ClientConfig {
             case SCROLLBAR_THUMB -> scrollbarThumbColor;
             case LEFT_PANEL_TEXT -> leftPanelTextColor;
             case LEFT_PANEL_VALUE -> leftPanelValueColor;
-            case LEFT_PANEL_STATUS -> leftPanelStatusColor != 0 ? leftPanelStatusColor : 0xFF55FF55;
-            case LEFT_PANEL_DIM -> leftPanelDimColor != 0 ? leftPanelDimColor : 0xFF55FF55;
+            case LEFT_PANEL_STATUS -> hasStoredColor(PanelColorTarget.LEFT_PANEL_STATUS, leftPanelStatusColor) ? leftPanelStatusColor : 0xFF55FF55;
+            case LEFT_PANEL_DIM -> hasStoredColor(PanelColorTarget.LEFT_PANEL_DIM, leftPanelDimColor) ? leftPanelDimColor : 0xFF55FF55;
             case LEFT_PANEL_NAME -> leftPanelNameColor;
             case SEARCHBAR_BACKGROUND -> actionSearchBackgroundColor;
             case SEARCHBAR_BORDER -> actionSearchBorderColor;
             case SEARCHBAR_TEXT -> actionSearchTextColor;
             case SEARCHBAR_PLACEHOLDER -> actionSearchPlaceholderColor;
             case COMPASS_DIRECTION -> compassDirectionColor;
-            case SKIN_PANEL -> skinPanelColor != 0 ? skinPanelColor : panelColor;
-            case SKIN_BORDER -> skinBorderColor != 0 ? skinBorderColor : borderColor;
-            case SKIN_DIVIDER -> skinDividerColor != 0 ? skinDividerColor : dividerColor;
-            case SKIN_TITLE -> skinTitleColor != 0 ? skinTitleColor : 0xFFFFFFFF;
-            case SKIN_PLAYER_NAME -> skinPlayerNameColor != 0 ? skinPlayerNameColor : leftPanelValueColor;
-            case SKIN_SEARCHBAR_BG -> skinSearchbarBgColor != 0 ? skinSearchbarBgColor : 0xFF0A0D10;
-            case SKIN_SEARCHBAR_BORDER -> skinSearchbarBorderColor != 0 ? skinSearchbarBorderColor : actionSearchBorderColor;
-            case SKIN_SEARCHBAR_TEXT -> skinSearchbarTextColor != 0 ? skinSearchbarTextColor : actionSearchTextColor;
-            case SKIN_SEARCHBAR_PLACEHOLDER -> skinSearchbarPlaceholderColor != 0 ? skinSearchbarPlaceholderColor : actionSearchPlaceholderColor;
-            case SKIN_VIEWPORT -> skinViewportColor != 0 ? skinViewportColor : frameColor;
-            case SKIN_TEXT -> skinTextColor != 0 ? skinTextColor : leftPanelTextColor;
-            case SKIN_STATUS_SUCCESS -> skinStatusSuccessColor != 0 ? skinStatusSuccessColor : 0xFF55FF55;
-            case SKIN_STATUS_ERROR -> skinStatusErrorColor != 0 ? skinStatusErrorColor : 0xFFFF7777;
-            case SKIN_STATUS_WARNING -> skinStatusWarningColor != 0 ? skinStatusWarningColor : 0xFFFFCC66;
-            case SKIN_LAYER_CHEVRON_BG -> skinLayerChevronBgColor != 0 ? skinLayerChevronBgColor : 0x99000000;
-            case SKIN_LAYER_CHEVRON -> skinLayerChevronColor != 0 ? skinLayerChevronColor : 0xFFFFFFFF;
-            case SKIN_LAYER_MENU_BG -> skinLayerMenuBgColor != 0 ? skinLayerMenuBgColor : 0xCC0A0D10;
-            case SKIN_LAYER_ACTIVE -> skinLayerActiveColor != 0 ? skinLayerActiveColor : 0xFFFFFFFF;
-            case SKIN_LAYER_INACTIVE -> skinLayerInactiveColor != 0 ? skinLayerInactiveColor : 0xCC808080;
+            case SKIN_PANEL -> hasStoredColor(PanelColorTarget.SKIN_PANEL, skinPanelColor) ? skinPanelColor : panelColor;
+            case SKIN_BORDER -> hasStoredColor(PanelColorTarget.SKIN_BORDER, skinBorderColor) ? skinBorderColor : borderColor;
+            case SKIN_DIVIDER -> hasStoredColor(PanelColorTarget.SKIN_DIVIDER, skinDividerColor) ? skinDividerColor : dividerColor;
+            case SKIN_TITLE -> hasStoredColor(PanelColorTarget.SKIN_TITLE, skinTitleColor) ? skinTitleColor : 0xFFFFFFFF;
+            case SKIN_PLAYER_NAME -> hasStoredColor(PanelColorTarget.SKIN_PLAYER_NAME, skinPlayerNameColor) ? skinPlayerNameColor : leftPanelValueColor;
+            case SKIN_SEARCHBAR_BG -> hasStoredColor(PanelColorTarget.SKIN_SEARCHBAR_BG, skinSearchbarBgColor) ? skinSearchbarBgColor : 0xFF0A0D10;
+            case SKIN_SEARCHBAR_BORDER -> hasStoredColor(PanelColorTarget.SKIN_SEARCHBAR_BORDER, skinSearchbarBorderColor) ? skinSearchbarBorderColor : actionSearchBorderColor;
+            case SKIN_SEARCHBAR_TEXT -> hasStoredColor(PanelColorTarget.SKIN_SEARCHBAR_TEXT, skinSearchbarTextColor) ? skinSearchbarTextColor : actionSearchTextColor;
+            case SKIN_SEARCHBAR_PLACEHOLDER -> hasStoredColor(PanelColorTarget.SKIN_SEARCHBAR_PLACEHOLDER, skinSearchbarPlaceholderColor) ? skinSearchbarPlaceholderColor : actionSearchPlaceholderColor;
+            case SKIN_VIEWPORT -> hasStoredColor(PanelColorTarget.SKIN_VIEWPORT, skinViewportColor) ? skinViewportColor : frameColor;
+            case SKIN_TEXT -> hasStoredColor(PanelColorTarget.SKIN_TEXT, skinTextColor) ? skinTextColor : leftPanelTextColor;
+            case SKIN_STATUS_SUCCESS -> hasStoredColor(PanelColorTarget.SKIN_STATUS_SUCCESS, skinStatusSuccessColor) ? skinStatusSuccessColor : 0xFF55FF55;
+            case SKIN_STATUS_ERROR -> hasStoredColor(PanelColorTarget.SKIN_STATUS_ERROR, skinStatusErrorColor) ? skinStatusErrorColor : 0xFFFF7777;
+            case SKIN_STATUS_WARNING -> hasStoredColor(PanelColorTarget.SKIN_STATUS_WARNING, skinStatusWarningColor) ? skinStatusWarningColor : 0xFFFFCC66;
+            case SKIN_LAYER_CHEVRON_BG -> hasStoredColor(PanelColorTarget.SKIN_LAYER_CHEVRON_BG, skinLayerChevronBgColor) ? skinLayerChevronBgColor : 0x99000000;
+            case SKIN_LAYER_CHEVRON -> hasStoredColor(PanelColorTarget.SKIN_LAYER_CHEVRON, skinLayerChevronColor) ? skinLayerChevronColor : 0xFFFFFFFF;
+            case SKIN_LAYER_MENU_BG -> hasStoredColor(PanelColorTarget.SKIN_LAYER_MENU_BG, skinLayerMenuBgColor) ? skinLayerMenuBgColor : 0xCC0A0D10;
+            case SKIN_LAYER_ACTIVE -> hasStoredColor(PanelColorTarget.SKIN_LAYER_ACTIVE, skinLayerActiveColor) ? skinLayerActiveColor : 0xFFFFFFFF;
+            case SKIN_LAYER_INACTIVE -> hasStoredColor(PanelColorTarget.SKIN_LAYER_INACTIVE, skinLayerInactiveColor) ? skinLayerInactiveColor : 0xCC808080;
         };
     }
 
@@ -943,6 +1005,7 @@ public class ClientConfig {
 
     public void resetToDefaults() {
         clearColorPreviewOverrides();
+        explicitPanelColors.clear();
         this.panelColor = DEFAULT_PANEL_COLOR;
         this.borderColor = DEFAULT_BORDER_COLOR;
         this.dividerColor = DEFAULT_DIVIDER_COLOR;
@@ -979,8 +1042,36 @@ public class ClientConfig {
         this.skinLayerMenuBgColor = 0;
         this.skinLayerActiveColor = 0;
         this.skinLayerInactiveColor = 0;
-        this.disabledChunkloadersKeyName = DEFAULT_DISABLED_CHUNKLOADERS_KEY;
+        this.chunkMapLayoutPreset = DEFAULT_CHUNKMAP_LAYOUT_PRESET;
         this.hideOtherDots = false;
+        chunkMapRotationByKey.clear();
         save();
     }
+
+    public Set<PanelColorTarget> getExplicitPanelColors() {
+        return Set.copyOf(explicitPanelColors);
+    }
+
+
+    public static boolean supportsAutomaticColor(PanelColorTarget target) {
+        return target.getPage() == 2 || target == PanelColorTarget.LEFT_PANEL_STATUS
+                || target == PanelColorTarget.LEFT_PANEL_DIM;
+    }
+
+
+    public boolean isPanelColorAutomatic(PanelColorTarget target) {
+        if (target != PanelColorTarget.LEFT_PANEL_STATUS && target != PanelColorTarget.LEFT_PANEL_DIM) {
+            return false;
+        }
+        boolean previewed = colorPreviewOverrides.containsKey(target);
+        int color = previewed ? colorPreviewOverrides.get(target) : getStoredPanelColor(target);
+        Set<PanelColorTarget> explicit = previewed ? explicitPreviewColors : explicitPanelColors;
+        return !explicit.contains(target) && (color == 0 || color == 0xFF55FF55);
+    }
+
+
+    private boolean hasStoredColor(PanelColorTarget target, int color) {
+        return color != 0 || explicitPanelColors.contains(target);
+    }
+
 }

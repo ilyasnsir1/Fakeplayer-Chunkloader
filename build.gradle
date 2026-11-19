@@ -72,7 +72,11 @@ dependencies {
     implementation 'com.google.code.gson:gson:2.10.1'
     implementation 'io.github.llamalad7:mixinextras-forge:0.5.0'
     annotationProcessor 'io.github.llamalad7:mixinextras-common:0.5.0'
+
+    implementation 'org.lwjgl:lwjgl-tinyfd:3.4.3'
 }
+
+apply from: file('bundle-tinyfd.gradle')
 
 tasks.named('processResources', ProcessResources).configure {
     var replaceProperties = [
@@ -120,8 +124,6 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
 
-// ForgeGradle 7.0.35 bug on Gradle 9.3: runsJson is convention-mapped from this task's own
-// outputDirectory, so reading it in @TaskAction fails. Break the cycle with locationOnly.
 tasks.configureEach { task ->
     if (task.name.startsWith('slimeLauncherMetadata')) {
         def outDir = task.outputDirectory

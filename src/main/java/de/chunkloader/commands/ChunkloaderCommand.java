@@ -1,51 +1,62 @@
 package de.chunkloader.commands;
 
+import de.chunkloader.network.ChunkloaderNetworking;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.BoolArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
-import com.mojang.brigadier.suggestion.SuggestionProvider;
 import de.chunkloader.ChunkloaderForgeMod;
 import de.chunkloader.ChunkloaderConstants;
 import de.chunkloader.config.ChunkloaderTarget;
 import de.chunkloader.manager.ChunkloaderManager;
 import de.chunkloader.permissions.PermissionManager;
+import net.minecraft.commands.arguments.DimensionArgument;
+import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 
 import java.util.List;
 
 public class ChunkloaderCommand {
 
-    private static final SuggestionProvider<CommandSourceStack> CHUNKLOADER_NAME_SUGGESTIONS = (context, builder) -> {
-        String input = builder.getRemaining();
-        if (input == null || input.isEmpty()) {
-            return builder.buildFuture();
-        }
+    private static boolean canModifyNamed(CommandContext<CommandSourceStack> context, String name) {
+        return canAccessNamed(context, name, false);
+    }
 
-        String inputLower = input.toLowerCase();
-        ChunkloaderManager manager = ChunkloaderForgeMod.getChunkloaderManager();
-        if (manager != null) {
-            List<ChunkloaderTarget> entries = manager.getActiveChunkloaderEntries();
-            for (ChunkloaderTarget entry : entries) {
-                if (entry != null && entry.name() != null) {
-                    String n = entry.name();
-                    if (n.toLowerCase().startsWith(inputLower)) {
-                        builder.suggest(n);
-                    }
-                }
-            }
+    private static boolean canAccessNamed(CommandContext<CommandSourceStack> context, String name, boolean allowShared) {
+        ServerPlayer player = context.getSource().getPlayer();
+        if (player == null || PermissionManager.isAdmin(player)) {
+            return true;
         }
-        return builder.buildFuture();
-    };
+        var config = ChunkloaderForgeMod.getConfig();
+        if (config == null || name == null) {
+            return true;
+        }
+        ChunkloaderTarget entry = config.getEntryByName(name);
+        if (entry == null) {
+            return true;
+        }
+        if (allowShared ? PermissionManager.canOperateEntry(player, entry) : PermissionManager.canModifyEntry(player, entry)) {
+            return true;
+        }
+        context.getSource().sendFailure(Component.literal("You don't own this player.").withStyle(ChatFormatting.RED));
+        return false;
+    }
 
-    private static String getEntityTypeName(boolean allowMobSpawning) {
-        return "Player";
+    private static ChunkloaderTarget findSavedLoader(String name) {
+        var config = ChunkloaderForgeMod.getConfig();
+        return config == null ? null : config.getEntryByName(name);
+    }
+
+    private static boolean canListEntry(ServerPlayer player, ChunkloaderTarget entry) {
+        return player == null || PermissionManager.canOperateEntry(player, entry);
     }
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher, net.minecraft.core.HolderLookup.Provider registryAccess) {
@@ -55,50 +66,48 @@ public class ChunkloaderCommand {
     private static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher, net.minecraft.core.HolderLookup.Provider registryAccess) {
         dispatcher.register(Commands.literal("fakeplayer")
             .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_USE))
-            .then(Commands.literal("add")
-                .executes(ChunkloaderCommand::addFakePlayer))
+            .then(Commands.literal("help").executes(ChunkloaderCommand::openHelp))
+            .then(addCommand())
+            .then(moveCommand())
             .then(Commands.literal("remove")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OWNED_LOADERS)
                     .executes(ChunkloaderCommand::removeFakePlayer)))
             .then(Commands.literal("list")
                 .executes(ChunkloaderCommand::listFakePlayers))
             .then(Commands.literal("info")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
                     .executes(ChunkloaderCommand::infoFakePlayer)))
             .then(Commands.literal("reload")
                 .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
                 .executes(ChunkloaderCommand::reloadConfig))
             .then(Commands.literal("disable")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
-                    .executes(ChunkloaderCommand::toggleFakePlayer)))
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
+                    .executes(ChunkloaderCommand::disableFakePlayer)))
             .then(Commands.literal("stats")
                 .executes(ChunkloaderCommand::statsFakePlayers))
             .then(Commands.literal("namevisible")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
                     .then(Commands.argument("visible", BoolArgumentType.bool())
                         .executes(ChunkloaderCommand::setNameVisible))))
             .then(Commands.literal("setradius")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
                     .then(Commands.argument("radius", IntegerArgumentType.integer(ChunkloaderConstants.MIN_RADIUS, ChunkloaderConstants.MAX_RADIUS))
                         .executes(ChunkloaderCommand::setRadius))))
-            .then(Commands.literal("setmobspawning")
-                .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
-                    .then(Commands.argument("allow", BoolArgumentType.bool())
-                        .executes(ChunkloaderCommand::setMobSpawning))))
             .then(Commands.literal("setmobtarget")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
                     .then(Commands.argument("enabled", BoolArgumentType.bool())
                         .executes(ChunkloaderCommand::setMobTarget))))
+            .then(mobActivityCommand("pausemobs", false))
+            .then(mobActivityCommand("resumemobs", true))
             .then(Commands.literal("toggle")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
                     .executes(ChunkloaderCommand::toggleMobSpawning)))
             .then(Commands.literal("tablist")
                 .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
@@ -106,92 +115,111 @@ public class ChunkloaderCommand {
                     .executes(ChunkloaderCommand::setTabListVisibleAll)))
             .then(Commands.literal("rename")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
                     .then(Commands.argument("newName", StringArgumentType.string())
                         .executes(ChunkloaderCommand::renameChunkloader))))
             .then(Commands.literal("restore")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.DISABLED_LOADERS)
                     .executes(ChunkloaderCommand::restoreFakePlayer)))
             .then(Commands.literal("restoreall")
                 .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
                 .executes(ChunkloaderCommand::enableAllFakePlayers))
             .then(Commands.literal("disableall")
                 .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
-                .executes(ChunkloaderCommand::disableAllFakePlayers))
+                .executes(ChunkloaderCommand::previewDisableAll)
+                .then(Commands.literal("confirm")
+                    .executes(ChunkloaderCommand::disableAllFakePlayers)))
             .then(Commands.literal("removeall")
                 .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
-                .executes(ChunkloaderCommand::removeAllFakePlayers)
+                .executes(ChunkloaderCommand::previewRemoveAll)
+                .then(Commands.literal("confirm")
+                    .executes(ChunkloaderCommand::removeAllFakePlayers))
                 .then(Commands.literal("enabled")
-                    .executes(ChunkloaderCommand::removeAllEnabledFakePlayers))
+                    .executes(ChunkloaderCommand::previewRemoveEnabled)
+                    .then(Commands.literal("confirm")
+                        .executes(ChunkloaderCommand::removeAllEnabledFakePlayers)))
                 .then(Commands.literal("disabled")
-                    .executes(ChunkloaderCommand::removeAllDisabledFakePlayers)))
+                    .executes(ChunkloaderCommand::previewRemoveDisabled)
+                    .then(Commands.literal("confirm")
+                        .executes(ChunkloaderCommand::removeAllDisabledFakePlayers))))
             .then(Commands.literal("visualize")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.ACTIVE_LOADERS)
                     .executes(ChunkloaderCommand::toggleVisualization)))
             .then(Commands.literal("visualize3d")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.ACTIVE_LOADERS)
                     .executes(ChunkloaderCommand::toggleVisualization3D)
                     .then(Commands.argument("minY", IntegerArgumentType.integer(-64, 320))
                         .then(Commands.argument("maxY", IntegerArgumentType.integer(-64, 320))
                             .executes(ChunkloaderCommand::toggleVisualization3DWithHeight)))))
+            .then(ChunkloaderLimitCommands.createNode())
+            .then(ChunkloaderSharingCommands.share())
+            .then(ChunkloaderSharingCommands.unshare())
+            .then(ChunkloaderSharingCommands.shares())
+            .then(Commands.literal("owner")
+                .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
+                .then(Commands.argument("name", StringArgumentType.string())
+                    .suggests(ChunkloaderSuggestions.OWNED_LOADERS)
+                    .then(Commands.argument("player", StringArgumentType.string())
+                        .suggests(ChunkloaderSuggestions.ONLINE_PLAYERS)
+                        .executes(ChunkloaderCommand::assignOwner))))
             .then(Commands.literal("permission")
                 .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
                 .then(Commands.literal("grant")
                     .then(Commands.argument("player", StringArgumentType.string())
+                        .suggests(ChunkloaderSuggestions.ONLINE_PLAYERS)
                         .executes(ChunkloaderCommand::grantAllPermissions)))
                 .then(Commands.literal("revoke")
                     .then(Commands.argument("player", StringArgumentType.string())
+                        .suggests(ChunkloaderSuggestions.ONLINE_PLAYERS)
                         .executes(ChunkloaderCommand::revokeAllPermissions)))));
 
         var fpNode = Commands.literal("fp")
             .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_USE))
-            .then(Commands.literal("add")
-                .executes(ChunkloaderCommand::addFakePlayer))
+            .then(Commands.literal("help").executes(ChunkloaderCommand::openHelp))
+            .then(addCommand())
+            .then(moveCommand())
             .then(Commands.literal("remove")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OWNED_LOADERS)
                     .executes(ChunkloaderCommand::removeFakePlayer)))
             .then(Commands.literal("list")
                 .executes(ChunkloaderCommand::listFakePlayers))
             .then(Commands.literal("info")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
                     .executes(ChunkloaderCommand::infoFakePlayer)))
             .then(Commands.literal("reload")
                 .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
                 .executes(ChunkloaderCommand::reloadConfig))
             .then(Commands.literal("disable")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
-                    .executes(ChunkloaderCommand::toggleFakePlayer)))
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
+                    .executes(ChunkloaderCommand::disableFakePlayer)))
             .then(Commands.literal("stats")
                 .executes(ChunkloaderCommand::statsFakePlayers))
             .then(Commands.literal("namevisible")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
                     .then(Commands.argument("visible", BoolArgumentType.bool())
                         .executes(ChunkloaderCommand::setNameVisible))))
             .then(Commands.literal("setradius")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
                     .then(Commands.argument("radius", IntegerArgumentType.integer(ChunkloaderConstants.MIN_RADIUS, ChunkloaderConstants.MAX_RADIUS))
                         .executes(ChunkloaderCommand::setRadius))))
-            .then(Commands.literal("setmobspawning")
-                .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
-                    .then(Commands.argument("allow", BoolArgumentType.bool())
-                        .executes(ChunkloaderCommand::setMobSpawning))))
             .then(Commands.literal("setmobtarget")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
                     .then(Commands.argument("enabled", BoolArgumentType.bool())
                         .executes(ChunkloaderCommand::setMobTarget))))
+            .then(mobActivityCommand("pausemobs", false))
+            .then(mobActivityCommand("resumemobs", true))
             .then(Commands.literal("toggle")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
                     .executes(ChunkloaderCommand::toggleMobSpawning)))
             .then(Commands.literal("tablist")
                 .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
@@ -199,133 +227,214 @@ public class ChunkloaderCommand {
                     .executes(ChunkloaderCommand::setTabListVisibleAll)))
             .then(Commands.literal("rename")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
                     .then(Commands.argument("newName", StringArgumentType.string())
                         .executes(ChunkloaderCommand::renameChunkloader))))
             .then(Commands.literal("restore")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.DISABLED_LOADERS)
                     .executes(ChunkloaderCommand::restoreFakePlayer)))
             .then(Commands.literal("restoreall")
                 .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
                 .executes(ChunkloaderCommand::enableAllFakePlayers))
             .then(Commands.literal("disableall")
                 .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
-                .executes(ChunkloaderCommand::disableAllFakePlayers))
+                .executes(ChunkloaderCommand::previewDisableAll)
+                .then(Commands.literal("confirm")
+                    .executes(ChunkloaderCommand::disableAllFakePlayers)))
             .then(Commands.literal("removeall")
                 .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
-                .executes(ChunkloaderCommand::removeAllFakePlayers)
+                .executes(ChunkloaderCommand::previewRemoveAll)
+                .then(Commands.literal("confirm")
+                    .executes(ChunkloaderCommand::removeAllFakePlayers))
                 .then(Commands.literal("enabled")
-                    .executes(ChunkloaderCommand::removeAllEnabledFakePlayers))
+                    .executes(ChunkloaderCommand::previewRemoveEnabled)
+                    .then(Commands.literal("confirm")
+                        .executes(ChunkloaderCommand::removeAllEnabledFakePlayers)))
                 .then(Commands.literal("disabled")
-                    .executes(ChunkloaderCommand::removeAllDisabledFakePlayers)))
+                    .executes(ChunkloaderCommand::previewRemoveDisabled)
+                    .then(Commands.literal("confirm")
+                        .executes(ChunkloaderCommand::removeAllDisabledFakePlayers))))
             .then(Commands.literal("visualize")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.ACTIVE_LOADERS)
                     .executes(ChunkloaderCommand::toggleVisualization)))
             .then(Commands.literal("visualize3d")
                 .then(Commands.argument("name", StringArgumentType.string())
-                    .suggests(CHUNKLOADER_NAME_SUGGESTIONS)
+                    .suggests(ChunkloaderSuggestions.ACTIVE_LOADERS)
                     .executes(ChunkloaderCommand::toggleVisualization3D)
                     .then(Commands.argument("minY", IntegerArgumentType.integer(-64, 320))
                         .then(Commands.argument("maxY", IntegerArgumentType.integer(-64, 320))
                             .executes(ChunkloaderCommand::toggleVisualization3DWithHeight)))))
+            .then(ChunkloaderLimitCommands.createNode())
+            .then(ChunkloaderSharingCommands.share())
+            .then(ChunkloaderSharingCommands.unshare())
+            .then(ChunkloaderSharingCommands.shares())
+            .then(Commands.literal("owner")
+                .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
+                .then(Commands.argument("name", StringArgumentType.string())
+                    .suggests(ChunkloaderSuggestions.OWNED_LOADERS)
+                    .then(Commands.argument("player", StringArgumentType.string())
+                        .suggests(ChunkloaderSuggestions.ONLINE_PLAYERS)
+                        .executes(ChunkloaderCommand::assignOwner))))
             .then(Commands.literal("permission")
                 .requires(source -> PermissionManager.hasPermission(source, PermissionManager.PERMISSION_ADMIN))
                 .then(Commands.literal("grant")
                     .then(Commands.argument("player", StringArgumentType.string())
+                        .suggests(ChunkloaderSuggestions.ONLINE_PLAYERS)
                         .executes(ChunkloaderCommand::grantAllPermissions)))
                 .then(Commands.literal("revoke")
                     .then(Commands.argument("player", StringArgumentType.string())
+                        .suggests(ChunkloaderSuggestions.ONLINE_PLAYERS)
                         .executes(ChunkloaderCommand::revokeAllPermissions))));
 
         dispatcher.register(fpNode);
     }
 
+    private static int openHelp(CommandContext<CommandSourceStack> context) {
+        ServerPlayer player = context.getSource().getPlayer();
+        if (player == null) {
+            context.getSource().sendSuccess(() -> Component.literal(
+                    "Run /fp help in-game to open the guide. Use /fp add <x> <y> <z> to place a Fakeplayer from the console."), false);
+        } else if (!ChunkloaderNetworking.tryOpenHelp(player)) {
+            context.getSource().sendSuccess(() -> Component.literal(
+                    "Use /fp add to create a Fakeplayer where you stand. With the client mod, right-click it to open its map."), false);
+        }
+        return 1;
+    }
+
     private static int addFakePlayer(CommandContext<CommandSourceStack> context) {
+        ServerPlayer player = context.getSource().getPlayer();
+        if (player == null) {
+            context.getSource().sendFailure(Component.literal("This command can only be executed by a player"));
+            return 0;
+        }
+        return createFakePlayer(context, player, player.blockPosition(), (net.minecraft.server.level.ServerLevel) player.level(), player.getYRot());
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> addCommand() {
+        return Commands.literal("add")
+                .executes(ChunkloaderCommand::addFakePlayer)
+                .then(Commands.argument("pos", BlockPosArgument.blockPos())
+                        .executes(context -> addFakePlayerAt(context, context.getSource().getLevel()))
+                        .then(Commands.argument("dimension", DimensionArgument.dimension())
+                                .executes(context -> addFakePlayerAt(context, DimensionArgument.getDimension(context, "dimension")))));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> moveCommand() {
+        return Commands.literal("move")
+                .then(Commands.argument("name", StringArgumentType.string())
+                        .suggests(ChunkloaderSuggestions.OPERABLE_LOADERS)
+                        .then(Commands.argument("pos", BlockPosArgument.blockPos())
+                                .executes(context -> movePlayer(context, null))
+                                .then(Commands.argument("dimension", DimensionArgument.dimension())
+                                        .executes(context -> movePlayer(context, DimensionArgument.getDimension(context, "dimension"))))));
+    }
+
+    private static int addFakePlayerAt(CommandContext<CommandSourceStack> context, ServerLevel world) {
+        ServerPlayer player = context.getSource().getPlayer();
+        BlockPos position = BlockPosArgument.getBlockPos(context, "pos");
+        return createFakePlayer(context, player, position, world, context.getSource().getRotation().y);
+    }
+
+    private static int createFakePlayer(CommandContext<CommandSourceStack> context, ServerPlayer player,
+            BlockPos pos, ServerLevel world, float yaw) {
         try {
-            if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
+            ChunkloaderManager manager = ChunkloaderForgeMod.getChunkloaderManager();
+            if (manager == null) {
                 context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
                 return 0;
             }
-
-            if (context.getSource().getPlayer() == null) {
-                context.getSource().sendFailure(Component.literal("This command can only be executed by a player"));
-                return 0;
-            }
-
-            var player = context.getSource().getPlayer();
-            BlockPos playerPos = player.blockPosition();
-            var world = (net.minecraft.server.level.ServerLevel) player.level();
-
-            var config = ChunkloaderForgeMod.getConfig();
-            if (config != null && config.getChunkEntries().size() >= config.getMaxChunkloaders()) {
-                context.getSource().sendFailure(Component.literal("Maximum player limit (" + config.getMaxChunkloaders() + ") reached!"));
-                return 0;
-            }
-
             if (world == null) {
-                context.getSource().sendFailure(Component.literal("World is not available"));
+                context.getSource().sendFailure(Component.literal("Level is not available"));
                 return 0;
             }
-
-            int chunkX = playerPos.getX() >> 4;
-            int chunkZ = playerPos.getZ() >> 4;
-            String dimension = world.dimension().identifier().toString();
-            String overlappingName = ChunkloaderForgeMod.getChunkloaderManager().getOverlappingChunkloaderName(
-                chunkX, chunkZ, 0, dimension, null);
-
+            if (!world.isInWorldBounds(pos) || pos.getY() < ChunkloaderConstants.MIN_BLOCK_Y
+                    || pos.getY() > ChunkloaderConstants.MAX_BLOCK_Y) {
+                context.getSource().sendFailure(Component.literal("Position is outside the world.").withStyle(ChatFormatting.RED));
+                return 0;
+            }
+            var config = ChunkloaderForgeMod.getConfig();
+            String owner = player != null ? player.getGameProfile().name() : null;
+            var ownerUuid = player != null ? player.getUUID() : null;
+            String limitMessage = config != null ? config.getActivationLimitMessage(ownerUuid, owner) : null;
+            if (limitMessage != null) {
+                context.getSource().sendFailure(Component.literal(limitMessage));
+                return 0;
+            }
+            int chunkX = pos.getX() >> 4;
+            int chunkZ = pos.getZ() >> 4;
+            String dimension = ChunkloaderManager.getDimensionString(world);
+            String overlappingName = manager.getOverlappingChunkloaderName(chunkX, chunkZ, 0, dimension, null);
             if (overlappingName != null) {
-                ChunkloaderTarget overlappingEntry = config != null ? config.getEntryByName(overlappingName) : null;
-                String errorMsg;
-                if (overlappingEntry != null && overlappingEntry.allowMobSpawning()) {
-                    errorMsg = "Cannot add player: Position is already covered by a player '" + overlappingName + "'";
-                } else {
-                    errorMsg = "Cannot add player: Position is already covered by a player '" + overlappingName + "'";
-                }
-                context.getSource().sendFailure(Component.literal(errorMsg).withStyle(ChatFormatting.RED));
+                context.getSource().sendFailure(Component.literal(
+                        "Cannot add player: Position is already covered by a player '" + overlappingName + "'").withStyle(ChatFormatting.RED));
+                return 0;
+            }
+            if (!manager.addChunkloader(chunkX, chunkZ, pos, null, world, owner, yaw, ownerUuid)) {
+                String failureLimit = config != null ? config.getActivationLimitMessage(ownerUuid, owner) : null;
+                context.getSource().sendFailure(Component.literal(failureLimit != null ? failureLimit : "Failed to create player")
+                        .withStyle(ChatFormatting.RED));
                 return 0;
             }
 
-            String playerName = player.getName().getString();
-            float playerYaw = player.getYRot();
-            boolean success = ChunkloaderForgeMod.getChunkloaderManager().addChunkloader(
-                chunkX, chunkZ, playerPos, null, world, playerName, playerYaw);
-
-            if (success) {
-                var entries = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries();
-
-                ChunkloaderTarget entry = entries.stream()
-                    .filter(e -> e != null && e.blockX() == playerPos.getX() &&
-                        e.blockY() == playerPos.getY() && e.blockZ() == playerPos.getZ())
-                    .findFirst()
-                    .orElse(null);
-
-                if (entry != null && entry.easterEggSkinIndex() == null) {
-                    String name = entry.name() != null ? entry.name() : "Unnamed";
-                    context.getSource().sendSuccess(() -> Component.literal("Player '" + name + "' created at position (" +
-                        playerPos.getX() + ", " + playerPos.getY() + ", " + playerPos.getZ() + ")").withStyle(ChatFormatting.GREEN), true);
+            ChunkloaderTarget entry = config != null ? config.getEntry(chunkX, chunkZ, dimension) : null;
+            if (entry != null && entry.easterEggSkinIndex() == null) {
+                String name = entry.name() != null ? entry.name() : "Unnamed";
+                context.getSource().sendSuccess(() -> Component.literal("Player '" + name + "' created at position ("
+                        + entry.blockX() + ", " + entry.blockY() + ", " + entry.blockZ() + ") in " + entry.dimension())
+                        .withStyle(ChatFormatting.GREEN), true);
+                if (player != null && (net.minecraft.server.level.ServerLevel) player.level() == world) {
+                    context.getSource().sendSuccess(() -> Component.literal("Right-click the player to open the map."), false);
                 }
-                return 1;
-            } else {
-                String errorMsg = "Failed to create player";
-                if (config != null && config.getChunkEntries().size() >= config.getMaxChunkloaders()) {
-                    errorMsg = "Maximum player limit (" + config.getMaxChunkloaders() + ") reached!";
-                } else if (config != null && config.hasEntry(chunkX, chunkZ, dimension)) {
-                    errorMsg = "A player already exists at this position!";
-                }
-                context.getSource().sendFailure(Component.literal(errorMsg).withStyle(ChatFormatting.RED));
-                return 0;
             }
+            return 1;
         } catch (Exception e) {
-
+            ChunkloaderForgeMod.LOGGER.error("Error in addFakePlayer command", e);
             context.getSource().sendFailure(Component.literal("An error occurred: " + e.getMessage()).withStyle(ChatFormatting.RED));
             return 0;
         }
     }
 
+    private static int movePlayer(CommandContext<CommandSourceStack> context, ServerLevel targetWorld) {
+        String name = StringArgumentType.getString(context, "name");
+        if (!canAccessNamed(context, name, true)) {
+            return 0;
+        }
+
+        ChunkloaderManager manager = ChunkloaderForgeMod.getChunkloaderManager();
+        if (manager == null) {
+            context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
+            return 0;
+        }
+
+        ChunkloaderTarget entry = findSavedLoader(name);
+        if (entry == null) {
+            context.getSource().sendFailure(Component.literal("Player '" + name + "' not found."));
+            return 0;
+        }
+
+        BlockPos pos = BlockPosArgument.getBlockPos(context, "pos");
+        String dimension = targetWorld == null ? entry.dimension() : ChunkloaderManager.getDimensionString(targetWorld);
+        String failure = manager.updateDisabledChunkloaderCoordsWithMessage(
+                entry.chunkX(), entry.chunkZ(), entry.dimension(), pos.getX() >> 4, pos.getZ() >> 4,
+                pos.getX(), pos.getY(), pos.getZ(), dimension);
+        if (failure != null) {
+            context.getSource().sendFailure(Component.literal(failure));
+            return 0;
+        }
+
+        ChunkloaderNetworking.refreshOpenChunkMapMarkers(context.getSource().getServer(), manager);
+        context.getSource().sendSuccess(() -> Component.literal("Moved '" + entry.name() + "' to ("
+                + pos.getX() + ", " + pos.getY() + ", " + pos.getZ() + ") in " + dimension).withStyle(ChatFormatting.GREEN), true);
+        return 1;
+    }
+
     private static int removeFakePlayer(CommandContext<CommandSourceStack> context) {
         String name = StringArgumentType.getString(context, "name");
+        if (!canModifyNamed(context, name)) {
+            return 0;
+        }
 
         if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
             context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
@@ -359,18 +468,19 @@ public class ChunkloaderCommand {
             return 0;
         }
 
-        var fakePlayers = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries();
+        var fakePlayers = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
+            .filter(entry -> canListEntry(context.getSource().getPlayer(), entry))
+            .toList();
 
         if (fakePlayers.isEmpty()) {
-            context.getSource().sendSuccess(() -> Component.literal("No active player"), false);
+            context.getSource().sendSuccess(() -> Component.literal("No saved players"), false);
         } else {
             int count = fakePlayers.size();
-            String noun = (count == 1 ? "player" : "players");
-            context.getSource().sendSuccess(() -> Component.literal("Active " + noun + " (" + count + "):"), false);
+            context.getSource().sendSuccess(() -> Component.literal("Saved " + playerNoun(count) + " (" + count + "):"), false);
             for (var entry : fakePlayers) {
                 String name = entry.name() != null ? entry.name() : "Unnamed";
-                context.getSource().sendSuccess(() -> Component.literal("  - " + name + " @ Block (" +
-                    entry.blockX() + ", " + entry.blockY() + ", " + entry.blockZ() + ")"), false);
+                context.getSource().sendSuccess(() -> Component.literal("  - " + name + (entry.enabled() ? " (active)" : " (disabled)") + " @ Block (" +
+                    entry.blockX() + ", " + entry.blockY() + ", " + entry.blockZ() + ") in " + entry.dimension()), false);
             }
         }
 
@@ -379,16 +489,16 @@ public class ChunkloaderCommand {
 
     private static int infoFakePlayer(CommandContext<CommandSourceStack> context) {
         String name = StringArgumentType.getString(context, "name");
+        if (!canAccessNamed(context, name, true)) {
+            return 0;
+        }
 
         if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
             context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
             return 0;
         }
 
-        ChunkloaderTarget entry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
-            .filter(e -> name.equals(e.name()))
-            .findFirst()
-            .orElse(null);
+        ChunkloaderTarget entry = findSavedLoader(name);
 
         if (entry == null) {
             var config = ChunkloaderForgeMod.getConfig();
@@ -409,14 +519,18 @@ public class ChunkloaderCommand {
         context.getSource().sendSuccess(() -> Component.literal("Name: " + entry.name()).withStyle(ChatFormatting.YELLOW), false);
         context.getSource().sendSuccess(() -> Component.literal("Status: " + (entry.enabled() ? "Active" : "Inactive"))
             .withStyle(entry.enabled() ? ChatFormatting.GREEN : ChatFormatting.RED), false);
-        String mode = entry.allowMobSpawning() ? "Player Mode (Mob Spawning)" : "Player Mode (Chunks Only)";
+        String mode = entry.allowMobSpawning() ? "Fakeplayer" : "Chunkplayer";
         ChatFormatting modeColor = entry.allowMobSpawning() ? ChatFormatting.GREEN : ChatFormatting.BLUE;
         context.getSource().sendSuccess(() -> Component.literal("Mode: " + mode).withStyle(modeColor), false);
+        String mobSetting = entry.allowMobSpawning()
+                ? "Mob target: " + (entry.mobTarget() ? "Enabled" : "Disabled")
+                : "Mob activity: " + (entry.mobAi() ? "Enabled" : "Paused");
+        context.getSource().sendSuccess(() -> Component.literal(mobSetting), false);
+        context.getSource().sendSuccess(() -> Component.literal("Dimension: " + entry.dimension()), false);
         context.getSource().sendSuccess(() -> Component.literal("Chunk: (" + entry.chunkX() + ", " + entry.chunkZ() + ")"), false);
         context.getSource().sendSuccess(() -> Component.literal("Block: (" + entry.blockX() + ", " + entry.blockY() + ", " + entry.blockZ() + ")"), false);
         context.getSource().sendSuccess(() -> Component.literal("Name visible: " + (entry.nameVisible() ? "Yes" : "No")), false);
-        int chunksLoaded = (entry.chunkRadius() * 2 + 1) * (entry.chunkRadius() * 2 + 1);
-        context.getSource().sendSuccess(() -> Component.literal("Chunk radius: " + entry.chunkRadius() + " (loads " + chunksLoaded + " chunks)"), false);
+        context.getSource().sendSuccess(() -> Component.literal(describeRadius(entry.chunkRadius())), false);
 
         return 1;
     }
@@ -432,18 +546,18 @@ public class ChunkloaderCommand {
         return 1;
     }
 
-    private static int toggleFakePlayer(CommandContext<CommandSourceStack> context) {
+    private static int disableFakePlayer(CommandContext<CommandSourceStack> context) {
         String name = StringArgumentType.getString(context, "name");
+        if (!canAccessNamed(context, name, true)) {
+            return 0;
+        }
 
         if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
             context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
             return 0;
         }
 
-        ChunkloaderTarget existingEntry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
-            .filter(e -> name.equals(e.name()))
-            .findFirst()
-            .orElse(null);
+        ChunkloaderTarget existingEntry = findSavedLoader(name);
 
         if (existingEntry == null) {
             var config = ChunkloaderForgeMod.getConfig();
@@ -460,26 +574,23 @@ public class ChunkloaderCommand {
             return 0;
         }
 
-        boolean newEnabled = ChunkloaderForgeMod.getChunkloaderManager().toggleChunkloaderByName(name);
-
-        ChunkloaderTarget updatedEntry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
-            .filter(e -> name.equals(e.name()))
-            .findFirst()
-            .orElse(existingEntry);
-
-        String entityType = getEntityTypeName(updatedEntry != null ? updatedEntry.allowMobSpawning() : true);
-
-        if (newEnabled) {
-            context.getSource().sendSuccess(() -> Component.literal(entityType + " '" + name + "' enabled").withStyle(ChatFormatting.GREEN), true);
-        } else {
-            String keyName = de.chunkloader.util.KeybindHelper.getDisabledChunkloadersKeyName();
-            context.getSource().sendSuccess(
-                () -> Component.literal(entityType + " '" + name + "' disabled (Press " + keyName + " to open disabled list)")
-                    .withStyle(ChatFormatting.RED),
-                true
-            );
+        if (!existingEntry.enabled()) {
+            context.getSource().sendSuccess(() -> Component.literal("Player '" + name + "' is already disabled")
+                    .withStyle(ChatFormatting.YELLOW), false);
+            return 0;
         }
 
+        ChunkloaderForgeMod.getChunkloaderManager().toggleChunkloaderByName(name);
+        ChunkloaderTarget updatedEntry = findSavedLoader(name);
+        if (updatedEntry == null || updatedEntry.enabled()) {
+            context.getSource().sendFailure(Component.literal("Failed to disable player '" + name + "'")
+                    .withStyle(ChatFormatting.RED));
+            return 0;
+        }
+
+        String keyName = de.chunkloader.util.KeybindHelper.getDisabledChunkloadersKeyName();
+        context.getSource().sendSuccess(() -> Component.literal(
+                "Player '" + name + "' disabled (Press " + keyName + " to open disabled list)").withStyle(ChatFormatting.RED), true);
         return 1;
     }
 
@@ -494,12 +605,9 @@ public class ChunkloaderCommand {
 
         context.getSource().sendSuccess(() -> Component.literal("=== Player Statistics ===").withStyle(ChatFormatting.GOLD), false);
         context.getSource().sendSuccess(() -> Component.literal("Total: " + stats.total()).withStyle(ChatFormatting.AQUA), false);
-        context.getSource().sendSuccess(() -> Component.literal("Active: " + stats.enabled()).withStyle(ChatFormatting.GREEN), false);
+        context.getSource().sendSuccess(() -> Component.literal("Active players: " + stats.enabled()).withStyle(ChatFormatting.GREEN), false);
         context.getSource().sendSuccess(() -> Component.literal("Inactive: " + stats.disabled()).withStyle(ChatFormatting.RED), false);
-        context.getSource().sendSuccess(() -> Component.literal("Loaded chunks: " + stats.loadedChunks()), false);
-        int activePlayers = stats.activeFakePlayers();
-        String noun = (activePlayers == 1 ? "player" : "players");
-        context.getSource().sendSuccess(() -> Component.literal("Active " + noun + ": " + activePlayers), false);
+        context.getSource().sendSuccess(() -> Component.literal("Selected chunks: " + stats.coreChunks()), false);
 
         long usedMB = perfStats.usedMemory() / (1024 * 1024);
         long maxMB = perfStats.maxMemory() / (1024 * 1024);
@@ -512,16 +620,18 @@ public class ChunkloaderCommand {
             context.getSource().sendSuccess(() -> Component.literal("⚠ Warning: High memory usage!").withStyle(ChatFormatting.RED), false);
         }
 
-        if (stats.loadedChunks() > 1000) {
+        if (stats.chunksWithRings() > 1000) {
             context.getSource().sendSuccess(() -> Component.literal("⚠ Note: Many loaded chunks may impact performance").withStyle(ChatFormatting.YELLOW), false);
         }
 
         return 1;
     }
 
-
     private static int setMobTarget(CommandContext<CommandSourceStack> context) {
         String name = StringArgumentType.getString(context, "name");
+        if (!canAccessNamed(context, name, true)) {
+            return 0;
+        }
         boolean enabled = BoolArgumentType.getBool(context, "enabled");
 
         if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
@@ -529,10 +639,7 @@ public class ChunkloaderCommand {
             return 0;
         }
 
-        ChunkloaderTarget entry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
-            .filter(e -> name.equals(e.name()))
-            .findFirst()
-            .orElse(null);
+        ChunkloaderTarget entry = findSavedLoader(name);
 
         if (entry == null) {
             var config = ChunkloaderForgeMod.getConfig();
@@ -557,6 +664,8 @@ public class ChunkloaderCommand {
         boolean success = ChunkloaderForgeMod.getChunkloaderManager().setChunkloaderMobTarget(name, enabled);
 
         if (success) {
+            ChunkloaderNetworking.refreshOpenChunkMapMarkers(context.getSource().getServer(),
+                    ChunkloaderForgeMod.getChunkloaderManager());
             context.getSource().sendSuccess(() -> Component.literal("Mob target for '" + name + "' set to " + (enabled ? "enabled" : "disabled"))
                 .withStyle(ChatFormatting.GREEN), true);
             return 1;
@@ -566,8 +675,48 @@ public class ChunkloaderCommand {
         }
     }
 
+    private static LiteralArgumentBuilder<CommandSourceStack> mobActivityCommand(String command, boolean enabled) {
+        return Commands.literal(command)
+                .then(Commands.argument("name", StringArgumentType.string())
+                        .suggests(ChunkloaderSuggestions.OPERABLE_CHUNKPLAYERS)
+                        .executes(context -> setMobAi(context, enabled)));
+    }
+
+    private static int setMobAi(CommandContext<CommandSourceStack> context, boolean enabled) {
+        String name = StringArgumentType.getString(context, "name");
+        if (!canAccessNamed(context, name, true)) {
+            return 0;
+        }
+        if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
+            context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
+            return 0;
+        }
+        ChunkloaderTarget entry = ChunkloaderForgeMod.getConfig() != null
+                ? ChunkloaderForgeMod.getConfig().getEntryByName(name) : null;
+        if (entry == null) {
+            context.getSource().sendFailure(Component.literal("Player '" + name + "' not found").withStyle(ChatFormatting.RED));
+            return 0;
+        }
+        if (entry.allowMobSpawning()) {
+            context.getSource().sendFailure(Component.literal("Only Chunkplayers can pause or resume mobs.").withStyle(ChatFormatting.RED));
+            return 0;
+        }
+        if (!ChunkloaderForgeMod.getChunkloaderManager().setChunkloaderMobAi(name, enabled)) {
+            context.getSource().sendFailure(Component.literal("Could not update mob activity.").withStyle(ChatFormatting.RED));
+            return 0;
+        }
+        ChunkloaderNetworking.refreshOpenChunkMapMarkers(context.getSource().getServer(),
+                ChunkloaderForgeMod.getChunkloaderManager());
+        context.getSource().sendSuccess(() -> Component.literal((enabled ? "Resumed mobs for '" : "Paused mobs for '") + entry.name() + "'.")
+                .withStyle(ChatFormatting.GREEN), true);
+        return 1;
+    }
+
     private static int setNameVisible(CommandContext<CommandSourceStack> context) {
         String name = StringArgumentType.getString(context, "name");
+        if (!canAccessNamed(context, name, true)) {
+            return 0;
+        }
         boolean visible = BoolArgumentType.getBool(context, "visible");
 
         if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
@@ -575,10 +724,7 @@ public class ChunkloaderCommand {
             return 0;
         }
 
-        ChunkloaderTarget entry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
-            .filter(e -> name.equals(e.name()))
-            .findFirst()
-            .orElse(null);
+        ChunkloaderTarget entry = findSavedLoader(name);
 
         if (entry == null) {
             var config = ChunkloaderForgeMod.getConfig();
@@ -598,6 +744,8 @@ public class ChunkloaderCommand {
         boolean success = ChunkloaderForgeMod.getChunkloaderManager().setChunkloaderNameVisible(name, visible);
 
         if (success) {
+            ChunkloaderNetworking.refreshOpenChunkMapMarkers(context.getSource().getServer(),
+                    ChunkloaderForgeMod.getChunkloaderManager());
             context.getSource().sendSuccess(() -> Component.literal("Name visibility for '" + name + "' set to " + (visible ? "visible" : "invisible"))
                 .withStyle(ChatFormatting.GREEN), true);
             return 1;
@@ -609,6 +757,9 @@ public class ChunkloaderCommand {
 
     private static int setRadius(CommandContext<CommandSourceStack> context) {
         String name = StringArgumentType.getString(context, "name");
+        if (!canAccessNamed(context, name, true)) {
+            return 0;
+        }
         int radius = IntegerArgumentType.getInteger(context, "radius");
 
         if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
@@ -621,10 +772,7 @@ public class ChunkloaderCommand {
             return 0;
         }
 
-        ChunkloaderTarget entry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
-            .filter(e -> name.equals(e.name()))
-            .findFirst()
-            .orElse(null);
+        ChunkloaderTarget entry = findSavedLoader(name);
 
         if (entry == null) {
             var config = ChunkloaderForgeMod.getConfig();
@@ -641,32 +789,35 @@ public class ChunkloaderCommand {
             return 0;
         }
 
-        boolean success = ChunkloaderForgeMod.getChunkloaderManager().setChunkloaderRadius(name, radius);
-
-        if (success) {
-            int chunksLoaded = (radius * 2 + 1) * (radius * 2 + 1);
-            context.getSource().sendSuccess(() -> Component.literal("Chunk radius for '" + name + "' set to " + radius + " (loads " + chunksLoaded + " chunks)")
-                .withStyle(ChatFormatting.GREEN), true);
-            return 1;
-        } else {
-            context.getSource().sendFailure(Component.literal("Error setting chunk radius").withStyle(ChatFormatting.RED));
+        String error = ChunkloaderForgeMod.getChunkloaderManager().setChunkloaderRadiusWithMessage(name, radius);
+        if (error != null) {
+            context.getSource().sendFailure(Component.literal(error).withStyle(ChatFormatting.RED));
             return 0;
         }
+        context.getSource().sendSuccess(() -> Component.literal("Player '" + name + "': " + describeRadius(radius))
+                .withStyle(ChatFormatting.GREEN), true);
+        return 1;
     }
 
-    private static int setMobSpawning(CommandContext<CommandSourceStack> context) {
+    private static String describeRadius(int radius) {
+        int width = 2 * radius + 1;
+        int selectedChunks = width * width;
+        return "SD: " + radius + " (" + selectedChunks + " selected "
+                + (selectedChunks == 1 ? "chunk" : "chunks") + ")";
+    }
+
+    private static int toggleMobSpawning(CommandContext<CommandSourceStack> context) {
         String name = StringArgumentType.getString(context, "name");
-        boolean allow = BoolArgumentType.getBool(context, "allow");
+        if (!canAccessNamed(context, name, true)) {
+            return 0;
+        }
 
         if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
             context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
             return 0;
         }
 
-        ChunkloaderTarget entry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
-            .filter(e -> name.equals(e.name()))
-            .findFirst()
-            .orElse(null);
+        ChunkloaderTarget entry = findSavedLoader(name);
 
         if (entry == null) {
             var config = ChunkloaderForgeMod.getConfig();
@@ -683,59 +834,18 @@ public class ChunkloaderCommand {
             return 0;
         }
 
+        boolean allow = !entry.allowMobSpawning();
         boolean success = ChunkloaderForgeMod.getChunkloaderManager().setChunkloaderAllowMobSpawning(name, allow);
 
         if (success) {
-            String mode = allow ? "Player Mode (Mob spawning enabled)" : "Player Mode (chunks only, no mob spawning)";
-            context.getSource().sendSuccess(() -> Component.literal("Mob spawning for '" + name + "' set to " + allow + " (" + mode + ")")
+            String mode = allow ? "Fakeplayer" : "Chunkplayer";
+            context.getSource().sendSuccess(() -> Component.literal("Mode for '" + name + "' set to " + mode)
                 .withStyle(ChatFormatting.GREEN), true);
             return 1;
         } else {
             context.getSource().sendFailure(Component.literal("Toggle failed: rename the player first to avoid a name conflict.").withStyle(ChatFormatting.RED));
             return 0;
         }
-    }
-
-    private static int toggleMobSpawning(CommandContext<CommandSourceStack> context) {
-        String name = StringArgumentType.getString(context, "name");
-
-        if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
-            context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
-            return 0;
-        }
-
-        ChunkloaderTarget entry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
-            .filter(e -> name.equals(e.name()))
-            .findFirst()
-            .orElse(null);
-
-        if (entry == null) {
-            var config = ChunkloaderForgeMod.getConfig();
-            List<String> similar = config != null ? config.findSimilarNames(name, 3) : List.of();
-
-            Component errorText;
-            if (!similar.isEmpty()) {
-                errorText = Component.literal("Player '" + name + "' not found. Did you mean: " + String.join(", ", similar))
-                    .withStyle(ChatFormatting.RED);
-            } else {
-                errorText = Component.literal("Player '" + name + "' not found").withStyle(ChatFormatting.RED);
-            }
-            context.getSource().sendFailure(errorText);
-            return 0;
-        }
-
-        boolean newValue = !entry.allowMobSpawning();
-        boolean success = ChunkloaderForgeMod.getChunkloaderManager().setChunkloaderAllowMobSpawning(name, newValue);
-
-        if (success) {
-            String mode = newValue ? "Fakeplayer (Mob spawning enabled)" : "Chunkplayer (chunks only, no mob spawning)";
-            ChatFormatting color = newValue ? ChatFormatting.GREEN : ChatFormatting.BLUE;
-            context.getSource().sendSuccess(() -> Component.literal("Toggled '" + name + "' to " + mode).withStyle(color), true);
-            return 1;
-        }
-
-        context.getSource().sendFailure(Component.literal("Toggle failed: rename the player first to avoid a name conflict.").withStyle(ChatFormatting.RED));
-        return 0;
     }
 
     private static int setTabListVisibleAll(CommandContext<CommandSourceStack> context) {
@@ -757,7 +867,7 @@ public class ChunkloaderCommand {
         int changed = ChunkloaderForgeMod.getChunkloaderManager().setTabListVisibleAll(visible);
         if (changed > 0) {
             context.getSource().sendSuccess(
-                () -> Component.literal("Tab list visibility set to " + visible + " for " + changed + " players")
+                () -> Component.literal("Tab list visibility set to " + visible + " for " + changed + " " + playerNoun(changed))
                     .withStyle(ChatFormatting.GREEN),
                 true
             );
@@ -770,6 +880,9 @@ public class ChunkloaderCommand {
 
     private static int renameChunkloader(CommandContext<CommandSourceStack> context) {
         String name = StringArgumentType.getString(context, "name");
+        if (!canAccessNamed(context, name, true)) {
+            return 0;
+        }
         final String newName = StringArgumentType.getString(context, "newName");
 
         if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
@@ -777,10 +890,7 @@ public class ChunkloaderCommand {
             return 0;
         }
 
-        ChunkloaderTarget entry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
-            .filter(e -> name.equals(e.name()))
-            .findFirst()
-            .orElse(null);
+        ChunkloaderTarget entry = findSavedLoader(name);
 
         if (entry == null) {
             var config = ChunkloaderForgeMod.getConfig();
@@ -829,6 +939,9 @@ public class ChunkloaderCommand {
 
     private static int restoreFakePlayer(CommandContext<CommandSourceStack> context) {
         String name = StringArgumentType.getString(context, "name");
+        if (!canAccessNamed(context, name, true)) {
+            return 0;
+        }
 
         if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
             context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
@@ -857,6 +970,11 @@ public class ChunkloaderCommand {
             return 0;
         }
 
+        String limitMessage = ChunkloaderForgeMod.getChunkloaderManager().getActivationLimitMessage(entry);
+        if (limitMessage != null) {
+            context.getSource().sendFailure(Component.literal(limitMessage));
+            return 0;
+        }
         boolean restored = ChunkloaderForgeMod.getChunkloaderManager().toggleChunkloaderByName(name);
         if (restored) {
             context.getSource().sendSuccess(() -> Component.literal("Player '" + name + "' restored")
@@ -870,32 +988,72 @@ public class ChunkloaderCommand {
     }
 
     private static int enableAllFakePlayers(CommandContext<CommandSourceStack> context) {
-        if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
+        var manager = ChunkloaderForgeMod.getChunkloaderManager();
+        var config = ChunkloaderForgeMod.getConfig();
+        if (manager == null || config == null) {
             context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
             return 0;
         }
-
-        int count = ChunkloaderForgeMod.getChunkloaderManager().enableAllChunkloaders();
-        if (count == 0) {
-            context.getSource().sendSuccess(() -> Component.literal("No disabled player found").withStyle(ChatFormatting.YELLOW), false);
+        List<ChunkloaderTarget> disabled = config.getChunkEntries().stream()
+                .filter(entry -> !entry.enabled()).toList();
+        if (disabled.isEmpty()) {
+            context.getSource().sendSuccess(() -> Component.literal("No disabled player found")
+                    .withStyle(ChatFormatting.YELLOW), false);
             return 0;
         }
 
-        var entries = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries();
-
-        long fakeplayerCount = entries.stream().filter(e -> e.allowMobSpawning()).count();
-        long chunkloaderCount = entries.size() - fakeplayerCount;
-
-        String message;
-        String restoredLabel = (count == 1 ? " Player restored" : " Players restored");
-        if (fakeplayerCount > 0 && chunkloaderCount > 0) {
-            message = count + restoredLabel + " (mob spawning: " + fakeplayerCount + ", chunks only: " + chunkloaderCount + ")";
-        } else {
-            message = count + restoredLabel;
+        int count = manager.enableAllChunkloaders();
+        if (count > 0) {
+            String message = count + (count == 1 ? " Player restored" : " Players restored");
+            context.getSource().sendSuccess(() -> Component.literal(message).withStyle(ChatFormatting.GREEN), true);
         }
-
-        context.getSource().sendSuccess(() -> Component.literal(message).withStyle(ChatFormatting.GREEN), true);
+        List<ChunkloaderTarget> remaining = disabled.stream()
+                .map(entry -> config.getEntry(entry.chunkX(), entry.chunkZ(), entry.dimension()))
+                .filter(entry -> entry != null && !entry.enabled()).toList();
+        long limited = remaining.stream().filter(entry -> manager.getActivationLimitMessage(entry) != null).count();
+        if (limited > 0) {
+            String message = limited + (limited == 1 ? " Player remains" : " Players remain")
+                    + " disabled because a player limit was reached.";
+            context.getSource().sendFailure(Component.literal(message));
+        }
+        long failed = remaining.size() - limited;
+        if (failed > 0) {
+            context.getSource().sendFailure(Component.literal(failed
+                    + (failed == 1 ? " Player could not be restored." : " Players could not be restored.")));
+        }
         return count;
+    }
+
+    private static String playerNoun(int count) {
+        return count == 1 ? "player" : "players";
+    }
+
+    private static int previewDisableAll(CommandContext<CommandSourceStack> context) {
+        var manager = ChunkloaderForgeMod.getChunkloaderManager();
+        int count = manager == null ? 0 : (int) manager.getActiveChunkloaderEntries().stream().filter(ChunkloaderTarget::enabled).count();
+        context.getSource().sendFailure(Component.literal("This will disable " + count + " " + playerNoun(count) + ". Run /fp disableall confirm."));
+        return 0;
+    }
+
+    private static int previewRemoveAll(CommandContext<CommandSourceStack> context) {
+        var config = ChunkloaderForgeMod.getConfig();
+        int count = config == null ? 0 : config.getChunkEntries().size();
+        context.getSource().sendFailure(Component.literal("This will remove " + count + " " + playerNoun(count) + ". Run /fp removeall confirm."));
+        return 0;
+    }
+
+    private static int previewRemoveEnabled(CommandContext<CommandSourceStack> context) {
+        var config = ChunkloaderForgeMod.getConfig();
+        int count = config == null ? 0 : (int) config.getChunkEntries().stream().filter(ChunkloaderTarget::enabled).count();
+        context.getSource().sendFailure(Component.literal("This will remove " + count + " enabled " + playerNoun(count) + ". Run /fp removeall enabled confirm."));
+        return 0;
+    }
+
+    private static int previewRemoveDisabled(CommandContext<CommandSourceStack> context) {
+        var config = ChunkloaderForgeMod.getConfig();
+        int count = config == null ? 0 : (int) config.getChunkEntries().stream().filter(entry -> !entry.enabled()).count();
+        context.getSource().sendFailure(Component.literal("This will remove " + count + " disabled " + playerNoun(count) + ". Run /fp removeall disabled confirm."));
+        return 0;
     }
 
     private static int disableAllFakePlayers(CommandContext<CommandSourceStack> context) {
@@ -1024,162 +1182,82 @@ public class ChunkloaderCommand {
     }
 
     private static int toggleVisualization(CommandContext<CommandSourceStack> context) {
-        try {
-            String name = StringArgumentType.getString(context, "name");
-
-            if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
-                context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
-                return 0;
-            }
-
-            ChunkloaderTarget entry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
-                .filter(e -> e != null && name.equals(e.name()))
-                .findFirst()
-                .orElse(null);
-
-            if (entry == null) {
-                var config = ChunkloaderForgeMod.getConfig();
-                List<String> similar = config != null ? config.findSimilarNames(name, 3) : List.of();
-
-                Component errorText;
-                if (!similar.isEmpty()) {
-                    errorText = Component.literal("Player '" + name + "' not found. Did you mean: " + String.join(", ", similar))
-                        .withStyle(ChatFormatting.RED);
-                } else {
-                    errorText = Component.literal("Player '" + name + "' not found").withStyle(ChatFormatting.RED);
-                }
-                context.getSource().sendFailure(errorText);
-                return 0;
-            }
-
-            de.chunkloader.manager.ChunkloaderManager.ChunkKey key = new de.chunkloader.manager.ChunkloaderManager.ChunkKey(entry.dimension(), entry.chunkX(), entry.chunkZ());
-
-            if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
-                context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
-                return 0;
-            }
-
-            ChunkloaderForgeMod.getChunkloaderManager().toggleVisualization(key);
-            boolean isActive = ChunkloaderForgeMod.getChunkloaderManager().isVisualizationActive(key);
-
-            context.getSource().sendSuccess(() -> Component.literal("Chunk border visualization for '" + name + "' is now " + (isActive ? "enabled" : "disabled"))
-                .withStyle(isActive ? ChatFormatting.GREEN : ChatFormatting.RED), true);
-
-            return 1;
-        } catch (Exception e) {
-
-            context.getSource().sendFailure(Component.literal("An error occurred: " + e.getMessage()).withStyle(ChatFormatting.RED));
-            return 0;
-        }
+        return toggleVisualization(context, false, 0, 0);
     }
 
     private static int toggleVisualization3D(CommandContext<CommandSourceStack> context) {
-        try {
-            String name = StringArgumentType.getString(context, "name");
-
-            if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
-                context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
-                return 0;
-            }
-
-            ChunkloaderTarget entry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
-                .filter(e -> e != null && name.equalsIgnoreCase(e.name()))
-                .findFirst()
-                .orElse(null);
-
-            if (entry == null) {
-                var config = ChunkloaderForgeMod.getConfig();
-                List<String> similar = config != null ? config.findSimilarNames(name, 3) : List.of();
-
-                Component errorText;
-                if (!similar.isEmpty()) {
-                    errorText = Component.literal("Player '" + name + "' not found. Did you mean: " + String.join(", ", similar))
-                        .withStyle(ChatFormatting.RED);
-                } else {
-                    errorText = Component.literal("Player '" + name + "' not found").withStyle(ChatFormatting.RED);
-                }
-                context.getSource().sendFailure(errorText);
-                return 0;
-            }
-
-            de.chunkloader.manager.ChunkloaderManager.ChunkKey key =
-                new de.chunkloader.manager.ChunkloaderManager.ChunkKey(entry.dimension(), entry.chunkX(), entry.chunkZ());
-
-            if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
-                context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
-                return 0;
-            }
-
-            ChunkloaderForgeMod.getChunkloaderManager().toggleVisualization3D(key);
-            boolean isActive = ChunkloaderForgeMod.getChunkloaderManager().isVisualization3DActive(key);
-
-            context.getSource().sendSuccess(() -> Component.literal("3D chunk visualization for '" + name + "' is now " + (isActive ? "enabled" : "disabled") + " (full height: -64 to 320)")
-                .withStyle(isActive ? ChatFormatting.GREEN : ChatFormatting.RED), true);
-
-            return 1;
-        } catch (Exception e) {
-
-            context.getSource().sendFailure(Component.literal("An error occurred: " + e.getMessage()).withStyle(ChatFormatting.RED));
-            return 0;
-        }
+        return toggleVisualization(context, true, ChunkloaderConstants.MIN_BLOCK_Y, ChunkloaderConstants.MAX_BLOCK_Y);
     }
 
     private static int toggleVisualization3DWithHeight(CommandContext<CommandSourceStack> context) {
-        try {
-            String name = StringArgumentType.getString(context, "name");
-            int minY = IntegerArgumentType.getInteger(context, "minY");
-            int maxY = IntegerArgumentType.getInteger(context, "maxY");
-
-            if (minY >= maxY) {
-                context.getSource().sendFailure(Component.literal("minY must be less than maxY").withStyle(ChatFormatting.RED));
-                return 0;
-            }
-
-            if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
-                context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
-                return 0;
-            }
-
-            ChunkloaderTarget entry = ChunkloaderForgeMod.getChunkloaderManager().getActiveChunkloaderEntries().stream()
-                .filter(e -> e != null && name.equalsIgnoreCase(e.name()))
-                .findFirst()
-                .orElse(null);
-
-            if (entry == null) {
-                var config = ChunkloaderForgeMod.getConfig();
-                List<String> similar = config != null ? config.findSimilarNames(name, 3) : List.of();
-
-                Component errorText;
-                if (!similar.isEmpty()) {
-                    errorText = Component.literal("Player '" + name + "' not found. Did you mean: " + String.join(", ", similar))
-                        .withStyle(ChatFormatting.RED);
-                } else {
-                    errorText = Component.literal("Player '" + name + "' not found").withStyle(ChatFormatting.RED);
-                }
-                context.getSource().sendFailure(errorText);
-                return 0;
-            }
-
-            de.chunkloader.manager.ChunkloaderManager.ChunkKey key =
-                new de.chunkloader.manager.ChunkloaderManager.ChunkKey(entry.dimension(), entry.chunkX(), entry.chunkZ());
-
-            if (ChunkloaderForgeMod.getChunkloaderManager() == null) {
-                context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
-                return 0;
-            }
-
-            ChunkloaderForgeMod.getChunkloaderManager().toggleVisualization3D(key, minY, maxY);
-            boolean isActive = ChunkloaderForgeMod.getChunkloaderManager().isVisualization3DActive(key);
-
-            context.getSource().sendSuccess(() -> Component.literal("3D chunk visualization for '" + name + "' is now " + (isActive ? "enabled" : "disabled") + " (height: " + minY + " to " + maxY + ")")
-                .withStyle(isActive ? ChatFormatting.GREEN : ChatFormatting.RED), true);
-
-            return 1;
-        } catch (Exception e) {
-
-            context.getSource().sendFailure(Component.literal("An error occurred: " + e.getMessage()).withStyle(ChatFormatting.RED));
+        int minY = IntegerArgumentType.getInteger(context, "minY");
+        int maxY = IntegerArgumentType.getInteger(context, "maxY");
+        if (minY >= maxY) {
+            context.getSource().sendFailure(Component.literal("minY must be less than maxY").withStyle(ChatFormatting.RED));
             return 0;
         }
+        return toggleVisualization(context, true, minY, maxY);
+    }
+
+    private static int toggleVisualization(CommandContext<CommandSourceStack> context, boolean threeDimensional,
+            int minY, int maxY) {
+        ServerPlayer viewer = context.getSource().getPlayer();
+        if (viewer == null) {
+            context.getSource().sendFailure(Component.literal("Run this command in-game to see the visualization."));
+            return 0;
+        }
+        String name = StringArgumentType.getString(context, "name");
+        if (!canAccessNamed(context, name, true)) {
+            return 0;
+        }
+        var manager = ChunkloaderForgeMod.getChunkloaderManager();
+        var config = ChunkloaderForgeMod.getConfig();
+        if (manager == null || config == null) {
+            context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
+            return 0;
+        }
+        ChunkloaderTarget entry = config.getEntryByName(name);
+        if (entry == null || !entry.enabled()) {
+            context.getSource().sendFailure(Component.literal("No active player named '" + name + "'."));
+            return 0;
+        }
+        boolean enabled = threeDimensional
+                ? manager.toggleVisualization3D(viewer, entry, minY, maxY)
+                : manager.toggleVisualization(viewer, entry);
+        ChunkloaderNetworking.refreshOpenChunkMap(viewer, manager);
+        String kind = threeDimensional ? "3D chunk visualization" : "Chunk border visualization";
+        String height = threeDimensional && enabled ? " (height: " + minY + " to " + maxY + ")" : "";
+        context.getSource().sendSuccess(() -> Component.literal(kind + " for '" + entry.name() + "' "
+                + (enabled ? "enabled" : "disabled") + height)
+                .withStyle(enabled ? ChatFormatting.GREEN : ChatFormatting.RED), false);
+        return 1;
+    }
+
+    private static int assignOwner(CommandContext<CommandSourceStack> context) {
+        String name = StringArgumentType.getString(context, "name");
+        String playerName = StringArgumentType.getString(context, "player");
+        ChunkloaderManager manager = ChunkloaderForgeMod.getChunkloaderManager();
+        if (manager == null || ChunkloaderForgeMod.getConfig() == null) {
+            context.getSource().sendFailure(Component.literal("Player Manager is not initialized"));
+            return 0;
+        }
+        if (ChunkloaderForgeMod.getConfig().getEntryByName(name) == null) {
+            context.getSource().sendFailure(Component.literal("Player '" + name + "' not found"));
+            return 0;
+        }
+        ServerPlayer owner = context.getSource().getServer().getPlayerList().getPlayerByName(playerName);
+        if (owner == null || owner instanceof de.chunkloader.fakeplayer.ChunkloaderFakePlayer) {
+            context.getSource().sendFailure(Component.literal("Owner must be an online player."));
+            return 0;
+        }
+        if (!manager.assignChunkloaderOwner(name, owner)) {
+            String limitMessage = manager.getOwnerAssignmentLimitMessage(name, owner);
+            context.getSource().sendFailure(Component.literal(limitMessage != null ? limitMessage : "Failed to assign owner."));
+            return 0;
+        }
+        context.getSource().sendSuccess(() -> Component.literal("Owner of '" + name + "' set to '" + owner.getGameProfile().name() + "'.")
+                .withStyle(ChatFormatting.GREEN), true);
+        return 1;
     }
 
     private static int grantAllPermissions(CommandContext<CommandSourceStack> context) {
@@ -1199,12 +1277,13 @@ public class ChunkloaderCommand {
                 return 0;
             }
 
-            permissionConfig.grantPermission(player.getUUID(), "chunkloader.*");
+            permissionConfig.grantPermission(player.getUUID(), PermissionManager.PERMISSION_USE);
             server.getCommands().sendCommands(player);
-            context.getSource().sendSuccess(() -> Component.literal("Granted all player permissions to " + playerName)
+            ChunkloaderNetworking.refreshOpenChunkMapMarkers(server, ChunkloaderForgeMod.getChunkloaderManager());
+            context.getSource().sendSuccess(() -> Component.literal("Granted mod access to " + playerName + ". They can create and manage their own players.")
                 .withStyle(ChatFormatting.GREEN), true);
 
-            player.sendSystemMessage(Component.literal("You have been granted all player permissions!")
+            player.sendSystemMessage(Component.literal("You can now create and manage your own Fakeplayers and Chunkplayers.")
                 .withStyle(ChatFormatting.GREEN));
 
             return 1;
@@ -1234,10 +1313,11 @@ public class ChunkloaderCommand {
 
             permissionConfig.clearPlayerPermissions(player.getUUID());
             server.getCommands().sendCommands(player);
-            context.getSource().sendSuccess(() -> Component.literal("Revoked all player permissions from " + playerName)
+            ChunkloaderNetworking.refreshOpenChunkMapMarkers(server, ChunkloaderForgeMod.getChunkloaderManager());
+            context.getSource().sendSuccess(() -> Component.literal("Revoked mod access from " + playerName)
                 .withStyle(ChatFormatting.GREEN), true);
 
-            player.sendSystemMessage(Component.literal("Your player permissions have been revoked.")
+            player.sendSystemMessage(Component.literal("Your mod access has been revoked.")
                 .withStyle(ChatFormatting.RED));
 
             return 1;

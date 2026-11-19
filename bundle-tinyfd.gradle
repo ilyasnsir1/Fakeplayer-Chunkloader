@@ -1,0 +1,63 @@
+import groovy.json.JsonOutput
+
+def tinyFdVersion = '3.4.3'
+def tinyFdPlatforms = [
+    'natives-windows', 'natives-windows-arm64',
+    'natives-linux', 'natives-linux-arm64',
+    'natives-macos', 'natives-macos-arm64'
+]
+def tinyFdJava = configurations.create('tinyFdJava') {
+    canBeConsumed = false
+    transitive = false
+}
+def tinyFdNatives = configurations.create('tinyFdNatives') {
+    canBeConsumed = false
+    transitive = false
+}
+
+dependencies {
+    add(tinyFdJava.name, "org.lwjgl:lwjgl-tinyfd:${tinyFdVersion}")
+    tinyFdPlatforms.each { platform ->
+        add(tinyFdNatives.name, "org.lwjgl:lwjgl-tinyfd:${tinyFdVersion}:${platform}")
+    }
+}
+
+def tinyFdBundle = tasks.register('bundleTinyFd', Jar) {
+    archiveFileName = "lwjgl-tinyfd-${tinyFdVersion}.jar"
+    destinationDirectory = layout.buildDirectory.dir('tinyfd')
+    duplicatesStrategy = DuplicatesStrategy.FAIL
+    manifest {
+        attributes('FMLModType': 'LIBRARY', 'Automatic-Module-Name': 'org.lwjgl.tinyfd')
+    }
+    from({ zipTree(tinyFdJava.singleFile) }) {
+        exclude 'META-INF/MANIFEST.MF', 'META-INF/versions/**/module-info.class', 'module-info.class'
+    }
+    from({ tinyFdNatives.files.collect { zipTree(it) } }) {
+        include 'linux/**', 'macos/**', 'windows/**'
+    }
+}
+
+def jarJarPath = 'META-INF/jarjar'
+def metadataFile = layout.buildDirectory.file('tinyfd-metadata/metadata.json')
+def tinyFdMetadata = tasks.register('writeTinyFdMetadata') {
+    inputs.property('tinyFdVersion', tinyFdVersion)
+    outputs.file(metadataFile)
+    doLast {
+        def file = metadataFile.get().asFile
+        file.parentFile.mkdirs()
+        file.setText(JsonOutput.toJson([jars: [[
+            identifier: [group: 'org.lwjgl', artifact: 'lwjgl-tinyfd'],
+            version: [range: "[${tinyFdVersion}]", artifactVersion: tinyFdVersion],
+            path: "${jarJarPath}/lwjgl-tinyfd-${tinyFdVersion}.jar",
+            isObfuscated: false
+        ]]]), 'UTF-8')
+    }
+}
+
+tasks.named('jar', Jar) {
+    dependsOn(tinyFdMetadata, tinyFdBundle)
+    into(jarJarPath) {
+        from(tinyFdBundle.flatMap { it.archiveFile })
+        from(metadataFile)
+    }
+}

@@ -1,5 +1,7 @@
 package de.chunkloader.client.screen;
 
+import com.mojang.blaze3d.platform.InputConstants;
+
 import de.chunkloader.client.network.ChunkloaderClientNetworking;
 
 import de.chunkloader.client.FakePlayerNameCache;
@@ -14,6 +16,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.ChatFormatting;
 
 public class RenameChunkloaderScreen extends Screen {
+
+    private static final int WARNING_PADDING = 4;
 
     private final Screen parent;
     private final int chunkX;
@@ -59,11 +63,12 @@ public class RenameChunkloaderScreen extends Screen {
 
         int buttonWidth = 100;
         int buttonSpacing = 110;
+        int buttonY = nameField.getY() + nameField.getHeight() + this.font.lineHeight + 2 * WARNING_PADDING;
 
         saveButton = Button.builder(
                 Component.literal("Save"),
                 btn -> save())
-            .bounds(centerX - buttonSpacing, centerY + 20, buttonWidth, 20)
+            .bounds(centerX - buttonSpacing, buttonY, buttonWidth, 20)
             .build();
         updateSaveButtonState();
         this.addRenderableWidget(saveButton);
@@ -74,7 +79,7 @@ public class RenameChunkloaderScreen extends Screen {
                     isClosed = true;
                     this.minecraft.gui.setScreen(parent);
                 })
-            .bounds(centerX + buttonSpacing - buttonWidth, centerY + 20, buttonWidth, 20)
+            .bounds(centerX + buttonSpacing - buttonWidth, buttonY, buttonWidth, 20)
             .build()
         );
 
@@ -137,7 +142,7 @@ public class RenameChunkloaderScreen extends Screen {
             FakePlayerNameCache.clear();
             FakePlayerVisibilityCache.clear();
             isClosed = true;
-            this.minecraft.gui.setScreen(null);
+            this.onClose();
         } else {
             hasServerWarning = true;
             warningMessage = payload.message() != null ? payload.message() : "This name is already in use or invalid.";
@@ -168,7 +173,8 @@ public class RenameChunkloaderScreen extends Screen {
         if (warningMessage != null) {
             Component warning = Component.literal(warningMessage).withStyle(ChatFormatting.RED);
             int warningWidth = this.font.width(warning);
-            context.text(this.font, warning, centerX - warningWidth / 2, centerY + 5, 0xFFFFFFFF, false);
+            int warningY = nameField.getY() + nameField.getHeight() + WARNING_PADDING;
+            context.text(this.font, warning, centerX - warningWidth / 2, warningY, 0xFFFFFFFF, false);
         }
 
         super.extractRenderState(context, mouseX, mouseY, delta);
@@ -184,7 +190,7 @@ public class RenameChunkloaderScreen extends Screen {
 
     @Override
     public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean doubleClick) {
-        if (click.button() == 0 && nameField != null && !nameField.isMouseOver(click.x(), click.y())) {
+        if (click.button() == InputConstants.MOUSE_BUTTON_LEFT && nameField != null && !nameField.isMouseOver(click.x(), click.y())) {
             if (this.getFocused() == nameField) {
                 this.setFocused(null);
             }
@@ -198,5 +204,11 @@ public class RenameChunkloaderScreen extends Screen {
     public boolean isPauseScreen() {
         return false;
     }
+
+    public void onClose() {
+        isClosed = true;
+        this.minecraft.gui.setScreen(parent);
+    }
+
 }
 
