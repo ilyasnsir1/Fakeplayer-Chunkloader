@@ -27,17 +27,17 @@ public abstract class PlayerListEntrySkinMixin {
         if (originalSkin == null) {
             return;
         }
+        Identifier easterEggSkin = FakePlayerEasterEggSkinCache.getSkinTexture(uuid);
+        if (easterEggSkin != null) {
+            cir.setReturnValue(SkinOverrideHelper.applyBodyOverride(originalSkin, easterEggSkin));
+            return;
+        }
+
         CustomFakePlayerSkinCache.CustomSkin customSkin = CustomFakePlayerSkinCache.getSkin(uuid);
         if (customSkin != null) {
             cir.setReturnValue(
                 SkinOverrideHelper.applyBodyOverride(originalSkin, customSkin.assetId(), customSkin.model())
             );
-            return;
-        }
-
-        Identifier easterEggSkin = FakePlayerEasterEggSkinCache.getSkinTexture(uuid);
-        if (easterEggSkin != null) {
-            cir.setReturnValue(SkinOverrideHelper.applyBodyOverride(originalSkin, easterEggSkin));
         }
     }
 }
