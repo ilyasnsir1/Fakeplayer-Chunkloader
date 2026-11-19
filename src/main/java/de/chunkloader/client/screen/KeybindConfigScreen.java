@@ -20,6 +20,7 @@ public class KeybindConfigScreen extends Screen {
     private Button key1Button;
     private Button key2Button;
     private Button key3Button;
+    private Button key4Button;
 
     public KeybindConfigScreen(Screen parent) {
         super(Component.literal("Keybind Settings"));
@@ -76,14 +77,21 @@ public class KeybindConfigScreen extends Screen {
             .build();
         this.addRenderableWidget(key3Button);
 
+        key4Button = Button.builder(
+            getKeyButtonText(ChunkloaderKeyMappings.activeChunkloadersKey, "Active Players List"),
+            btn -> {
+                waitingForKey = ChunkloaderKeyMappings.activeChunkloadersKey;
+                tickCounter = 0;
+                errorMessage = null;
+                updateButtons();
+            })
+            .bounds(centerX - buttonWidth / 2, startY + spacing * 3, buttonWidth, buttonHeight)
+            .build();
+        this.addRenderableWidget(key4Button);
+
         int backButtonWidth = 100;
         int backButtonY = this.height - 30;
-        this.addRenderableWidget(Button.builder(
-            Component.literal("Back"),
-            btn -> this.minecraft.setScreen(parent))
-            .bounds(centerX - backButtonWidth / 2, backButtonY, backButtonWidth, buttonHeight)
-            .build()
-        );
+        ScreenNavigation.addBackAndCloseButtons(this, this::addRenderableWidget);
     }
 
     private Component getKeyButtonText(KeyMapping keyMapping, String label) {
@@ -108,6 +116,9 @@ public class KeybindConfigScreen extends Screen {
         }
         if (key3Button != null) {
             key3Button.setMessage(getKeyButtonText(ChunkloaderKeyMappings.disabledChunkloadersKey, "Disabled Players List"));
+        }
+        if (key4Button != null) {
+            key4Button.setMessage(getKeyButtonText(ChunkloaderKeyMappings.activeChunkloadersKey, "Active Players List"));
         }
     }
 
@@ -208,5 +219,11 @@ public class KeybindConfigScreen extends Screen {
     public boolean isPauseScreen() {
         return false;
     }
+
+    public void onClose() {
+        waitingForKey = null;
+        this.minecraft.setScreen(parent);
+    }
+
 }
 
