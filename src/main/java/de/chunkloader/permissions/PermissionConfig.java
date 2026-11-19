@@ -25,83 +25,13 @@ public class PermissionConfig {
     private final Path configPath;
 
     public PermissionConfig(MinecraftServer server) {
-        Path path;
-        try {
-            if (server != null) {
-                var overworld = server.getOverworld();
-                if (overworld != null) {
-                    Path serverPath = server.getRunDirectory();
-                    if (serverPath != null) {
-                        var savesDir = serverPath.resolve("saves");
-                        if (java.nio.file.Files.exists(savesDir)) {
-                            try {
-                                java.nio.file.Path mostRecentWorldDir = null;
-                                long mostRecentTime = 0;
-                                try {
-                                    java.nio.file.DirectoryStream.Filter<java.nio.file.Path> filter = entry -> {
-                                        return java.nio.file.Files.isDirectory(entry) &&
-                                               java.nio.file.Files.exists(entry.resolve("level.dat"));
-                                    };
-                                    try (java.nio.file.DirectoryStream<java.nio.file.Path> stream =
-                                         java.nio.file.Files.newDirectoryStream(savesDir, filter)) {
-                                        for (java.nio.file.Path worldDir : stream) {
-                                            try {
-                                                Path levelDat = worldDir.resolve("level.dat");
-                                                if (java.nio.file.Files.exists(levelDat)) {
-                                                    long levelDatTime = java.nio.file.Files.getLastModifiedTime(levelDat).toMillis();
-                                                    if (levelDatTime > mostRecentTime) {
-                                                        mostRecentTime = levelDatTime;
-                                                        mostRecentWorldDir = worldDir;
-                                                    }
-                                                }
-                                            } catch (Exception e) {
-                                            }
-                                        }
-                                    }
-                                } catch (Exception e) {
-                                    ChunkloaderMod.LOGGER.warn("Error searching for world directory: {}", e.getMessage());
-                                }
-
-                                if (mostRecentWorldDir != null) {
-                                    path = mostRecentWorldDir.resolve(CONFIG_FILE);
-                                } else {
-                                    String levelName = server.getSaveProperties().getLevelName();
-                                    if (levelName != null && !levelName.isEmpty()) {
-                                        path = savesDir.resolve(levelName).resolve(CONFIG_FILE);
-                                    } else {
-                                        path = serverPath.resolve(CONFIG_FILE);
-                                    }
-                                }
-                            } catch (Exception e) {
-                                path = serverPath.resolve(CONFIG_FILE);
-                            }
-                        } else {
-                            path = serverPath.resolve("world").resolve(CONFIG_FILE);
-                        }
-                    } else {
-                        path = new File(".").toPath().resolve(CONFIG_FILE);
-                    }
-                } else {
-                    Path serverPath = server.getRunDirectory();
-                    if (serverPath != null) {
-                        path = serverPath.resolve(CONFIG_FILE);
-                    } else {
-                        path = new File(".").toPath().resolve(CONFIG_FILE);
-                    }
-                }
-            } else {
-                path = new File(".").toPath().resolve(CONFIG_FILE);
-            }
-        } catch (Exception e) {
-            ChunkloaderMod.LOGGER.error("Error determining permission config path", e);
-            path = new File(".").toPath().resolve(CONFIG_FILE);
-        }
-        this.configPath = path;
-        ChunkloaderMod.LOGGER.info("Permission config path: {}", path);
+        this.configPath = de.chunkloader.config.ChunkloaderPaths.getChunkloaderDir(server).resolve(CONFIG_FILE);
+        ChunkloaderMod.LOGGER.info("Permission config path: {}", configPath);
     }
 
     public static PermissionConfig load(MinecraftServer server) {
         PermissionConfig config = new PermissionConfig(server);
+        migrateLegacyPermissions(config, server);
         File configFile = config.configPath.toFile();
 
         if (configFile.exists()) {
@@ -140,7 +70,33 @@ public class PermissionConfig {
         return config;
     }
 
-    public void save() throws IOException {
+    private static void migrateLegacyPermissions(PermissionConfig config, MinecraftServer server) {
+        if (java.nio.file.Files.exists(config.configPath)) return;
+        java.util.List<Path> candidates = new java.util.ArrayList<>();
+        Path worldRoot = config.configPath.getParent().getParent();
+        candidates.add(worldRoot.resolve(CONFIG_FILE));
+        if (server != null && server.isDedicated() && server.getRunDirectory() != null) {
+            candidates.add(server.getRunDirectory().resolve(CONFIG_FILE));
+            if (worldRoot.toAbsolutePath().normalize().equals(server.getRunDirectory().resolve("world").toAbsolutePath().normalize())) {
+                candidates.add(server.getRunDirectory().resolve("world").resolve(CONFIG_FILE));
+            }
+        }
+        for (Path legacy : candidates) {
+            if (!java.nio.file.Files.isRegularFile(legacy)) continue;
+            try (var reader = java.nio.file.Files.newBufferedReader(legacy)) {
+                JsonObject json = JsonParser.parseReader(reader).getAsJsonObject();
+                if (!(json.get("permissions") instanceof JsonObject)) continue;
+                java.nio.file.Files.createDirectories(config.configPath.getParent());
+                java.nio.file.Files.copy(legacy, config.configPath);
+                ChunkloaderMod.LOGGER.info("Copied legacy permission config from {} to {} (original retained)", legacy, config.configPath);
+                return;
+            } catch (Exception invalid) {
+                ChunkloaderMod.LOGGER.warn("Unable to migrate permission config {}: {}", legacy, invalid.getMessage());
+            }
+        }
+    }
+
+    public synchronized void save() throws IOException {
         File configFile = configPath.toFile();
         File parentDir = configFile.getParentFile();
         if (parentDir != null && !parentDir.exists()) {
@@ -165,8 +121,19 @@ public class PermissionConfig {
 
         json.add("permissions", permissionsObj);
 
-        try (FileWriter writer = new FileWriter(configFile)) {
-            GSON.toJson(json, writer);
+        Path tempPath = configPath.resolveSibling(CONFIG_FILE + ".tmp");
+        try {
+            try (var writer = java.nio.file.Files.newBufferedWriter(tempPath, java.nio.charset.StandardCharsets.UTF_8)) {
+                GSON.toJson(json, writer);
+            }
+            try {
+                java.nio.file.Files.move(tempPath, configPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+                java.nio.file.Files.move(tempPath, configPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            try { java.nio.file.Files.deleteIfExists(tempPath); } catch (IOException ignored) {}
         }
     }
 
@@ -205,7 +172,8 @@ public class PermissionConfig {
         }
 
         if (permissions.contains("chunkloader.*")) {
-            return permission.startsWith("chunkloader.");
+            return permission.startsWith("chunkloader.")
+                    && !PermissionManager.PERMISSION_ADMIN.equals(permission);
         }
 
         if (permissions.contains(PermissionManager.PERMISSION_ADMIN)) {

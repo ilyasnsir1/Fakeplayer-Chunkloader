@@ -8,7 +8,6 @@ import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 
-
 public final class SkinFilePicker {
     private SkinFilePicker() {
     }
@@ -45,7 +44,6 @@ public final class SkinFilePicker {
         return picturesDirectory();
     }
 
-    
     static String picturesDirectory() {
         String fromCache = CustomFakePlayerSkinCache.getUserPicturesDirectory();
         if (fromCache != null && !fromCache.isBlank()) {
@@ -76,7 +74,6 @@ public final class SkinFilePicker {
         }
     }
 
-    
     private static String formatTinyFdInitialPath(String path) {
         if (path == null || path.isBlank()) {
             return path;

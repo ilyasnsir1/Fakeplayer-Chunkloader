@@ -90,6 +90,7 @@ public class PanelColorHelpScreen extends Screen {
         helpLines.add(Text.literal("On the skin page, the layer menu (∨) is shown open so you can color chevron, menu, active and inactive rows."));
         helpLines.add(Text.literal("Double-click the status line to cycle sample messages (success / warning / error / info)."));
         helpLines.add(Text.literal("Hovered targets are outlined so you can see what you will change."));
+        helpLines.add(Text.literal("Labels share one color, including Status, Dim, section headings and the SD question mark."));
         helpLines.add(Text.literal("The label above the palette shows the current target and alpha."));
         helpLines.add(Text.empty());
         helpLines.add(Text.literal("Color controls:").formatted(Formatting.BOLD, Formatting.YELLOW));
@@ -104,7 +105,7 @@ public class PanelColorHelpScreen extends Screen {
         helpLines.add(Text.literal("Save:").formatted(Formatting.YELLOW)
             .append(content(" Write colors to config and close the editor")));
         helpLines.add(Text.literal("Reset:").formatted(Formatting.YELLOW)
-            .append(content(" Reset only the current target to its default")));
+            .append(content(" Reset the selected element. With nothing selected, \"Reset all\" resets all colors.")));
         helpLines.add(Text.literal("Back:").formatted(Formatting.YELLOW)
             .append(content(" Close without saving")));
     }
@@ -125,12 +126,7 @@ public class PanelColorHelpScreen extends Screen {
         int buttonX = (this.width - buttonWidth) / 2;
         int buttonY = this.height - 30;
 
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.literal("Back"),
-                btn -> this.client.setScreen(parent))
-            .dimensions(buttonX, buttonY, buttonWidth, buttonHeight)
-            .build()
-        );
+        ScreenNavigation.addBackAndCloseButtons(this, this::addDrawableChild);
     }
 
     @Override
@@ -220,8 +216,7 @@ public class PanelColorHelpScreen extends Screen {
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button == 0) {
-            
-            
+
             ScrollbarMetrics metrics = getScrollbarMetrics();
             if (metrics != null
                 && mouseX >= metrics.x && mouseX < metrics.x + metrics.width
@@ -237,7 +232,7 @@ public class PanelColorHelpScreen extends Screen {
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
         if (scrollbarDragging) {
-            
+
             ScrollbarMetrics metrics = getScrollbarMetrics();
             if (metrics == null) {
                 scrollbarDragging = false;
@@ -272,7 +267,6 @@ public class PanelColorHelpScreen extends Screen {
         context.fill(x, y, x + width, y + 1, 0x66FFFFFF);
     }
 
-
     @Override
     public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
         super.renderBackground(context, mouseX, mouseY, delta);
@@ -284,4 +278,9 @@ public class PanelColorHelpScreen extends Screen {
 
         return false;
     }
+
+    public void close() {
+        this.client.setScreen(parent);
+    }
+
 }

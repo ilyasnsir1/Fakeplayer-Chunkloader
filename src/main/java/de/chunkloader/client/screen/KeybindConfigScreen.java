@@ -23,6 +23,7 @@ public class KeybindConfigScreen extends Screen {
     private ButtonWidget key1ButtonWidget;
     private ButtonWidget key2ButtonWidget;
     private ButtonWidget key3ButtonWidget;
+    private ButtonWidget key4ButtonWidget;
 
     public KeybindConfigScreen(Screen parent) {
         super(Text.literal("Keybind Settings"));
@@ -79,14 +80,21 @@ public class KeybindConfigScreen extends Screen {
             .build();
         this.addDrawableChild(key3ButtonWidget);
 
+        key4ButtonWidget = ButtonWidget.builder(
+            getKeyButtonWidgetText(ChunkloaderClient.activeChunkloadersKey, "Active Players List"),
+            btn -> {
+                waitingForKey = ChunkloaderClient.activeChunkloadersKey;
+                tickCounter = 0;
+                errorMessage = null;
+                updateButtonWidgets();
+            })
+            .dimensions(centerX - buttonWidth / 2, startY + spacing * 3, buttonWidth, buttonHeight)
+            .build();
+        this.addDrawableChild(key4ButtonWidget);
+
         int backButtonWidgetWidth = 100;
         int backButtonWidgetY = this.height - 30;
-        this.addDrawableChild(ButtonWidget.builder(
-            Text.literal("Back"),
-            btn -> this.client.setScreen(parent))
-            .dimensions(centerX - backButtonWidgetWidth / 2, backButtonWidgetY, backButtonWidgetWidth, buttonHeight)
-            .build()
-        );
+        ScreenNavigation.addBackAndCloseButtons(this, this::addDrawableChild);
     }
 
     private Text getKeyButtonWidgetText(KeyBinding keyBinding, String label) {
@@ -111,6 +119,9 @@ public class KeybindConfigScreen extends Screen {
         }
         if (key3ButtonWidget != null) {
             key3ButtonWidget.setMessage(getKeyButtonWidgetText(ChunkloaderClient.disabledChunkloadersKey, "Disabled Players List"));
+        }
+        if (key4ButtonWidget != null) {
+            key4ButtonWidget.setMessage(getKeyButtonWidgetText(ChunkloaderClient.activeChunkloadersKey, "Active Players List"));
         }
     }
 
@@ -209,4 +220,10 @@ public class KeybindConfigScreen extends Screen {
     public boolean shouldPause() {
         return false;
     }
+
+    public void close() {
+        waitingForKey = null;
+        this.client.setScreen(parent);
+    }
+
 }

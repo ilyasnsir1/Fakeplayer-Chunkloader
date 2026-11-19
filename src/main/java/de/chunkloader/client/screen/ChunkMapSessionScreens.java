@@ -34,6 +34,18 @@ public final class ChunkMapSessionScreens {
         }
     }
 
+    public static void closeToGame(MinecraftClient client) {
+        if (client == null) {
+            return;
+        }
+        Screen current = client.currentScreen;
+        ChunkMapScreen map = findChunkMapScreen(current);
+        if (map != null && map != current) {
+            map.closeSession();
+        }
+        client.setScreen(null);
+    }
+
     private static Screen getParentIfKnown(Screen screen) {
         if (screen instanceof RenameChunkloaderScreen rename) {
             return rename.getParentScreen();
@@ -64,6 +76,9 @@ public final class ChunkMapSessionScreens {
         }
         if (screen instanceof ChunkloaderContactScreen contact) {
             return contact.getParentScreen();
+        }
+        if (screen instanceof ActiveChunkloadersScreen active) {
+            return active.getParentScreen();
         }
         if (screen instanceof DisabledChunkloadersScreen disabled) {
             return disabled.getParentScreen();
