@@ -90,6 +90,7 @@ public class PanelColorHelpScreen extends Screen {
         helpLines.add(Component.literal("On the skin page, the layer menu (∨) is shown open so you can color chevron, menu, active and inactive rows."));
         helpLines.add(Component.literal("Double-click the status line to cycle sample messages (success / warning / error / info)."));
         helpLines.add(Component.literal("Hovered targets are outlined so you can see what you will change."));
+        helpLines.add(Component.literal("Labels share one color, including Status, Dim, section headings and the SD question mark."));
         helpLines.add(Component.literal("The label above the palette shows the current target and alpha."));
         helpLines.add(Component.empty());
         helpLines.add(Component.literal("Color controls:").withStyle(ChatFormatting.BOLD, ChatFormatting.YELLOW));
@@ -104,7 +105,7 @@ public class PanelColorHelpScreen extends Screen {
         helpLines.add(Component.literal("Save:").withStyle(ChatFormatting.YELLOW)
             .append(content(" Write colors to config and close the editor")));
         helpLines.add(Component.literal("Reset:").withStyle(ChatFormatting.YELLOW)
-            .append(content(" Reset only the current target to its default")));
+            .append(content(" Reset the selected element. With nothing selected, \"Reset all\" resets all colors.")));
         helpLines.add(Component.literal("Back:").withStyle(ChatFormatting.YELLOW)
             .append(content(" Close without saving")));
     }
@@ -126,12 +127,7 @@ public class PanelColorHelpScreen extends Screen {
         int buttonX = (this.width - buttonWidth) / 2;
         int buttonY = this.height - 30;
 
-        this.addRenderableWidget(Button.builder(
-                Component.literal("Back"),
-                btn -> this.minecraft.setScreen(parent))
-            .bounds(buttonX, buttonY, buttonWidth, buttonHeight)
-            .build()
-        );
+        ScreenNavigation.addBackAndCloseButtons(this, this::addRenderableWidget);
     }
 
     @Override
@@ -270,7 +266,6 @@ public class PanelColorHelpScreen extends Screen {
         context.fill(x, y, x + width, y + 1, 0x66FFFFFF);
     }
 
-
     @Override
     public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
         super.renderBackground(graphics, mouseX, mouseY, delta);
@@ -282,4 +277,9 @@ public class PanelColorHelpScreen extends Screen {
 
         return false;
     }
+
+    public void onClose() {
+        this.minecraft.setScreen(parent);
+    }
+
 }
