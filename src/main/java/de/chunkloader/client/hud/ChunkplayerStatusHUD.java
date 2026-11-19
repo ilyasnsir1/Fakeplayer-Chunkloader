@@ -11,11 +11,12 @@ import net.minecraft.util.Formatting;
 @Environment(EnvType.CLIENT)
 public class ChunkplayerStatusHUD {
 
-    private static boolean enabled = false;
-    private static ChunkplayerStatusResponsePayload lastStatus = null;
-    private static long lastUpdateTime = 0;
-    private static boolean requestPending = false;
-    private static long requestPendingTime = 0;
+    private static volatile boolean enabled = false;
+    private static volatile long activationOrder;
+    private static volatile ChunkplayerStatusResponsePayload lastStatus = null;
+    private static volatile long lastUpdateTime = 0;
+    private static volatile boolean requestPending = false;
+    private static volatile long requestPendingTime = 0;
     private static final long REQUEST_TIMEOUT_MS = 2000;
     private static final long UPDATE_INTERVAL_MS_CLOSE = 250;
     private static final long UPDATE_INTERVAL_MS_FAR = 1000;
@@ -31,14 +32,29 @@ public class ChunkplayerStatusHUD {
     }
 
     public static void toggle() {
-        enabled = !enabled;
+        setEnabled(!enabled);
     }
 
     public static void setEnabled(boolean value) {
-        enabled = value;
-        if (!value) {
-            lastStatus = null;
+        if (enabled == value) {
+            return;
         }
+        resetStatus();
+        if (value) {
+            activationOrder = StatusHudLayout.nextActivationOrder();
+        }
+        enabled = value;
+    }
+
+    public static long getActivationOrder() {
+        return activationOrder;
+    }
+
+    public static void resetStatus() {
+        lastStatus = null;
+        lastUpdateTime = 0;
+        requestPending = false;
+        requestPendingTime = 0;
     }
 
     public static boolean isEnabled() {
@@ -46,6 +62,9 @@ public class ChunkplayerStatusHUD {
     }
 
     public static void updateStatus(ChunkplayerStatusResponsePayload status) {
+        if (!enabled) {
+            return;
+        }
         lastStatus = status;
         lastUpdateTime = System.currentTimeMillis();
         requestPending = false;
@@ -67,7 +86,8 @@ public class ChunkplayerStatusHUD {
     }
 
     public static void render(DrawContext context, TextRenderer textRenderer, int screenWidth, int screenHeight, int offsetY) {
-        if (!enabled || lastStatus == null) {
+        ChunkplayerStatusResponsePayload status = lastStatus;
+        if (!enabled || status == null) {
             return;
         }
 
@@ -76,19 +96,8 @@ public class ChunkplayerStatusHUD {
         int y = padding + offsetY;
 
         int boxWidth = 200;
-        int boxHeight = 60;
-
         int lineHeight = 12;
-        int contentHeight = lineHeight;
-        if (lastStatus.inLoadedChunk()) {
-            contentHeight += lineHeight;
-            contentHeight += lineHeight;
-            contentHeight += lineHeight;
-            if (lastStatus.distance() >= 0) {
-                contentHeight += lineHeight;
-            }
-        }
-        boxHeight = contentHeight + padding * 2;
+        int boxHeight = getHeight();
 
         context.fill(x, y, x + boxWidth, y + boxHeight, 0x80000000);
 
@@ -97,7 +106,7 @@ public class ChunkplayerStatusHUD {
         context.fill(x, y, x + 1, y + boxHeight, 0xFF000000);
         context.fill(x + boxWidth - 1, y, x + boxWidth, y + boxHeight, 0xFF000000);
 
-        int borderColor = lastStatus.inLoadedChunk() ? 0xFF0088FF : 0xFFFF0000;
+        int borderColor = status.inLoadedChunk() ? 0xFF0088FF : 0xFFFF0000;
         context.fill(x + 1, y + 1, x + boxWidth - 1, y + 2, borderColor);
         context.fill(x + 1, y + boxHeight - 2, x + boxWidth - 1, y + boxHeight - 1, borderColor);
         context.fill(x + 1, y + 1, x + 2, y + boxHeight - 1, borderColor);
@@ -110,7 +119,7 @@ public class ChunkplayerStatusHUD {
         long now = System.currentTimeMillis();
         boolean shouldBlink = isUpdating && ((now / 500) % 2 == 0);
 
-        if (lastStatus.inLoadedChunk()) {
+        if (status.inLoadedChunk()) {
             Text statusText = Text.literal("● Chunkloading: ACTIVE").formatted(Formatting.AQUA, Formatting.BOLD);
             context.drawText(textRenderer, statusText, textX, textY, 0xFFFFFFFF, false);
 
@@ -121,9 +130,9 @@ public class ChunkplayerStatusHUD {
 
             textY += lineHeight;
 
-            if (lastStatus.chunkplayerName() != null && !lastStatus.chunkplayerName().isEmpty()) {
+            if (status.chunkplayerName() != null && !status.chunkplayerName().isEmpty()) {
                 Text chunkplayerLabel = Text.literal("Chunkplayer: ").formatted(Formatting.GRAY);
-                Text chunkplayerValue = Text.literal(lastStatus.chunkplayerName()).formatted(Formatting.AQUA);
+                Text chunkplayerValue = Text.literal(status.chunkplayerName()).formatted(Formatting.AQUA);
                 int labelWidth = textRenderer.getWidth(chunkplayerLabel);
                 context.drawText(textRenderer, chunkplayerLabel, textX, textY, 0xFFCCCCCC, false);
                 context.drawText(textRenderer, chunkplayerValue, textX + labelWidth, textY, 0xFFFFFFFF, false);
@@ -131,22 +140,22 @@ public class ChunkplayerStatusHUD {
             }
 
             Text chunkLabel = Text.literal("Chunk: ").formatted(Formatting.GRAY);
-            Text chunkValue = Text.literal(lastStatus.chunkX() + ", " + lastStatus.chunkZ()).formatted(Formatting.WHITE);
+            Text chunkValue = Text.literal(status.chunkX() + ", " + status.chunkZ()).formatted(Formatting.WHITE);
             int chunkLabelWidth = textRenderer.getWidth(chunkLabel);
             context.drawText(textRenderer, chunkLabel, textX, textY, 0xFFCCCCCC, false);
             context.drawText(textRenderer, chunkValue, textX + chunkLabelWidth, textY, 0xFFFFFFFF, false);
             textY += lineHeight;
 
-            Text radiusLabel = Text.literal("Radius: ").formatted(Formatting.GRAY);
-            Text radiusValue = Text.literal(lastStatus.radius() + " chunks").formatted(Formatting.WHITE);
+            Text radiusLabel = Text.literal("SD: ").formatted(Formatting.GRAY);
+            Text radiusValue = Text.literal(StatusHudLayout.describeDistance(status.radius())).formatted(Formatting.WHITE);
             int radiusLabelWidth = textRenderer.getWidth(radiusLabel);
             context.drawText(textRenderer, radiusLabel, textX, textY, 0xFFCCCCCC, false);
             context.drawText(textRenderer, radiusValue, textX + radiusLabelWidth, textY, 0xFFFFFFFF, false);
             textY += lineHeight;
 
-            if (lastStatus.distance() >= 0) {
+            if (status.distance() >= 0) {
                 Text distanceLabel = Text.literal("Distance: ").formatted(Formatting.GRAY);
-                Text distanceValue = Text.literal(lastStatus.distance() + " chunks").formatted(Formatting.WHITE);
+                Text distanceValue = Text.literal(status.distance() + " chunks").formatted(Formatting.WHITE);
                 int distanceLabelWidth = textRenderer.getWidth(distanceLabel);
                 context.drawText(textRenderer, distanceLabel, textX, textY, 0xFFCCCCCC, false);
                 context.drawText(textRenderer, distanceValue, textX + distanceLabelWidth, textY, 0xFFFFFFFF, false);
@@ -163,7 +172,7 @@ public class ChunkplayerStatusHUD {
     }
 
     public static boolean needsUpdate() {
-        if (!enabled) {
+        if (!enabled || isRequestPending()) {
             return false;
         }
         long now = System.currentTimeMillis();
@@ -181,21 +190,27 @@ public class ChunkplayerStatusHUD {
     }
 
     public static int getHeight() {
-        if (!enabled || lastStatus == null) {
+        ChunkplayerStatusResponsePayload status = lastStatus;
+        if (!enabled || status == null) {
             return 0;
         }
-        int padding = 5;
-        int lineHeight = 12;
-        int contentHeight = lineHeight;
-        if (lastStatus.inLoadedChunk()) {
-            contentHeight += lineHeight * 4;
+        int lines = 1;
+        if (status.inLoadedChunk()) {
+            lines += 2;
+            if (status.chunkplayerName() != null && !status.chunkplayerName().isEmpty()) {
+                lines++;
+            }
+            if (status.distance() >= 0) {
+                lines++;
+            }
         }
-        return contentHeight + padding * 2;
+        return lines * 12 + 10;
     }
 
     public static void forceUpdate() {
         if (enabled) {
             lastUpdateTime = 0;
+            requestPending = false;
         }
     }
 }

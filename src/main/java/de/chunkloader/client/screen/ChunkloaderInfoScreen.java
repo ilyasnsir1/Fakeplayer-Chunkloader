@@ -1,5 +1,7 @@
 package de.chunkloader.client.screen;
 
+import org.lwjgl.glfw.GLFW;
+
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.minecraft.client.font.TextRenderer;
@@ -7,19 +9,76 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.text.Text;
+import net.minecraft.text.TextColor;
 import net.minecraft.util.Formatting;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Environment(EnvType.CLIENT)
 public class ChunkloaderInfoScreen extends Screen {
 
+    private static final int CONTENT_TEXT_RGB = 0xCCCCCC;
+
+    private static Text content(String text) {
+        return Text.literal(text).styled(style -> style.withColor(TextColor.fromRgb(CONTENT_TEXT_RGB)));
+    }
+
+    private enum InfoTopic {
+        OVERVIEW("Overview"), SIMULATION("Simulation"), WORLD_DATA("World Data"), SERVER("Server");
+
+        private final String label;
+
+        InfoTopic(String label) {
+            this.label = label;
+        }
+    }
+
     private final Screen parent;
+    private InfoTopic selectedTopic = InfoTopic.OVERVIEW;
+    private final List<Text> infoLines = new ArrayList<>();
+    private final SectionedText textPanel = new SectionedText();
     private int scrollOffset = 0;
+    private int layoutTop;
     private int contentTop;
     private int contentBottom;
+    private int contentLeft;
+    private int contentRight;
+    private int navigationLeft;
+    private int navigationDividerX;
+    private boolean sideNavigation;
     private int totalContentHeight;
 
     private boolean scrollbarDragging = false;
     private int scrollbarDragOffsetY = 0;
+
+    private final class TopicLink extends ButtonWidget {
+        private final InfoTopic topic;
+
+        private TopicLink(InfoTopic topic, int x, int y, int width) {
+            super(x, y, width, 20, Text.literal(topic.label),
+                    ignored -> ChunkloaderInfoScreen.this.selectTopic(topic), DEFAULT_NARRATION_SUPPLIER);
+            this.topic = topic;
+        }
+
+        @Override
+        protected void renderWidget(DrawContext context, int mouseX, int mouseY, float delta) {
+            TextRenderer renderer = ChunkloaderInfoScreen.this.textRenderer;
+            boolean selected = topic == selectedTopic;
+            int color = selected ? 0xFFFFFF55 : (isHovered() || isFocused()) ? 0xFFFFFFFF : 0xFFCCCCCC;
+            int labelWidth = renderer.getWidth(getMessage());
+            int labelX = sideNavigation ? getX() + 12 : getX() + (getWidth() - labelWidth + 12) / 2;
+            int labelY = getY() + (getHeight() - 8) / 2;
+            var label = getMessage().copy();
+            if (isFocused()) {
+                label.formatted(Formatting.UNDERLINE);
+            }
+            if (selected) {
+                context.drawText(renderer, ">", labelX - 12, labelY, color, false);
+            }
+            context.drawText(renderer, label, labelX, labelY, color, false);
+        }
+    }
 
     private static final class ScrollbarMetrics {
         private final int x;
@@ -41,28 +100,116 @@ public class ChunkloaderInfoScreen extends Screen {
         }
     }
 
+    private int getMaxScroll() {
+        int availableHeight = contentBottom - contentTop;
+        return availableHeight > 0 ? Math.max(0, totalContentHeight - availableHeight) : 0;
+    }
+
     private ScrollbarMetrics getScrollbarMetrics() {
         int availableHeight = contentBottom - contentTop;
-        int totalHeightWithPadding = totalContentHeight + 40;
-        if (availableHeight <= 0 || totalHeightWithPadding <= availableHeight) {
+        int maxScroll = getMaxScroll();
+        if (maxScroll == 0) {
             return null;
         }
 
         int scrollbarWidth = 3;
         int scrollbarX = this.width - scrollbarWidth - 2;
-        int scrollbarHeight = (int) ((double) availableHeight / totalHeightWithPadding * availableHeight);
-        int maxScroll = totalHeightWithPadding - availableHeight;
-        if (scrollbarHeight <= 0 || maxScroll <= 0) {
+        int scrollbarHeight = (int) ((double) availableHeight / totalContentHeight * availableHeight);
+        if (scrollbarHeight <= 0) {
             return null;
         }
 
-        int scrollbarY = contentTop + (int) ((double) scrollOffset / maxScroll * (availableHeight - scrollbarHeight));
+        int scrollbarY = contentTop + (int) ((double) Math.min(scrollOffset, maxScroll) / maxScroll * (availableHeight - scrollbarHeight));
         return new ScrollbarMetrics(scrollbarX, scrollbarWidth, contentTop, availableHeight, scrollbarY, scrollbarHeight, maxScroll);
     }
 
     public ChunkloaderInfoScreen(Screen parent) {
         super(Text.literal("Mod Information"));
         this.parent = parent;
+        rebuildInfoLines();
+    }
+
+    private void rebuildInfoLines() {
+        infoLines.clear();
+        switch (selectedTopic) {
+            case OVERVIEW -> {
+                addSection("What actually loads the chunks?",
+                        "The Fakeplayer or Chunkplayer stands where you placed it. Behind the scenes, both modes give the server a chunk ticket. That ticket keeps the area running even if no real player is nearby.");
+                addSection("When spawning needs a player",
+                        "Some farms need a player nearby in addition to loaded chunks. A Fakeplayer can count as that player for natural mob spawning, regular spawners and Trial Spawners. A Chunkplayer doesn't count for those checks.",
+                        "Spawning and targeting are separate. With \"Enable mob target\", hostile mobs that normally go after players can go after the Fakeplayer, though they can't hurt it.");
+                addSection("What happens to paused mobs?",
+                        "Mobs stay active by default with a new Chunkplayer. If you pause them, the server skips their ticks, including villager ticks, wherever only that Chunkplayer keeps them active. Crops and redstone still run. A nearby real player can keep the mobs active.");
+                addSection("When only real players count",
+                        "Fakeplayers and Chunkplayers don't count toward the number of players needed to skip the night. They don't trigger patrols, village sieges, skeleton horse traps or sculk shriekers, and they don't receive potion or beacon effects.");
+            }
+            case SIMULATION -> {
+                addSection("Why water can flow where mobs stop",
+                        "The green or blue square is the area selected on the map. It gets entity ticks and random ticks, so mobs can move and crops can grow.",
+                        "The first ring outside that square still gets scheduled block and fluid ticks. Water can flow into it, but a mob that goes with the water can stop there. The second ring is loaded and doesn't get normal ticks.",
+                        "At a range of 0, that's 1 selected chunk + 8 in the first ring + 16 in the second, for 25 loaded chunks. That's for one Fakeplayer or Chunkplayer on its own. Others, including nearby real players, can keep more of the area ticking.");
+                addSection("Which areas can overlap?",
+                        "The outer rings can overlap. The selected areas can't. A disabled player still reserves its square so you can restore it in the same spot.");
+                addSection("Why natural spawning is different at SD 1",
+                        "In Minecraft, a natural spawn needs to be more than 24 blocks from the player. That's distance in any direction, so the height difference counts too.",
+                        "At SD 1, the Fakeplayer has a 3 x 3 area. I lowered its minimum to more than 8 blocks so a small farm can fit beside it. Only the minimum distance from the Fakeplayer changes. The other spawn rules still apply, including the usual 24-block buffer around real players.",
+                        "At SD 0, the green area is only one chunk. If the Fakeplayer stands near an edge, even 8 blocks sideways can put the spawn outside it. I kept the usual 24-block rule there. Put the spawning floor more than 24 blocks above or below the Fakeplayer to keep it in the same chunk.",
+                        "At SD 2 and 3, the area has enough room to keep the usual distance horizontally. These are the settings I'd use for a mob farm.");
+                addSection("Why keep SD 0 at all?",
+                        "I wanted to be able to load a single patch of crops with a Chunkplayer. I kept the same range of 0 to 3 for both modes so switching between them doesn't change which sizes are available.");
+            }
+            case WORLD_DATA -> {
+                addSection("Taking your players with a world",
+                        "Copy the whole chunkloader/ folder inside the world save. It includes your Fakeplayers and Chunkplayers, their owners and shares, mod permissions and custom skins.",
+                        "The mod saves changes automatically. Enabled players start again when the world opens. Disabled players stay in the saved list.");
+                addSection("If the player data can't be read",
+                        "Player positions, settings and shares are saved in chunkloader_config.json. If that file can't be read, the mod tries a copy from chunkloader/backups/.");
+                addSection("What stays on your computer",
+                        "Map layouts, panel colors and mod keybinds are saved by your client. They don't follow the world save. When you apply a skin to a player, the server keeps the PNG in chunkloader/skins/ and sends it to clients running the mod.",
+                        "Custom skins can be 64 x 64 or 64 x 32 PNGs, up to 128 KiB.");
+            }
+            case SERVER -> {
+                addSection("Who keeps the chunks active?",
+                        "The server keeps the chunks ticking. The client mod gives you the map, HUDs and custom skins.",
+                        "On a dedicated server, operators at permission level 2 or higher have access by default. They can use /fp permission grant to let someone create and manage their own Fakeplayers and Chunkplayers.");
+                addSection("Sharing access without giving up ownership",
+                        "A friend needs mod access and must be online when you share one of your players. They can use it while you're offline. You can take back access even while they're offline.",
+                        "Only the owner or an admin can decide who gets access, delete the player or reset it to defaults.",
+                        "Ownership saved to your Minecraft account survives a name change. Some older players only have their owner's name saved. An admin can use /fp owner to link one to an account or transfer ownership.");
+                addSection("What counts toward a limit?",
+                        "Admins can set a server limit, a default per owner and personal limits. Use 0 for an unlimited server or default limit.",
+                        "Only active Fakeplayers and Chunkplayers count. A shared player counts toward its owner's limit.",
+                        "A personal limit of 0 blocks adding or reactivating your own players. Active ones keep running and you can still edit, move or turn them off.",
+                        "An unlimited personal limit takes priority over the default per owner. Reset the personal limit to use that default again. The server limit applies in both cases.");
+                addSection("The Tab list and server list",
+                        "Admins can show or hide Fakeplayers and Chunkplayers in the Tab list. The multiplayer server list counts only real players either way.");
+            }
+        }
+    }
+
+    private void addSection(String heading, String... lines) {
+        addSection(heading, Formatting.YELLOW, lines);
+    }
+
+    private void addSection(String heading, Formatting color, String... lines) {
+        if (!infoLines.isEmpty()) {
+            infoLines.add(Text.empty());
+        }
+        infoLines.add(Text.literal(heading).formatted(Formatting.BOLD, color));
+        for (String line : lines) {
+            infoLines.add(content(line));
+        }
+    }
+
+    private void selectTopic(InfoTopic topic) {
+        if (selectedTopic == topic) {
+            return;
+        }
+        selectedTopic = topic;
+        scrollOffset = 0;
+        scrollbarDragging = false;
+        rebuildInfoLines();
+        layoutInfoLines();
     }
 
     public Screen getParentScreen() {
@@ -73,46 +220,86 @@ public class ChunkloaderInfoScreen extends Screen {
     protected void init() {
         super.init();
 
-        contentTop = 20;
-        contentBottom = this.height - 60;
-        totalContentHeight = 0;
+        var layout = ScreenNavigation.descriptionLayout(this);
+        layoutTop = layout.top();
+        sideNavigation = this.width >= 460 && layout.height() >= ScreenNavigation.MIN_DESCRIPTION_HEIGHT;
+        contentTop = layoutTop + (sideNavigation ? SectionedText.TOP_WITH_SIDEBAR : SectionedText.TOP_BELOW_TABS);
+        contentBottom = layout.bottom() - SectionedText.BOTTOM_INSET;
+        contentLeft = 20;
+        contentRight = this.width - 20;
+        scrollbarDragging = false;
 
-        int buttonWidth = 100;
-        int buttonX = (this.width - buttonWidth) / 2;
-        int buttonY = this.height - 30;
+        InfoTopic[] topics = InfoTopic.values();
+        if (sideNavigation) {
+            navigationLeft = 20;
+            int navigationWidth = 80;
+            navigationDividerX = navigationLeft + navigationWidth + 8;
+            contentLeft = navigationDividerX + 16;
+            for (int i = 0; i < topics.length; i++) {
+                this.addDrawableChild(new TopicLink(topics[i], navigationLeft,
+                        contentTop + i * 24, navigationWidth));
+            }
+        } else {
+            int gap = 4;
+            int linkWidth = Math.min(96, (this.width - 40 - gap * (topics.length - 1)) / topics.length);
+            int rowWidth = linkWidth * topics.length + gap * (topics.length - 1);
+            int startX = (this.width - rowWidth) / 2;
+            for (int i = 0; i < topics.length; i++) {
+                this.addDrawableChild(new TopicLink(topics[i], startX + i * (linkWidth + gap), layoutTop + 40, linkWidth));
+            }
+        }
 
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.literal("Back"),
-                btn -> this.client.setScreen(parent))
-            .dimensions(buttonX, buttonY, buttonWidth, 20)
-            .build()
-        );
+        layoutInfoLines();
+
+        ScreenNavigation.addBackAndCloseButtons(this, this::addDrawableChild, layout.bottom());
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        context.enableScissor(0, contentTop, this.width, contentBottom);
-        renderText(context);
-        context.disableScissor();
+        context.fill(0, 0, this.width, this.height, 0xC0101010);
+
+        Text heading = Text.literal("Mod Information").formatted(Formatting.BOLD);
+        context.drawText(this.textRenderer, heading, (this.width - this.textRenderer.getWidth(heading)) / 2, layoutTop + 20, 0xFFFFFFFF, false);
+
+        if (sideNavigation) {
+            context.fill(navigationDividerX, contentTop, navigationDividerX + 1, contentBottom, 0x44FFFFFF);
+        }
+
+        textPanel.render(context, this.textRenderer, contentLeft, contentTop, contentRight, contentBottom, Math.min(scrollOffset, getMaxScroll()));
 
         drawScrollbar(context);
 
         super.render(context, mouseX, mouseY, delta);
     }
 
+    private void layoutInfoLines() {
+        int availableHeight = Math.max(0, contentBottom - contentTop);
+        totalContentHeight = textPanel.layout(this.textRenderer, infoLines, contentRight - contentLeft, availableHeight);
+    }
+
+    private void drawScrollbar(DrawContext context) {
+        ScrollbarMetrics metrics = getScrollbarMetrics();
+        if (metrics != null) {
+            context.fill(metrics.x, metrics.trackTop, metrics.x + metrics.width,
+                    metrics.trackTop + metrics.trackHeight, 0x33000000);
+            context.fill(metrics.x, metrics.thumbY, metrics.x + metrics.width,
+                    metrics.thumbY + metrics.thumbHeight, 0xFFAAAAAA);
+        }
+    }
+
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        int availableHeight = contentBottom - contentTop;
-        int maxScroll = Math.max(0, totalContentHeight + 40 - availableHeight);
-
-        scrollOffset = (int) Math.max(0, Math.min(maxScroll,
-            scrollOffset - (int)(verticalAmount * 20)));
+        ScrollbarMetrics metrics = getScrollbarMetrics();
+        if (metrics == null) {
+            return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+        }
+        scrollOffset = Math.clamp(Math.min(scrollOffset, metrics.maxScroll) - (int) (verticalAmount * SectionedText.LINE_SPACING), 0, metrics.maxScroll);
         return true;
     }
 
     @Override
     public boolean mouseClicked(net.minecraft.client.gui.Click click, boolean doubleClick) {
-        if (click.button() == 0) {
+        if (click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
             double mouseX = click.x();
             double mouseY = click.y();
             ScrollbarMetrics metrics = getScrollbarMetrics();
@@ -161,154 +348,9 @@ public class ChunkloaderInfoScreen extends Screen {
         return super.mouseReleased(click);
     }
 
-    private void drawScrollbar(DrawContext context) {
-        int availableHeight = contentBottom - contentTop;
-        int totalHeightWithPadding = totalContentHeight + 40;
-
-        if (totalHeightWithPadding <= availableHeight) {
-            return;
-        }
-
-        int scrollbarWidth = 3;
-        int scrollbarX = this.width - scrollbarWidth - 2;
-        int scrollbarHeight = (int)((double)availableHeight / totalHeightWithPadding * availableHeight);
-        int maxScroll = totalHeightWithPadding - availableHeight;
-        if (maxScroll > 0) {
-            int scrollbarY = contentTop + (int)((double)scrollOffset / maxScroll * (availableHeight - scrollbarHeight));
-
-            context.fill(scrollbarX, contentTop, scrollbarX + scrollbarWidth, contentBottom, 0x33000000);
-            context.fill(scrollbarX, scrollbarY, scrollbarX + scrollbarWidth, scrollbarY + scrollbarHeight, 0xFFAAAAAA);
-        }
-    }
-
-    private void renderText(DrawContext context) {
-        TextRenderer renderer = this.textRenderer;
-        int lineHeight = 12;
-        int sectionSpacing = 20;
-        int y = contentTop + 20 - scrollOffset;
-
-        Text title = Text.literal("Mod Information").formatted(Formatting.BOLD);
-        int titleWidth = renderer.getWidth(title);
-        context.drawText(renderer, title, (this.width - titleWidth) / 2, y, 0xFFFFFFFF, false);
-        y += 30;
-
-        Text fakePlayerTitle = Text.literal("Fakeplayer Mode").formatted(Formatting.BOLD, Formatting.GREEN);
-        String[] fakePlayerLines = {
-            "Simulates a real player to keep mobs and farms ticking.",
-            "SD (Simulation Distance) can be set from 0 to 3.",
-            "SD 0 = 1 chunk, SD 1 = 3x3, SD 2 = 5x5, SD 3 = 7x7 chunks.",
-            "Great for redstone, mob, and plant farms that need entity ticking.",
-            "SD controls chunk loading and simulation area (0-3).",
-            "Mob spawning works independently with SD 5 (24-128 blocks away).",
-            "Optional Mob Target: allow mobs to aggro/pathfind to this Fakeplayer (AFK farms). Default off; no inventory, armor, or combat.",
-            "Ideal for farms with mobs (hostile, passive, villagers, golems, etc.)."
-        };
-        y = drawInfoSection(context, renderer, y, fakePlayerTitle, fakePlayerLines, lineHeight, sectionSpacing, false);
-
-        Text chunkplayerTitle = Text.literal("Chunkplayer Mode").formatted(Formatting.BOLD, Formatting.BLUE);
-        String[] chunkplayerLines = {
-            "Keeps chunks loaded without entity ticking or mob spawning.",
-            "Ideal for portals, passive storage, and non-mob farms (e.g., minecarts).",
-            "Radius can be set from 0 to 3.",
-            "Radius 0 = 1 chunk, Radius 1 = 3x3, Radius 2 = 5x5, Radius 3 = 7x7 chunks.",
-            "Only the central chunk receives random ticks (crop growth).",
-            "Mobs in chunkplayer areas will despawn if no real player is nearby."
-        };
-        y = drawInfoSection(context, renderer, y, chunkplayerTitle, chunkplayerLines, lineHeight, sectionSpacing, true);
-
-        Text simDistTitle = Text.literal("Simulation Distance (SD)").formatted(Formatting.BOLD, Formatting.YELLOW);
-        String[] simDistLines = {
-            "For Fakeplayer: Controls how far entities are simulated (0-3).",
-            "SD can be adjusted from 0 to 3 using SD +1 / SD -1 buttons.",
-            "New Fakeplayers default to SD 0.",
-            "Mob spawning works independently with SD 5 (24-128 blocks away).",
-            "The mod respects the server-defined simulation distance."
-        };
-        y = drawInfoSection(context, renderer, y, simDistTitle, simDistLines, lineHeight, sectionSpacing, true);
-
-        Text statusTitle = Text.literal("Status Monitoring").formatted(Formatting.BOLD, Formatting.YELLOW);
-        String[] statusLines = {
-            "F6/F7/F8: Toggle HUDs for simulated or loaded chunk status, or open disabled list.",
-            "HUDs refresh every two seconds and can run simultaneously.",
-            "Cached data fills in if the server delays its reply.",
-            "Keybinds can be changed in Controls settings or via the Keybinds button in the chunk map."
-        };
-        y = drawInfoSection(context, renderer, y, statusTitle, statusLines, lineHeight, sectionSpacing, true);
-
-        Text permissionsTitle = Text.literal("Permissions").formatted(Formatting.BOLD, Formatting.YELLOW);
-        String[] permissionsLines = {
-            "Uses the permissions config (OP fallback when needed).",
-            "Grant/revoke access via /fakeplayer permission grant|revoke."
-        };
-        y = drawInfoSection(context, renderer, y, permissionsTitle, permissionsLines, lineHeight, sectionSpacing, true);
-
-        Text configTitle = Text.literal("Configuration").formatted(Formatting.BOLD, Formatting.YELLOW);
-        String[] configLines = {
-            "Per-world config stores block offsets and modes.",
-            "Up to two timestamped backups in chunkloader/backups/ plus a latest alias can auto-restore.",
-            "Config enforces limits and rejects duplicate names.",
-            "Fakeplayers cannot be renamed to real player names.",
-            "If a real player joins with the same name, the fakeplayer/chunkplayer",
-            "will be automatically renamed (e.g., 'Player_Fakeplayer' or 'Player_Chunkplayer')."
-        };
-        y = drawInfoSection(context, renderer, y, configTitle, configLines, lineHeight, sectionSpacing, true);
-
-        Text tablistTitle = Text.literal("Tab List Visibility").formatted(Formatting.BOLD, Formatting.YELLOW);
-        String[] tablistLines = {
-            "Players can be hidden from the tab list.",
-            "Use /fp tablist <true/false> to show/hide all players.",
-            "New players respect the current tablist visibility setting."
-        };
-        y = drawInfoSection(context, renderer, y, tablistTitle, tablistLines, lineHeight, sectionSpacing, true);
-
-        Text chunkMapTitle = Text.literal("Chunk Map").formatted(Formatting.BOLD, Formatting.YELLOW);
-        String[] chunkMapLines = {
-            "Spawn Direction: when you run /fp add, the fakeplayer",
-            "spawns facing the cardinal direction (N/S/E/W) you were looking.",
-            "Map Rotation: click on the map grid to rotate the view 90° clockwise.",
-            "The compass (N/W/S/E) above the map updates as you rotate.",
-            "Opening Direction: clicking a fake/chunkplayer opens the map",
-            "already oriented toward the cardinal direction you are facing.",
-            "Live markers: other player dots and occupied areas update on",
-            "create/delete/radius/disable while maps stay open; terrain is not live."
-        };
-        y = drawInfoSection(context, renderer, y, chunkMapTitle, chunkMapLines, lineHeight, sectionSpacing, true);
-
-        totalContentHeight = y - contentTop - 20 + scrollOffset;
-    }
-
-    private int drawInfoSection(DrawContext context, TextRenderer renderer, int y, Text title, String[] lines, int lineHeight, int sectionSpacing, boolean drawSeparatorBefore) {
-        if (drawSeparatorBefore) {
-            int separatorY = y - sectionSpacing / 2;
-            int separatorWidth = Math.min(200, this.width - 100);
-            int separatorX = (this.width - separatorWidth) / 2;
-            drawSeparator(context, separatorX, separatorY, separatorWidth);
-        }
-
-        int titleWidth = renderer.getWidth(title);
-        context.drawText(renderer, title, (this.width - titleWidth) / 2, y, 0xFFFFFFFF, false);
-        y += lineHeight + 4;
-        for (String line : lines) {
-            int lineWidth = renderer.getWidth(Text.literal(line));
-            context.drawText(renderer, Text.literal(line), (this.width - lineWidth) / 2, y, 0xFFCCCCCC, false);
-            y += lineHeight;
-        }
-        y += sectionSpacing;
-        return y;
-    }
-
-    private void drawSeparator(DrawContext context, int x, int y, int width) {
-        context.fill(x, y, x + width, y + 1, 0x66FFFFFF);
-    }
-
-    private void drawDimBackground(DrawContext context) {
-        context.fill(0, 0, this.width, this.height, 0xC0101010);
-    }
-
     @Override
-    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
-        super.renderBackground(context, mouseX, mouseY, delta);
-        drawDimBackground(context);
+    public void close() {
+        this.client.setScreen(parent);
     }
 
     @Override

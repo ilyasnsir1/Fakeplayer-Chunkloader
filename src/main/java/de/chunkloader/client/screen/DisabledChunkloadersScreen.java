@@ -1,5 +1,6 @@
 package de.chunkloader.client.screen;
 
+import de.chunkloader.client.ChunkloaderClient;
 import de.chunkloader.network.payload.DisabledChunkloadersListPayload;
 import de.chunkloader.network.ChunkloaderNetworking;
 import net.fabricmc.api.EnvType;
@@ -161,14 +162,14 @@ public class DisabledChunkloadersScreen extends Screen {
 
         int buttonWidth = 100;
         int buttonSpacing = 10;
-        int totalButtonWidgetsWidth = parentScreen != null ? buttonWidth * 2 + buttonSpacing : buttonWidth;
+        int totalButtonWidgetsWidth = parentScreen != null ? buttonWidth * 3 + buttonSpacing * 2 : buttonWidth * 2 + buttonSpacing;
         int buttonX = (this.width - totalButtonWidgetsWidth) / 2;
         int buttonY = this.height - 30;
 
         if (parentScreen != null) {
             this.addDrawableChild(ButtonWidget.builder(
                     Text.literal("Back"),
-                    btn -> this.client.setScreen(parentScreen))
+                    btn -> this.close())
                 .dimensions(buttonX, buttonY, buttonWidth, 20)
                 .build()
             );
@@ -176,11 +177,21 @@ public class DisabledChunkloadersScreen extends Screen {
         }
 
         this.addDrawableChild(ButtonWidget.builder(
-                Text.literal("Close"),
-                btn -> this.client.setScreen(null))
+                Text.literal("Active"),
+                btn -> ChunkloaderNetworking.requestActiveChunkloadersList())
             .dimensions(buttonX, buttonY, buttonWidth, 20)
             .build()
         );
+        buttonX += buttonWidth + buttonSpacing;
+
+        if (parentScreen == null) {
+            this.addDrawableChild(ButtonWidget.builder(
+                    Text.literal("Close"),
+                    btn -> this.close())
+                .dimensions(buttonX, buttonY, buttonWidth, 20)
+                .build()
+            );
+        }
 
         int availableHeight = contentBottom - contentTop;
         int itemsThatFitFully = availableHeight / ITEM_HEIGHT;
@@ -234,7 +245,7 @@ public class DisabledChunkloadersScreen extends Screen {
             int restoreButtonWidgetX = deleteButtonWidgetX - restoreDeleteSpacing - restoreButtonWidgetWidth;
 
             this.addDrawableChild(ButtonWidget.builder(
-                    Text.literal("Edit"),
+                    Text.literal("Move"),
                     btn -> {
                         this.client.setScreen(new EditDisabledChunkloaderCoordsScreen(this, entry));
                     })
@@ -252,7 +263,7 @@ public class DisabledChunkloadersScreen extends Screen {
                 .build();
             this.addDrawableChild(restoreButtonWidget);
 
-            this.addDrawableChild(ButtonWidget.builder(
+            ButtonWidget deleteButton = ButtonWidget.builder(
                     Text.literal("Delete").formatted(Formatting.RED),
                     btn -> {
                         String name = entry.name() != null ? entry.name() : "Unnamed";
@@ -281,8 +292,9 @@ public class DisabledChunkloadersScreen extends Screen {
                         ));
                     })
                 .dimensions(deleteButtonWidgetX, itemY + 10, deleteButtonWidgetWidth, 20)
-                .build()
-            );
+                .build();
+            deleteButton.active = entry.sharedBy() == null;
+            this.addDrawableChild(deleteButton);
         }
     }
 
@@ -329,6 +341,9 @@ public class DisabledChunkloadersScreen extends Screen {
             }
 
             String name = entry.name() != null ? entry.name() : "Unnamed";
+            if (entry.sharedBy() != null) {
+                name += " (Shared by " + entry.sharedBy() + ")";
+            }
             Formatting color;
             int colorValue;
             if (entry.easterEggSkinIndex() >= 0) {
@@ -344,7 +359,7 @@ public class DisabledChunkloadersScreen extends Screen {
                 }
             } else {
                 color = Formatting.BLUE;
-                colorValue = 0xFF5596FF;
+                colorValue = 0xFF5555FF;
             }
             Text nameText = Text.literal(name).formatted(color);
             context.drawText(renderer, nameText, 20, itemY + 5, colorValue, false);
@@ -490,6 +505,16 @@ public class DisabledChunkloadersScreen extends Screen {
     }
 
     @Override
+    public boolean keyPressed(net.minecraft.client.input.KeyInput keyInput) {
+        if (ChunkloaderClient.disabledChunkloadersKey != null
+                && ChunkloaderClient.disabledChunkloadersKey.matchesKey(keyInput)) {
+            this.client.setScreen(null);
+            return true;
+        }
+        return super.keyPressed(keyInput);
+    }
+
+    @Override
     public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
     }
 
@@ -497,4 +522,9 @@ public class DisabledChunkloadersScreen extends Screen {
     public boolean shouldPause() {
         return false;
     }
+
+    public void close() {
+        this.client.setScreen(parentScreen);
+    }
+
 }
