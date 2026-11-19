@@ -20,18 +20,37 @@ public class ServerPlayerEntityMixin {
             try {
                 if (fakePlayer.isVisibleAsMarker() && ChunkloaderMod.getChunkloaderManager().isChunkloaderMarker(self.getUUID())) {
                     Entity attacker = source.getEntity();
-                    if (attacker instanceof net.minecraft.world.entity.player.Player) {
-                        if (attacker instanceof ServerPlayer serverPlayer && !PermissionManager.canUse(serverPlayer)) {
-                            serverPlayer.sendSystemMessage(net.minecraft.network.chat.Component.translatable("message.chunkloader.no_permission_interact"));
+                    if (!(attacker instanceof ServerPlayer serverPlayer)) {
+                        cir.setReturnValue(false);
+                        return;
+                    }
+                    if (!PermissionManager.canUse(serverPlayer)) {
+                        serverPlayer.sendSystemMessage(net.minecraft.network.chat.Component.translatable("message.chunkloader.no_permission_interact"));
+                        cir.setReturnValue(false);
+                        return;
+                    }
+                    var manager = ChunkloaderMod.getChunkloaderManager();
+                    var entry = manager.getEntryByMarkerUuid(self.getUUID());
+                    boolean deleting = serverPlayer.isShiftKeyDown();
+                    boolean allowed = deleting ? PermissionManager.canModifyEntry(serverPlayer, entry)
+                            : PermissionManager.canOperateEntry(serverPlayer, entry);
+                    if (!allowed) {
+                        serverPlayer.sendSystemMessage(net.minecraft.network.chat.Component.literal("You don't own this player."));
+                        cir.setReturnValue(false);
+                        return;
+                    }
+                    if (deleting) {
+                        if (!manager.confirmMarkerDelete(serverPlayer, self.getUUID(), true)) {
                             cir.setReturnValue(false);
                             return;
                         }
-                        ChunkloaderMod.getChunkloaderManager().handleMarkerDestroyed(self.getUUID());
-                        self.remove(Entity.RemovalReason.KILLED);
-                        cir.setReturnValue(true);
+                        manager.removeChunkloaderByMarkerUuid(self.getUUID());
+                        serverPlayer.sendSystemMessage(net.minecraft.network.chat.Component.literal("Player deleted"));
                     } else {
-                        cir.setReturnValue(false);
+                        manager.handleMarkerDestroyed(self.getUUID());
                     }
+                    self.remove(Entity.RemovalReason.KILLED);
+                    cir.setReturnValue(true);
                 }
             } catch (Exception e) {
                 ChunkloaderMod.LOGGER.error("Error in ServerPlayer damage mixin", e);

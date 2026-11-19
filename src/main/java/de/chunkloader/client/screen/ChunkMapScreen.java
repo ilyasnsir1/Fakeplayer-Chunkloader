@@ -3,12 +3,16 @@ package de.chunkloader.client.screen;
 import com.mojang.blaze3d.platform.InputConstants;
 
 import com.google.common.collect.ImmutableList;
+import de.chunkloader.ChunkloaderConstants;
 import de.chunkloader.client.CustomFakePlayerSkinCache;
 import de.chunkloader.client.config.ClientConfig;
 import de.chunkloader.client.config.PanelColorTarget;
 import de.chunkloader.network.ChunkMapCell;
 import de.chunkloader.network.ChunkMapData;
+import de.chunkloader.network.ChunkloaderPosition;
 import de.chunkloader.network.payload.ChunkloaderActionPayload;
+import de.chunkloader.network.payload.ChunkMapLoaderDetailsPayload;
+import de.chunkloader.network.payload.ChunkMapLoaderDetailsPayload.DisabledArea;
 import de.chunkloader.network.ChunkloaderNetworking;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -22,6 +26,10 @@ import net.minecraft.client.multiplayer.PlayerInfo;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.gui.navigation.ScreenRectangle;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.TextColor;
@@ -56,6 +64,9 @@ public class ChunkMapScreen extends Screen {
     private static final Identifier FALLBACK_SKIN = Identifier.fromNamespaceAndPath("minecraft", "textures/entity/player/wide/steve.png");
 
     private ChunkMapData data;
+    private boolean canModify;
+    private boolean shared;
+    private final List<Button> readOnlyButtons = new ArrayList<>();
     private ChunkMapGrid grid;
     private int gridWidth;
     private int gridHeight;
@@ -74,6 +85,9 @@ public class ChunkMapScreen extends Screen {
     private int topBoxWidth;
     private int topBoxHeight;
     private final List<Button> topBoxButtons = new ArrayList<>();
+    private final List<Button> layoutPickerButtons = new ArrayList<>();
+    private ScreenRectangle layoutPickerBounds;
+    private Button layoutButton;
     private final List<Button> actionButtons = new ArrayList<>();
     private final Map<Button, Integer> actionButtonYOffset = new HashMap<>();
     private final Map<Button, Boolean> buttonOriginalActiveState = new HashMap<>();
@@ -85,15 +99,17 @@ public class ChunkMapScreen extends Screen {
     private Button infoButton;
     private Button closeButton;
     private Button easterEggLockedSkinButton;
+    private Button increaseRadiusButton;
+    private ChunkMapLoaderDetailsPayload loaderDetails;
     private int footerRowY;
     private int actionScrollOffset = 0;
+    private int actionScrollBeforeColorEditor;
     private int actionViewportLeft;
     private int actionViewportRight;
     private int actionViewportTop;
     private int actionViewportBottom;
     private boolean buttonsNeedUpdate = true;
     private int lastScrollOffset = -1;
-    private Boolean previousAllowMobSpawning = null;
     private int mapRotation = 0;
 
     private boolean actionScrollbarDragging = false;
@@ -104,6 +120,9 @@ public class ChunkMapScreen extends Screen {
     private static final int TOPBOX_BUTTON_WIDTH = 50;
     private static final int TOPBOX_BUTTON_HEIGHT = 20;
     private static final int TOPBOX_BUTTON_COUNT = 5;
+    private static final int LAYOUT_PICKER_COLUMNS = 4;
+    private static final int LAYOUT_PICKER_PADDING = 6;
+    private static final int LAYOUT_PICKER_GAP = 4;
 
     public record PanelColorTargetHit(PanelColorTarget target, int left, int top, int right, int bottom) {
     }
@@ -137,19 +156,6 @@ public class ChunkMapScreen extends Screen {
             } catch (IllegalArgumentException e) {
                 return TOP;
             }
-        }
-
-        ChunkMapLayoutPreset next() {
-            return switch (this) {
-                case TOP -> LEFT;
-                case LEFT -> RIGHT;
-                case RIGHT -> BOTTOM;
-                case BOTTOM -> TOP_SWAP;
-                case TOP_SWAP -> LEFT_SWAP;
-                case LEFT_SWAP -> RIGHT_SWAP;
-                case RIGHT_SWAP -> BOTTOM_SWAP;
-                case BOTTOM_SWAP -> TOP;
-            };
         }
 
         boolean isVerticalButtonBar() {
@@ -225,10 +231,18 @@ public class ChunkMapScreen extends Screen {
         return new ScrollbarMetrics(scrollbarX, scrollbarWidth, scrollbarTrackTop, availableHeight, scrollbarY, scrollbarHeight, maxScroll);
     }
 
+    private final Screen returnScreen;
+
     public ChunkMapScreen(ChunkMapData data) {
-        super(Component.literal("Chunk Loader Map"));
+        this(data, null, false, false);
+    }
+
+    public ChunkMapScreen(ChunkMapData data, Screen returnScreen, boolean canModify, boolean shared) {
+        super(Component.literal("Player Map"));
         this.data = data;
-        this.previousAllowMobSpawning = data.allowMobSpawning();
+        this.canModify = canModify;
+        this.shared = shared;
+        this.returnScreen = returnScreen;
         this.mapRotation = rotationFromYaw(getOpenDirectionYaw());
     }
 
@@ -258,9 +272,14 @@ public class ChunkMapScreen extends Screen {
         return data;
     }
 
-    public void updateData(ChunkMapData newData) {
-        boolean previousWasFakeplayer = this.data != null && this.data.allowMobSpawning();
-        boolean newIsFakeplayer = newData.allowMobSpawning();
+    public void updateData(ChunkMapData newData, boolean canModify, boolean shared) {
+        this.canModify = canModify;
+        this.shared = shared;
+        this.loaderDetails = null;
+        boolean hudStatusChanged = this.data != null
+            && (this.data.allowMobSpawning() != newData.allowMobSpawning()
+                || this.data.chunkRadius() != newData.chunkRadius()
+                || this.data.enabled() != newData.enabled());
 
         boolean sameMapLayout = this.data != null
             && this.data.centerChunkX() == newData.centerChunkX()
@@ -277,14 +296,10 @@ public class ChunkMapScreen extends Screen {
 
         this.data = newData;
 
-        if (previousAllowMobSpawning != null && previousWasFakeplayer != newIsFakeplayer) {
-            if (previousWasFakeplayer && !newIsFakeplayer) {
-                de.chunkloader.client.hud.SimulationStatusHUD.setEnabled(false);
-            } else if (!previousWasFakeplayer && newIsFakeplayer) {
-                de.chunkloader.client.hud.ChunkplayerStatusHUD.setEnabled(false);
-            }
+        if (hudStatusChanged) {
+            de.chunkloader.client.hud.SimulationStatusHUD.forceUpdate();
+            de.chunkloader.client.hud.ChunkplayerStatusHUD.forceUpdate();
         }
-        previousAllowMobSpawning = newIsFakeplayer;
 
         if (this.grid != null && sameMapLayout && this.grid.applyMarkerStates(newData)) {
             if (panelWidth > 0) {
@@ -481,22 +496,80 @@ public class ChunkMapScreen extends Screen {
 
         int closeButtonX = this.gridLeft + (this.gridWidth - closeButtonWidth) / 2;
         this.closeButton = this.addRenderableWidget(Button.builder(
-                Component.literal("Close"),
+                Component.literal(this.returnScreen != null ? "Back" : "Close"),
                 btn -> this.onClose())
             .bounds(closeButtonX, closeButtonY, closeButtonWidth, closeButtonHeight)
             .build()
         );
     }
 
-    private void cycleLayoutPreset() {
-        if (clientConfig == null) {
-            clientConfig = ClientConfig.load();
+    private void resetMapOptions() {
+        clientConfig.resetToDefaults();
+        de.chunkloader.client.hud.SimulationStatusHUD.setEnabled(false);
+        de.chunkloader.client.hud.ChunkplayerStatusHUD.setEnabled(false);
+        reloadMap();
+    }
+
+    private void openLayoutPicker(ChunkMapLayoutPreset selected) {
+        ChunkMapLayoutPreset[] presets = ChunkMapLayoutPreset.values();
+        int rows = (presets.length + LAYOUT_PICKER_COLUMNS - 1) / LAYOUT_PICKER_COLUMNS;
+        int pickerWidth = 2 * LAYOUT_PICKER_PADDING + LAYOUT_PICKER_COLUMNS * TOPBOX_BUTTON_WIDTH
+                + (LAYOUT_PICKER_COLUMNS - 1) * LAYOUT_PICKER_GAP;
+        int pickerHeight = 2 * LAYOUT_PICKER_PADDING + rows * TOPBOX_BUTTON_HEIGHT
+                + (rows - 1) * LAYOUT_PICKER_GAP;
+        int left = layoutButton.getX() + (layoutButton.getWidth() - pickerWidth) / 2;
+        int top = switch (selected) {
+            case BOTTOM, BOTTOM_SWAP -> topBoxY - pickerHeight - LAYOUT_PICKER_PADDING;
+            case LEFT, LEFT_SWAP, RIGHT, RIGHT_SWAP ->
+                    layoutButton.getY() + (layoutButton.getHeight() - pickerHeight) / 2;
+            default -> topBoxY + topBoxHeight + LAYOUT_PICKER_PADDING;
+        };
+        switch (selected.getVerticalTopBoxPlacement()) {
+            case OUTER_LEFT -> left = topBoxX + topBoxWidth + LAYOUT_PICKER_PADDING;
+            case OUTER_RIGHT -> left = topBoxX - pickerWidth - LAYOUT_PICKER_PADDING;
+            case NONE -> { }
         }
+        left = Mth.clamp(left, LAYOUT_PICKER_GAP, Math.max(LAYOUT_PICKER_GAP, width - pickerWidth - LAYOUT_PICKER_GAP));
+        top = Mth.clamp(top, LAYOUT_PICKER_GAP, Math.max(LAYOUT_PICKER_GAP, height - pickerHeight - LAYOUT_PICKER_GAP));
+        layoutPickerBounds = new ScreenRectangle(left, top, pickerWidth, pickerHeight);
 
-        ChunkMapLayoutPreset current = ChunkMapLayoutPreset.fromConfig(clientConfig);
-        ChunkMapLayoutPreset next = current.next();
-        clientConfig.setChunkMapLayoutPreset(next.name());
+        for (ChunkMapLayoutPreset preset : presets) {
+            int index = preset.ordinal();
+            int x = left + LAYOUT_PICKER_PADDING + (index % LAYOUT_PICKER_COLUMNS) * (TOPBOX_BUTTON_WIDTH + LAYOUT_PICKER_GAP);
+            int y = top + LAYOUT_PICKER_PADDING + (index / LAYOUT_PICKER_COLUMNS) * (TOPBOX_BUTTON_HEIGHT + LAYOUT_PICKER_GAP);
+            Component label = Component.literal("UI " + (index + 1))
+                    .withStyle(preset == selected ? ChatFormatting.YELLOW : ChatFormatting.WHITE);
+            Button button = Button.builder(label, b -> {
+                        closeLayoutPicker();
+                        if (preset != selected) {
+                            clientConfig.setChunkMapLayoutPreset(preset.name());
+                            reloadMap();
+                        }
+                    })
+                    .bounds(x, y, TOPBOX_BUTTON_WIDTH, TOPBOX_BUTTON_HEIGHT)
+                    .build();
+            layoutPickerButtons.add(addRenderableWidget(button));
+        }
+        setFocused(null);
+    }
 
+    private void closeLayoutPicker() {
+        setFocused(null);
+        layoutPickerButtons.forEach(this::removeWidget);
+        layoutPickerButtons.clear();
+        layoutPickerBounds = null;
+    }
+
+    private void drawLayoutPicker(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+        context.nextStratum();
+        ScreenRectangle bounds = layoutPickerBounds;
+        context.fill(bounds.left(), bounds.top(), bounds.right(), bounds.bottom(), clientConfig.getPanelColor());
+        for (Button button : layoutPickerButtons) {
+            button.extractRenderState(context, mouseX, mouseY, delta);
+        }
+    }
+
+    private void reloadMap() {
         actionScrollbarDragging = false;
         actionScrollbarDragOffsetY = 0;
 
@@ -508,26 +581,33 @@ public class ChunkMapScreen extends Screen {
         buttonsNeedUpdate = true;
         lastScrollOffset = -1;
 
-        openChildScreen(new ChunkMapScreen(this.data));
+        ChunkMapScreen replacement = new ChunkMapScreen(this.data, this.returnScreen, this.canModify, this.shared);
+        replacement.loaderDetails = loaderDetails;
+        replacement.actionScrollOffset = actionScrollOffset;
+        replacement.actionSearchQuery = actionSearchQuery;
+        openChildScreen(replacement);
     }
 
     private void openPanelColorEditor() {
         if (clientConfig == null) {
             clientConfig = ClientConfig.load();
         }
+        actionScrollBeforeColorEditor = actionScrollOffset;
         actionScrollOffset = 0;
         colorEditorOverlay = new PanelColorEditorOverlay(this, clientConfig);
         this.rebuildWidgets();
     }
 
     void closePanelColorEditor() {
-        if (colorEditorOverlay != null) {
-            colorEditorOverlay.close();
+        if (colorEditorOverlay == null) {
+            return;
         }
+        colorEditorOverlay.close();
         if (clientConfig != null) {
             clientConfig.clearColorPreviewOverrides();
         }
         colorEditorOverlay = null;
+        actionScrollOffset = actionScrollBeforeColorEditor;
         applyActionSearchFieldStyle();
         this.rebuildWidgets();
     }
@@ -560,31 +640,56 @@ public class ChunkMapScreen extends Screen {
         this.minecraft.gui.setScreen(child);
     }
 
+    void openPanelColorHelp() {
+        openChildScreen(new PanelColorHelpScreen(this));
+    }
+
     @Override
     public void removed() {
-        if (colorEditorOverlay != null) {
-            closePanelColorEditor();
+        if (layoutPickerBounds != null) {
+            closeLayoutPicker();
         }
         if (!retainChunkMapSession) {
-            ChunkloaderNetworking.sendCloseChunkMapToServer();
-            if (this.grid != null) {
-                this.grid.close();
-                this.grid = null;
-            }
+            closeSession();
         }
 
         retainChunkMapSession = false;
         super.removed();
     }
 
+    void closeSession() {
+        if (colorEditorOverlay != null) {
+            colorEditorOverlay.close();
+            colorEditorOverlay = null;
+        }
+        if (clientConfig != null) {
+            clientConfig.clearColorPreviewOverrides();
+        }
+        if (Minecraft.getInstance().getConnection() != null) {
+            ChunkloaderNetworking.sendCloseChunkMapToServer();
+        }
+        if (this.grid != null) {
+            this.grid.close();
+            this.grid = null;
+        }
+    }
+
     @Override
     public void onClose() {
+        if (layoutPickerBounds != null) {
+            closeLayoutPicker();
+            return;
+        }
         if (colorEditorOverlay != null) {
             closePanelColorEditor();
             return;
         }
         if (this.grid != null) {
             this.grid.close();
+        }
+        if (this.returnScreen != null) {
+            this.minecraft.gui.setScreen(this.returnScreen);
+            return;
         }
         super.onClose();
     }
@@ -601,7 +706,7 @@ public class ChunkMapScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
         boolean renderColorPreview = colorEditorOverlay != null && clientConfig != null;
         if (renderColorPreview) {
-            clientConfig.setColorPreviewOverrides(colorEditorOverlay.getDraftColors());
+            clientConfig.setColorPreviewOverrides(colorEditorOverlay.getDraftColors(), colorEditorOverlay.getDraftExplicitColors());
         }
 
         try {
@@ -617,16 +722,19 @@ public class ChunkMapScreen extends Screen {
                     lastScrollOffset = actionScrollOffset;
                 }
 
-                int widgetMouseX = colorEditorOverlay != null ? -999 : mouseX;
-                int widgetMouseY = colorEditorOverlay != null ? -999 : mouseY;
+                boolean overlayOpen = colorEditorOverlay != null || layoutPickerBounds != null;
+                int widgetMouseX = overlayOpen ? -999 : mouseX;
+                int widgetMouseY = overlayOpen ? -999 : mouseY;
 
+                List<Component> pointTooltip = List.of();
                 if (this.grid != null) {
                     context.enableScissor(gridLeft - 2, gridTop - 2, gridLeft + gridWidth + 2, gridTop + gridHeight + 2);
                     if (colorEditorOverlay != null) {
                         context.fill(gridLeft, gridTop, gridLeft + gridWidth, gridTop + gridHeight, 0xFF0A0D10);
                     } else {
-                        grid.extractRenderState(context, widgetMouseX, widgetMouseY);
-                        drawChunkloaderPoints(context, widgetMouseX, widgetMouseY);
+                        List<DisabledArea> disabledAreas = loaderDetails == null ? List.of() : loaderDetails.disabledAreas();
+                        grid.extractRenderState(context, widgetMouseX, widgetMouseY, disabledAreas);
+                        pointTooltip = drawChunkloaderPoints(context, widgetMouseX, widgetMouseY);
                     }
                     context.disableScissor();
                     String[] compassLabels = {"N", "W", "S", "E"};
@@ -669,7 +777,10 @@ public class ChunkMapScreen extends Screen {
                 drawActionScrollbar(context);
 
                 for (Button button : topBoxButtons) {
-                    button.extractRenderState(context, widgetMouseX, widgetMouseY, delta);
+                    boolean keepLayoutHover = button == layoutButton && colorEditorOverlay == null;
+                    button.extractRenderState(context,
+                            keepLayoutHover ? mouseX : widgetMouseX,
+                            keepLayoutHover ? mouseY : widgetMouseY, delta);
                 }
 
                 if (resetButton != null) {
@@ -680,16 +791,37 @@ public class ChunkMapScreen extends Screen {
                     closeButton.extractRenderState(context, widgetMouseX, widgetMouseY, delta);
                 }
 
-                if (colorEditorOverlay == null) {
+                if (!overlayOpen) {
                     ChunkMapGrid.Cell hovered = grid != null ? grid.getHoveredCell(mouseX, mouseY) : null;
-                    if (hovered != null) {
+                    if (isMouseOverSpawnDistanceTip(mouseX, mouseY)) {
+                        context.setTooltipForNextFrame(font, spawnDistanceTip(), java.util.Optional.empty(), mouseX, mouseY);
+                    } else if (!pointTooltip.isEmpty()) {
+                        context.setTooltipForNextFrame(font, pointTooltip, java.util.Optional.empty(), mouseX, mouseY);
+                    } else if (hovered != null) {
                         context.setTooltipForNextFrame(font, hovered.buildTooltip(), java.util.Optional.empty(), mouseX, mouseY);
+                    } else if (isMouseOverReadOnlyControl(mouseX, mouseY)) {
+                        context.setTooltipForNextFrame(
+                            font,
+                            List.of(
+                                Component.literal(shared ? "Owner only" : "Read only").withStyle(ChatFormatting.YELLOW),
+                                Component.literal(shared ? "Only the owner or an admin" : "You don't have permission to"),
+                                Component.literal(shared ? "can use this option." : "change this player.")
+                            ),
+                            java.util.Optional.empty(),
+                            mouseX,
+                            mouseY
+                        );
+                    } else if ((canModify || shared) && !data.canIncreaseRadius() && increaseRadiusButton != null
+                            && mouseY >= scissorTop && mouseY < actionViewportBottom
+                            && contains(mouseX, mouseY, increaseRadiusButton.getX(), increaseRadiusButton.getY(),
+                                    increaseRadiusButton.getX() + increaseRadiusButton.getWidth(),
+                                    increaseRadiusButton.getY() + increaseRadiusButton.getHeight())) {
+                        context.setTooltipForNextFrame(font, radiusIncreaseTip(), java.util.Optional.empty(), mouseX, mouseY);
                     } else if (isMouseOverEasterEggLockedSkinButton(mouseX, mouseY)) {
                         context.setTooltipForNextFrame(
                             font,
                             List.of(
-                                Component.literal("Not available for easter"),
-                                Component.literal("egg players")
+                                Component.literal("This skin cannot be changed.")
                             ),
                             java.util.Optional.empty(),
                             mouseX,
@@ -706,12 +838,14 @@ public class ChunkMapScreen extends Screen {
 
         if (colorEditorOverlay != null) {
             colorEditorOverlay.extractRenderState(context, mouseX, mouseY);
+        } else if (layoutPickerBounds != null) {
+            drawLayoutPicker(context, mouseX, mouseY, delta);
         }
     }
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        if (colorEditorOverlay != null) {
+        if (colorEditorOverlay != null || layoutPickerBounds != null) {
             return true;
         }
 
@@ -787,9 +921,26 @@ public class ChunkMapScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean doubleClick) {
+    public boolean mouseClicked(MouseButtonEvent click, boolean doubleClick) {
+        if (layoutPickerBounds != null) {
+            for (Button button : layoutPickerButtons) {
+                if (button.mouseClicked(click, doubleClick)) {
+                    return true;
+                }
+            }
+            if (click.button() == InputConstants.MOUSE_BUTTON_LEFT
+                    && !contains(click.x(), click.y(), layoutPickerBounds.left(), layoutPickerBounds.top(),
+                            layoutPickerBounds.right(), layoutPickerBounds.bottom())) {
+                closeLayoutPicker();
+            }
+            return true;
+        }
         if (colorEditorOverlay != null) {
             return colorEditorOverlay.mouseClicked(click);
+        }
+
+        if (layoutButton != null && layoutButton.mouseClicked(click, doubleClick)) {
+            return true;
         }
 
         if (click.button() == InputConstants.MOUSE_BUTTON_LEFT) {
@@ -828,7 +979,10 @@ public class ChunkMapScreen extends Screen {
     }
 
     @Override
-    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent click, double deltaX, double deltaY) {
+    public boolean mouseDragged(MouseButtonEvent click, double deltaX, double deltaY) {
+        if (layoutPickerBounds != null) {
+            return true;
+        }
         if (colorEditorOverlay != null) {
             return colorEditorOverlay.mouseDragged(click);
         }
@@ -859,7 +1013,10 @@ public class ChunkMapScreen extends Screen {
     }
 
     @Override
-    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent click) {
+    public boolean mouseReleased(MouseButtonEvent click) {
+        if (layoutPickerBounds != null) {
+            return true;
+        }
         if (colorEditorOverlay != null) {
             return colorEditorOverlay.mouseReleased(click);
         }
@@ -873,15 +1030,39 @@ public class ChunkMapScreen extends Screen {
     }
 
     @Override
-    public boolean keyPressed(net.minecraft.client.input.KeyEvent keyInput) {
+    public boolean keyPressed(KeyEvent keyInput) {
+        if (layoutPickerBounds != null) {
+            if (keyInput.key() == InputConstants.KEY_ESCAPE) {
+                closeLayoutPicker();
+            } else if (keyInput.key() == InputConstants.KEY_TAB) {
+                int size = layoutPickerButtons.size();
+                int current = layoutPickerButtons.indexOf(getFocused());
+                int next = keyInput.hasShiftDown()
+                        ? (current <= 0 ? size - 1 : current - 1)
+                        : (current + 1) % size;
+                setFocused(layoutPickerButtons.get(next));
+            } else if (getFocused() instanceof Button focused) {
+                focused.keyPressed(keyInput);
+            }
+            return true;
+        }
         if (colorEditorOverlay != null) {
             return colorEditorOverlay.keyPressed(keyInput);
+        }
+        if (this.returnScreen instanceof ActiveChunkloadersScreen
+                && de.chunkloader.client.ChunkloaderClient.activeChunkloadersKey != null
+                && de.chunkloader.client.ChunkloaderClient.activeChunkloadersKey.matches(keyInput)) {
+            this.onClose();
+            return true;
         }
         return super.keyPressed(keyInput);
     }
 
     @Override
     public boolean charTyped(net.minecraft.client.input.CharacterEvent characterEvent) {
+        if (layoutPickerBounds != null) {
+            return true;
+        }
         if (colorEditorOverlay != null) {
             return colorEditorOverlay.charTyped(characterEvent);
         }
@@ -1084,6 +1265,11 @@ public class ChunkMapScreen extends Screen {
         context.fill(left, bottom - 1, right, bottom, border);
         context.fill(left, top, left + 1, bottom, border);
         context.fill(right - 1, top, right, bottom, border);
+        if (actionSearchField.getValue().isEmpty() && !actionSearchField.isFocused()) {
+            int textY = actionSearchField.getY();
+            int color = clientConfig != null ? clientConfig.getActionSearchPlaceholderColor() : 0xCC808080;
+            context.text(font, Component.literal("Search..."), actionSearchField.getX(), textY, color, false);
+        }
     }
 
     private void applyActionSearchFieldStyle() {
@@ -1096,8 +1282,7 @@ public class ChunkMapScreen extends Screen {
 
         actionSearchField.setTextColor(clientConfig.getActionSearchTextColor());
 
-        int placeholderRgb = clientConfig.getActionSearchPlaceholderColor() & 0x00FFFFFF;
-        actionSearchField.setHint(Component.literal("Search...").withStyle(style -> style.withColor(TextColor.fromRgb(placeholderRgb))));
+        actionSearchField.setHint(Component.empty());
     }
 
     private boolean actionSearchMatches(String label) {
@@ -1195,8 +1380,10 @@ public class ChunkMapScreen extends Screen {
         addTextHit(hits, PanelColorTarget.LEFT_PANEL_TEXT, "Dim:", leftPanelX + layout.padding, layout.dimY);
         addTextHit(hits, PanelColorTarget.LEFT_PANEL_TEXT, "Chunk:", leftPanelX + layout.padding, layout.chunkY);
         addTextHit(hits, PanelColorTarget.LEFT_PANEL_TEXT, "Block:", leftPanelX + layout.padding, layout.blockY);
-        String radiusLabel = data.allowMobSpawning() ? "SD:" : "Radius:";
-        addTextHit(hits, PanelColorTarget.LEFT_PANEL_TEXT, radiusLabel, leftPanelX + layout.padding, layout.sdY);
+        addTextHit(hits, PanelColorTarget.LEFT_PANEL_TEXT, radiusLabel(), leftPanelX + layout.padding, layout.sdY);
+        if (hasSpawnDistanceTip()) {
+            addTextHit(hits, PanelColorTarget.LEFT_PANEL_TEXT, "?", spawnDistanceTipX(), layout.sdY);
+        }
     }
 
     private void collectInfoValueHits(List<PanelColorTargetHit> hits) {
@@ -1204,7 +1391,7 @@ public class ChunkMapScreen extends Screen {
         if (layout == null) {
             return;
         }
-        BlockPos blockPos = new BlockPos(data.centerChunkX() << 4, data.blockY(), data.centerChunkZ() << 4);
+        BlockPos blockPos = new BlockPos(data.fakeplayerBlockX(), data.blockY(), data.fakeplayerBlockZ());
         addTextHit(hits, PanelColorTarget.LEFT_PANEL_VALUE, "X:" + data.centerChunkX(), layout.coordStartX, layout.chunkY);
         addTextHit(hits, PanelColorTarget.LEFT_PANEL_VALUE, "Z:" + data.centerChunkZ(), layout.coordStartX, layout.chunkY + 12);
         addTextHit(hits, PanelColorTarget.LEFT_PANEL_VALUE, "X:" + blockPos.getX(), layout.coordStartX, layout.blockY);
@@ -1289,9 +1476,8 @@ public class ChunkMapScreen extends Screen {
                 hits.add(hit(PanelColorTarget.DIVIDER, lineX, lineTop, lineX + 1, lineBottom));
             }
         } else if (verticalButtonBar && numberOfTopButtons >= 2) {
-            int availableSpace = topBoxHeight - (numberOfTopButtons * TOPBOX_BUTTON_HEIGHT);
-            int innerSpacing = Math.max(2, availableSpace > 0 ? availableSpace / (numberOfTopButtons + 1) : 2);
-            int startY = topBoxY + innerSpacing;
+            int innerSpacing = getVerticalButtonSpacing(numberOfTopButtons);
+            int startY = getVerticalButtonsStartY(numberOfTopButtons, innerSpacing);
             int lineLeft = topBoxX + 4;
             int lineRight = topBoxX + topBoxWidth - 4;
             for (int index = 1; index < numberOfTopButtons; index++) {
@@ -1452,13 +1638,13 @@ public class ChunkMapScreen extends Screen {
         }
         int padding = 6;
         int headSize = 24;
-        int headY = leftPanelY + 8;
+        int headY = getOwnerHeadY();
         String ownerName = data.ownerName() != null ? data.ownerName() : null;
         int nameY = 0;
         if (ownerName != null && !ownerName.isEmpty()) {
-            nameY = headY + headSize + 4;
+            nameY = getOwnerNameY(headY, headSize);
         }
-        int initialInfoY = nameY > 0 ? nameY + font.lineHeight + 8 : headY + headSize + 8;
+        int initialInfoY = getInfoStartY(nameY, headY, headSize);
         int infoY = initialInfoY + 2;
         int dimY = infoY + 12;
         int chunkY = dimY + 24 - 3;
@@ -1494,6 +1680,97 @@ public class ChunkMapScreen extends Screen {
         int sdY,
         int coordStartX
     ) {
+    }
+
+    private int getInfoStartY(int nameY, int headY, int headSize) {
+        return nameY > 0 ? nameY + font.lineHeight + 8 : headY + headSize + 8;
+    }
+
+    private int getOwnerHeadY() {
+        return leftPanelY + 8;
+    }
+
+    private int getOwnerNameY(int headY, int headSize) {
+        return headY + headSize + 4;
+    }
+
+    private int getOwnerHeadX() {
+        return leftPanelX + (leftPanelWidth - 24) / 2;
+    }
+
+    private void configureModificationButton(Button button) {
+        configurePermissionButton(button, canModify);
+    }
+
+    private void configurePermissionButton(Button button, boolean allowed) {
+        if (!allowed) {
+            button.active = false;
+            button.setMessage(button.getMessage().copy().withStyle(ChatFormatting.GRAY));
+            readOnlyButtons.add(button);
+        }
+    }
+
+    private boolean isMouseOverReadOnlyControl(int mouseX, int mouseY) {
+        for (Button button : readOnlyButtons) {
+            if (actionButtons.contains(button) && button != resetButton
+                    && (mouseY < actionViewportTop || mouseY >= actionViewportBottom)) {
+                continue;
+            }
+            if (contains(mouseX, mouseY, button.getX(), button.getY(),
+                    button.getX() + button.getWidth(), button.getY() + button.getHeight())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasSpawnDistanceTip() {
+        return data != null && data.allowMobSpawning() && data.chunkRadius() <= 1;
+    }
+
+    public void updateLoaderDetails(ChunkMapLoaderDetailsPayload details) {
+        if (details.chunkX() == data.fakeplayerChunkX() && details.chunkZ() == data.fakeplayerChunkZ()
+                && details.dimension().equals(data.dimensionKey())) {
+            loaderDetails = details;
+        }
+    }
+
+    private List<Component> radiusIncreaseTip() {
+        if (data.chunkRadius() >= ChunkloaderConstants.MAX_RADIUS) {
+            return List.of(Component.literal("Maximum " + (data.allowMobSpawning() ? "SD" : "radius") + " reached."));
+        }
+        if (loaderDetails == null || loaderDetails.activeBlockers() + loaderDetails.disabledBlockers() == 0) {
+            return List.of(Component.literal("Another saved player blocks this area."));
+        }
+        int active = loaderDetails.activeBlockers();
+        int disabled = loaderDetails.disabledBlockers();
+        if (active > 0 && disabled > 0) {
+            return List.of(Component.literal("Blocked by " + active + " active and " + disabled + " disabled."));
+        }
+        int count = active + disabled;
+        String status = active > 0 ? "active" : "disabled";
+        return List.of(Component.literal("Blocked by " + count + " " + status + (count == 1 ? " player." : " players.")));
+    }
+
+    private List<Component> spawnDistanceTip() {
+        return List.of(Component.literal("Use SD 2 or 3 for mob farms."));
+    }
+
+    private boolean isMouseOverSpawnDistanceTip(int mouseX, int mouseY) {
+        if (!hasSpawnDistanceTip()) {
+            return false;
+        }
+        int x = spawnDistanceTipX();
+        int y = getInfoLayout().sdY();
+        return contains(mouseX, mouseY, x - 3, y - 3, x + font.width("?") + 3, y + font.lineHeight + 3);
+    }
+
+    private int spawnDistanceTipX() {
+        return leftPanelX + leftPanelWidth - 6 - font.width("?");
+    }
+
+    private String radiusLabel() {
+        return data.allowMobSpawning() ? "SD:" : "R:";
     }
 
     private PanelColorTargetHit computePanelColorTargetHit(int mouseX, int mouseY) {
@@ -1705,16 +1982,23 @@ public class ChunkMapScreen extends Screen {
     }
 
     private PanelColorTargetHit getInfoTextColorHit(int mouseX, int mouseY) {
+        if (hasSpawnDistanceTip()) {
+            PanelColorTargetHit tipHit = hitText(PanelColorTarget.LEFT_PANEL_TEXT, mouseX, mouseY,
+                    "?", spawnDistanceTipX(), getInfoLayout().sdY());
+            if (tipHit != null) {
+                return tipHit;
+            }
+        }
         int padding = 6;
         int headSize = 24;
-        int headY = leftPanelY + 8;
+        int headY = getOwnerHeadY();
         String ownerName = data != null && data.ownerName() != null ? data.ownerName() : null;
         int nameY = 0;
 
         if (ownerName != null && !ownerName.isEmpty()) {
             int nameWidth = font.width(ownerName);
             int nameX = leftPanelX + (leftPanelWidth - nameWidth) / 2;
-            nameY = headY + headSize + 4;
+            nameY = getOwnerNameY(headY, headSize);
             PanelColorTargetHit nameHit = hitIfContains(
                 PanelColorTarget.LEFT_PANEL_NAME,
                 mouseX,
@@ -1733,7 +2017,7 @@ public class ChunkMapScreen extends Screen {
             return null;
         }
 
-        int infoY = nameY > 0 ? nameY + font.lineHeight + 8 : headY + headSize + 8;
+        int infoY = getInfoStartY(nameY, headY, headSize);
         infoY += 2;
 
         PanelColorTargetHit hit = hitText(PanelColorTarget.LEFT_PANEL_TEXT, mouseX, mouseY, "Status:", leftPanelX + padding, infoY);
@@ -1782,7 +2066,7 @@ public class ChunkMapScreen extends Screen {
         }
         chunkBlockY += 12;
 
-        BlockPos blockPos = new BlockPos(data.centerChunkX() << 4, data.blockY(), data.centerChunkZ() << 4);
+        BlockPos blockPos = new BlockPos(data.fakeplayerBlockX(), data.blockY(), data.fakeplayerBlockZ());
         hit = hitText(PanelColorTarget.LEFT_PANEL_TEXT, mouseX, mouseY, blockLabel, leftPanelX + padding, chunkBlockY);
         if (hit != null) {
             return hit;
@@ -1804,8 +2088,7 @@ public class ChunkMapScreen extends Screen {
 
         int sdDividerY = chunkBlockY + 15;
         int sdY = sdDividerY + 8;
-        String radiusLabel = data.allowMobSpawning() ? "SD:" : "Radius:";
-        hit = hitText(PanelColorTarget.LEFT_PANEL_TEXT, mouseX, mouseY, radiusLabel, leftPanelX + padding, sdY);
+        hit = hitText(PanelColorTarget.LEFT_PANEL_TEXT, mouseX, mouseY, radiusLabel(), leftPanelX + padding, sdY);
         if (hit != null) {
             return hit;
         }
@@ -1822,10 +2105,10 @@ public class ChunkMapScreen extends Screen {
     private PanelColorTargetHit getDividerColorHit(int mouseX, int mouseY) {
         int padding = 6;
         int headSize = 24;
-        int headY = leftPanelY + 8;
+        int headY = getOwnerHeadY();
         String ownerName = data != null && data.ownerName() != null ? data.ownerName() : null;
-        int nameY = ownerName != null && !ownerName.isEmpty() ? headY + headSize + 4 : 0;
-        int initialInfoY = nameY > 0 ? nameY + font.lineHeight + 8 : headY + headSize + 8;
+        int nameY = ownerName != null && !ownerName.isEmpty() ? getOwnerNameY(headY, headSize) : 0;
+        int initialInfoY = getInfoStartY(nameY, headY, headSize);
 
         if (data == null) {
             return null;
@@ -1863,9 +2146,8 @@ public class ChunkMapScreen extends Screen {
                 }
             }
         } else if (verticalButtonBar && numberOfTopButtons >= 2) {
-            int availableSpace = topBoxHeight - (numberOfTopButtons * TOPBOX_BUTTON_HEIGHT);
-            int innerSpacing = Math.max(2, availableSpace > 0 ? availableSpace / (numberOfTopButtons + 1) : 2);
-            int startY = topBoxY + innerSpacing;
+            int innerSpacing = getVerticalButtonSpacing(numberOfTopButtons);
+            int startY = getVerticalButtonsStartY(numberOfTopButtons, innerSpacing);
             int lineLeft = topBoxX + 4;
             int lineRight = topBoxX + topBoxWidth - 4;
             for (int index = 1; index < numberOfTopButtons; index++) {
@@ -1953,7 +2235,7 @@ public class ChunkMapScreen extends Screen {
         return new PanelColorTargetHit(target, left, top, right, bottom);
     }
 
-    private static boolean contains(int mouseX, int mouseY, int left, int top, int right, int bottom) {
+    private static boolean contains(double mouseX, double mouseY, int left, int top, int right, int bottom) {
         return mouseX >= left && mouseX < right && mouseY >= top && mouseY < bottom;
     }
 
@@ -1984,11 +2266,8 @@ public class ChunkMapScreen extends Screen {
                 context.fill(lineX, lineY, lineX + 1, lineY + lineHeight, dividerColor);
             }
         } else if (verticalButtonBar && numButtons >= 2) {
-            int availableSpace = topBoxHeight - (numButtons * TOPBOX_BUTTON_HEIGHT);
-            int innerSpacing = availableSpace > 0 ? (availableSpace / (numButtons + 1)) : 2;
-            innerSpacing = Math.max(2, innerSpacing);
-
-            int startY = topBoxY + innerSpacing;
+            int innerSpacing = getVerticalButtonSpacing(numButtons);
+            int startY = getVerticalButtonsStartY(numButtons, innerSpacing);
             int lineX1 = topBoxX + 4;
             int lineX2 = topBoxX + topBoxWidth - 4;
             for (int i = 1; i < numButtons; i++) {
@@ -2006,10 +2285,9 @@ public class ChunkMapScreen extends Screen {
         context.fill(leftPanelX - 2, leftPanelY + leftPanelHeight + 1, leftPanelX + leftPanelWidth + 2, leftPanelY + leftPanelHeight + 2, borderColor);
         context.fill(leftPanelX - 2, leftPanelY - 2, leftPanelX - 1, leftPanelY + leftPanelHeight + 2, borderColor);
         context.fill(leftPanelX + leftPanelWidth + 1, leftPanelY - 2, leftPanelX + leftPanelWidth + 2, leftPanelY + leftPanelHeight + 2, borderColor);
-
         int padding = 6;
         int headSize = 24;
-        int headY = leftPanelY + 8;
+        int headY = getOwnerHeadY();
         int nameY = 0;
 
         String ownerName = data != null && data.ownerName() != null ? data.ownerName() : null;
@@ -2017,13 +2295,13 @@ public class ChunkMapScreen extends Screen {
         int leftPanelNameColor = clientConfig != null ? clientConfig.getLeftPanelNameColor() : 0xFFFFFFFF;
 
         if (ownerName != null && !ownerName.isEmpty()) {
-            int headX = leftPanelX + (leftPanelWidth - headSize) / 2;
+            int headX = getOwnerHeadX();
             drawPlayerHead(context, headX, headY, headSize, ownerName);
 
             Component nameText = Component.literal(ownerName);
                 int nameWidth = this.font.width(nameText);
                 int nameX = leftPanelX + (leftPanelWidth - nameWidth) / 2;
-                nameY = headY + headSize + 4;
+                nameY = getOwnerNameY(headY, headSize);
                 context.text(this.font, nameText, nameX, nameY, leftPanelNameColor, false);
             } else {
             nameY = 0;
@@ -2033,7 +2311,7 @@ public class ChunkMapScreen extends Screen {
             return;
         }
 
-        int infoY = nameY > 0 ? nameY + this.font.lineHeight + 8 : headY + headSize + 8;
+        int infoY = getInfoStartY(nameY, headY, headSize);
 
         int dividerColor = toGuiFillColor(clientConfig != null ? clientConfig.getDividerColor() : 0x33FFFFFF);
         context.fill(leftPanelX + padding, infoY - 4, leftPanelX + leftPanelWidth - padding, infoY - 3, dividerColor);
@@ -2047,7 +2325,8 @@ public class ChunkMapScreen extends Screen {
         context.text(this.font, Component.literal("Status:"), leftPanelX + padding, infoY, leftPanelTextColor, false);
         String statusText = data.enabled() ? "active" : "inactive";
         int defaultStatusColor = data.enabled() ? (data.allowMobSpawning() ? 0x55FF55 : 0x5555FF) : 0xFF5555;
-        int finalStatusColor = (leftPanelStatusColor != 0 && leftPanelStatusColor != 0xFF55FF55) ? leftPanelStatusColor : (defaultStatusColor | 0xFF000000);
+        int finalStatusColor = clientConfig != null && !clientConfig.isPanelColorAutomatic(PanelColorTarget.LEFT_PANEL_STATUS)
+                ? leftPanelStatusColor : (defaultStatusColor | 0xFF000000);
         int statusTextWidth = this.font.width(statusText);
         context.text(this.font, Component.literal(statusText),
             leftPanelX + leftPanelWidth - padding - statusTextWidth, infoY, finalStatusColor, false);
@@ -2071,7 +2350,8 @@ public class ChunkMapScreen extends Screen {
             dimText = "?";
             defaultDimColor = 0xAAAAAA;
         }
-        int finalDimColor = (leftPanelDimColor != 0 && leftPanelDimColor != 0xFF55FF55) ? leftPanelDimColor : (defaultDimColor | 0xFF000000);
+        int finalDimColor = clientConfig != null && !clientConfig.isPanelColorAutomatic(PanelColorTarget.LEFT_PANEL_DIM)
+                ? leftPanelDimColor : (defaultDimColor | 0xFF000000);
         int dimTextWidth = this.font.width(dimText);
         context.text(this.font, Component.literal(dimText),
             leftPanelX + leftPanelWidth - padding - dimTextWidth, infoY, finalDimColor, false);
@@ -2098,7 +2378,7 @@ public class ChunkMapScreen extends Screen {
         context.text(this.font, Component.literal(chunkZStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
         chunkBlockY += 12;
 
-        BlockPos blockPos = new BlockPos(data.centerChunkX() << 4, data.blockY(), data.centerChunkZ() << 4);
+        BlockPos blockPos = new BlockPos(data.fakeplayerBlockX(), data.blockY(), data.fakeplayerBlockZ());
 
         context.text(this.font, blockLabel, leftPanelX + padding, chunkBlockY, leftPanelTextColor, false);
 
@@ -2111,25 +2391,18 @@ public class ChunkMapScreen extends Screen {
         context.text(this.font, Component.literal(yStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
         chunkBlockY += 12;
         context.text(this.font, Component.literal(zStr), coordStartX, chunkBlockY, leftPanelValueColor, false);
-        int originalInfoY = chunkBlockY + 12 + 3;
-        infoY = originalInfoY;
+        int sdDividerY = chunkBlockY + 15;
+        context.fill(leftPanelX + padding, sdDividerY,
+                leftPanelX + leftPanelWidth - padding, sdDividerY + 1, dividerColor);
 
-            context.fill(leftPanelX + padding, infoY, leftPanelX + leftPanelWidth - padding, infoY + 1, dividerColor);
-            int sdDividerY = infoY;
-            infoY += 12;
-
-            String radiusValue = String.valueOf(data.chunkRadius());
-            String radiusSeparator = "/3";
-        String radiusLabel = data.allowMobSpawning() ? "SD:" : "Radius:";
         int sdY = sdDividerY + 8;
-        context.text(this.font, Component.literal(radiusLabel),
+        context.text(this.font, Component.literal(radiusLabel()),
                 leftPanelX + padding, sdY, leftPanelTextColor, false);
-            context.text(this.font, Component.literal(radiusValue),
+        context.text(this.font, Component.literal(data.chunkRadius() + "/3"),
                 coordStartX, sdY, leftPanelValueColor, false);
-            int radiusValueWidth = this.font.width(radiusValue);
-            context.text(this.font, Component.literal(radiusSeparator),
-                coordStartX + radiusValueWidth, sdY, leftPanelValueColor, false);
-            infoY = sdY + 12;
+        if (hasSpawnDistanceTip()) {
+            context.text(font, Component.literal("?"), spawnDistanceTipX(), sdY, leftPanelTextColor, false);
+        }
     }
 
     private void drawSidePanel(GuiGraphicsExtractor context) {
@@ -2163,15 +2436,6 @@ public class ChunkMapScreen extends Screen {
         context.text(renderer, status, panelX + padding + 50, y, statusColor, false);
         y += 12;
 
-        context.text(renderer, Component.literal("Mode:").withStyle(net.minecraft.ChatFormatting.GRAY),
-            panelX + padding, y, 0xFFFFFF, false);
-        Component mode = data.allowMobSpawning()
-            ? Component.literal("Fakeplayer (mob spawning)")
-            : Component.literal("Chunkplayer");
-        int modeColor = data.allowMobSpawning() ? 0x55FF55 : 0x79C0FF;
-        context.text(renderer, mode, panelX + padding + 50, y, modeColor, false);
-        y += 12;
-
         drawSeparator(context, panelX + padding, y, panelWidth - padding * 2);
         y += 8;
 
@@ -2180,15 +2444,14 @@ public class ChunkMapScreen extends Screen {
         context.text(renderer, Component.literal(data.dimensionKey()), panelX + padding + 50, y, 0xFFFFFF, false);
         y += 12;
 
-        BlockPos blockPos = new BlockPos(data.centerChunkX() << 4, data.blockY(), data.centerChunkZ() << 4);
+        BlockPos blockPos = new BlockPos(data.fakeplayerBlockX(), data.blockY(), data.fakeplayerBlockZ());
         context.text(renderer, Component.literal("Position:").withStyle(net.minecraft.ChatFormatting.GRAY),
             panelX + padding, y, 0xFFFFFF, false);
         context.text(renderer, Component.literal(blockPos.getX() + " / " + data.blockY() + " / " + blockPos.getZ()),
             panelX + padding + 50, y, 0xFFFFFF, false);
         y += 12;
 
-        String radiusLabelSide = data.allowMobSpawning() ? "SD:" : "Radius:";
-        context.text(renderer, Component.literal(radiusLabelSide).withStyle(net.minecraft.ChatFormatting.GRAY),
+        context.text(renderer, Component.literal(radiusLabel()).withStyle(net.minecraft.ChatFormatting.GRAY),
             panelX + padding, y, 0xFFFFFF, false);
         MutableComponent radiusText = Component.literal(data.chunkRadius() + " / 3");
         context.text(renderer, radiusText, panelX + padding + 50, y, 0xFFFFFF, false);
@@ -2322,7 +2585,7 @@ public class ChunkMapScreen extends Screen {
         context.text(renderer, text, x + 10, y, 0xFFFFFF, false);
     }
 
-    private void drawChunkloaderPoints(GuiGraphicsExtractor context, int mouseX, int mouseY) {
+    private List<Component> drawChunkloaderPoints(GuiGraphicsExtractor context, int mouseX, int mouseY) {
         int cellSize = CELL_SIZE;
         int gridInnerLeft = gridLeft + 1;
         int gridInnerTop = gridTop + 1;
@@ -2333,6 +2596,7 @@ public class ChunkMapScreen extends Screen {
         int ownColumn = ownOffsetX + halfMap;
         int ownRow = ownOffsetZ + halfMap;
         int n = data.mapWidth() - 1;
+        List<Component> tooltip = List.of();
 
         if (ownColumn >= 0 && ownColumn < data.mapWidth() && ownRow >= 0 && ownRow < data.mapHeight()) {
             int ownInnerChunkX = ((data.fakeplayerBlockX() % 16) + 16) % 16;
@@ -2384,19 +2648,29 @@ public class ChunkMapScreen extends Screen {
                 String ownTooltipText = data.fakeplayerName() != null ? data.fakeplayerName() :
                     String.format("%s at (%d, %d)", data.allowMobSpawning() ? "Fakeplayer" : "Chunkplayer",
                         data.fakeplayerChunkX(), data.fakeplayerChunkZ());
-                context.setTooltipForNextFrame(Component.literal(ownTooltipText), mouseX, mouseY);
+                tooltip = List.of(Component.literal(ownTooltipText));
             }
         }
 
-        if (data.otherChunkloaders() == null || data.otherChunkloaders().isEmpty()) {
-            return;
-        }
-
         if (clientConfig.isHideOtherDots()) {
-            return;
+            return tooltip;
         }
 
-        for (de.chunkloader.network.ChunkloaderPosition pos : data.otherChunkloaders()) {
+        List<Component> activeTooltip = drawOtherChunkloaderPoints(context, mouseX, mouseY);
+        if (!tooltip.isEmpty()) {
+            return tooltip;
+        }
+        return activeTooltip;
+    }
+
+    private List<Component> drawOtherChunkloaderPoints(GuiGraphicsExtractor context, int mouseX, int mouseY) {
+        int cellSize = CELL_SIZE;
+        int gridInnerLeft = gridLeft + 1;
+        int gridInnerTop = gridTop + 1;
+        int n = data.mapWidth() - 1;
+        int halfMap = n / 2;
+        List<Component> tooltip = List.of();
+        for (ChunkloaderPosition pos : data.otherChunkloaders()) {
             int offsetX = pos.chunkX() - data.centerChunkX();
             int offsetZ = pos.chunkZ() - data.centerChunkZ();
 
@@ -2436,14 +2710,8 @@ public class ChunkMapScreen extends Screen {
             int pointX = cellLeft + (int) subX;
             int pointY = cellTop + (int) subZ;
 
-            int pointColor;
-            if (pos.isFakeplayer()) {
-                pointColor = 0xFF55FF55;
-            } else {
-                pointColor = 0xFF5996FF;
-            }
-            int pointSize = 3;
-            int pointHalfSize = pointSize / 2;
+            int pointColor = pos.isFakeplayer() ? 0xFF55FF55 : 0xFF5996FF;
+            int pointHalfSize = 1;
 
             context.fill(
                 pointX - pointHalfSize - 1, pointY - pointHalfSize - 1,
@@ -2455,14 +2723,14 @@ public class ChunkMapScreen extends Screen {
                 pointX + pointHalfSize, pointY + pointHalfSize,
                 pointColor
             );
-
             if (mouseX >= pointX - pointHalfSize - 2 && mouseX < pointX + pointHalfSize + 2 &&
                 mouseY >= pointY - pointHalfSize - 2 && mouseY < pointY + pointHalfSize + 2) {
                 String tooltipText = pos.name() != null ? pos.name() :
                     String.format("%s at (%d, %d)", pos.isFakeplayer() ? "Fakeplayer" : "Chunkplayer", pos.chunkX(), pos.chunkZ());
-                context.setTooltipForNextFrame(Component.literal(tooltipText), mouseX, mouseY);
+                tooltip = List.of(Component.literal(tooltipText));
             }
         }
+        return tooltip;
     }
 
     private static class ChunkMapGrid implements AutoCloseable {
@@ -2571,7 +2839,7 @@ public class ChunkMapScreen extends Screen {
             return true;
         }
 
-        void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY) {
+        void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, List<DisabledArea> disabledAreas) {
             context.fill(left, top, left + width, top + height, COLOR_BACKGROUND);
 
             context.fill(left, top, left + width, top + BORDER, COLOR_BORDER);
@@ -2587,6 +2855,13 @@ public class ChunkMapScreen extends Screen {
             for (Cell cell : cells) {
                 if (cell.left + cell.size >= scissorLeft && cell.left <= scissorRight &&
                     cell.top + cell.size >= scissorTop && cell.top <= scissorBottom) {
+                    cell.disabledArea = null;
+                    for (DisabledArea area : disabledAreas) {
+                        if (area.contains(cell.chunkPos.x(), cell.chunkPos.z())) {
+                            cell.disabledArea = area;
+                            break;
+                        }
+                    }
                     cell.extractRenderState(context, mouseX, mouseY);
                 }
             }
@@ -2621,6 +2896,8 @@ public class ChunkMapScreen extends Screen {
             private static final int COLOR_SIMULATION_DISTANCE = 0x6655CC55;
             private static final int COLOR_RANGE_OVERLAY = 0x1A3D7FFF;
             private static final int COLOR_RANGE_OVERLAY_DISABLED = 0x26FF5555;
+            private static final int COLOR_DISABLED_AREA = 0x66FF5555;
+            private DisabledArea disabledArea;
             private final ChunkPos chunkPos;
             private ChunkMapCell state;
             private final int left;
@@ -2746,6 +3023,11 @@ public class ChunkMapScreen extends Screen {
                     }
                 }
 
+                if (disabledArea != null && !state.loaded() && !state.occupiedByOther()
+                        && !state.simulatedByFakeplayer()) {
+                    context.fill(innerLeft, innerTop, innerRight, innerBottom, COLOR_DISABLED_AREA);
+                }
+
                 if (isHovered(mouseX, mouseY)) {
                     int hoverWidth = innerRight - innerLeft;
                     int hoverHeight = innerBottom - innerTop;
@@ -2787,10 +3069,13 @@ public class ChunkMapScreen extends Screen {
                     if (loaderName != null && !loaderName.isBlank()) {
                         tooltip.add(Component.literal("Loaded by " + loaderName));
                     } else {
-                        tooltip.add(Component.literal("Loaded by another loader"));
+                        tooltip.add(Component.literal("Loaded by another player"));
                     }
                 } else if (state.loaded()) {
                     tooltip.add(Component.literal("Loaded by this player"));
+                } else if (disabledArea != null) {
+                    tooltip.add(Component.literal(disabledArea.name()));
+                    tooltip.add(Component.literal("Disabled").withStyle(ChatFormatting.GRAY));
                 } else if (state.withinRange()) {
                     if (!data.allowMobSpawning()) {
                         tooltip.add(Component.literal("Inside radius (enable to load)"));
@@ -2813,7 +3098,21 @@ public class ChunkMapScreen extends Screen {
         }
     }
 
+    private int getVerticalButtonSpacing(int count) {
+        return Math.max(2, (topBoxHeight - count * TOPBOX_BUTTON_HEIGHT) / (count + 1));
+    }
+
+    private int getVerticalButtonsStartY(int count, int spacing) {
+        int usedHeight = count * TOPBOX_BUTTON_HEIGHT + (count - 1) * spacing;
+        return topBoxY + (topBoxHeight - usedHeight) / 2;
+    }
+
     private void buildTopBoxButtons() {
+        boolean reopenLayoutPicker = layoutPickerBounds != null;
+        if (reopenLayoutPicker) {
+            closeLayoutPicker();
+        }
+        topBoxButtons.forEach(readOnlyButtons::remove);
         topBoxButtons.forEach(this::removeWidget);
         topBoxButtons.clear();
 
@@ -2832,11 +3131,9 @@ public class ChunkMapScreen extends Screen {
         int startY;
 
         if (vertical) {
-            int availableSpace = topBoxHeight - (numButtons * buttonHeight);
-            spacing = availableSpace > 0 ? (availableSpace / (numButtons + 1)) : 2;
-            spacing = Math.max(2, spacing);
+            spacing = getVerticalButtonSpacing(numButtons);
             startX = topBoxX + (topBoxWidth - buttonWidth) / 2;
-            startY = topBoxY + spacing;
+            startY = getVerticalButtonsStartY(numButtons, spacing);
         } else {
             int totalButtonsWidth = numButtons * buttonWidth;
             int availableSpace = topBoxWidth - totalButtonsWidth;
@@ -2887,7 +3184,7 @@ public class ChunkMapScreen extends Screen {
         Button listButton = Button.builder(
             Component.literal("List"),
             btn -> {
-                ChunkloaderNetworking.requestDisabledChunkloadersList();
+                ChunkloaderNetworking.requestActiveChunkloadersList();
             })
             .bounds(listX, listY, buttonWidth, buttonHeight)
             .build();
@@ -2895,14 +3192,11 @@ public class ChunkMapScreen extends Screen {
         topBoxButtons.add(listButton);
         this.addRenderableWidget(listButton);
 
-        Button uiButton = Button.builder(
-            Component.literal(uiLabel),
-            btn -> cycleLayoutPreset())
-            .bounds(uiX, uiY, buttonWidth, buttonHeight)
-            .build();
-        uiButton.setMessage(Component.literal(uiLabel).withStyle(net.minecraft.ChatFormatting.WHITE));
-        topBoxButtons.add(uiButton);
-        this.addRenderableWidget(uiButton);
+        layoutButton = Button.builder(Component.literal(uiLabel), btn -> openLayoutPicker(layoutPreset))
+                .bounds(uiX, uiY, buttonWidth, buttonHeight)
+                .build();
+        topBoxButtons.add(layoutButton);
+        this.addRenderableWidget(layoutButton);
 
         Button deleteButton = Button.builder(
             Component.literal("Delete"),
@@ -2930,17 +3224,27 @@ public class ChunkMapScreen extends Screen {
             .bounds(deleteX, deleteY, buttonWidth, buttonHeight)
             .build();
         deleteButton.setMessage(Component.literal("Delete").withStyle(net.minecraft.ChatFormatting.RED));
+        configureModificationButton(deleteButton);
         topBoxButtons.add(deleteButton);
         this.addRenderableWidget(deleteButton);
+        if (reopenLayoutPicker) {
+            openLayoutPicker(layoutPreset);
+        }
     }
 
     private void buildActionButtons() {
+        actionButtons.forEach(readOnlyButtons::remove);
         actionButtons.forEach(this::removeWidget);
+        if (resetButton != null) {
+            readOnlyButtons.remove(resetButton);
+            removeWidget(resetButton);
+        }
         actionButtons.clear();
         actionButtonYOffset.clear();
         buttonOriginalActiveState.clear();
         actionHeaderLayouts.clear();
         easterEggLockedSkinButton = null;
+        increaseRadiusButton = null;
         actionContentHeight = 0;
         if (panelWidth <= 0) {
             return;
@@ -2981,6 +3285,7 @@ public class ChunkMapScreen extends Screen {
         } else {
             enableButton.setMessage((data.allowMobSpawning() ? Component.literal("Enable Fakeplayer") : Component.literal("Enable Chunkplayer")).withStyle(net.minecraft.ChatFormatting.GREEN));
         }
+        configurePermissionButton(enableButton, canModify || shared);
         actionButtons.add(enableButton);
         actionButtonYOffset.put(enableButton, cursorY);
         this.addRenderableWidget(enableButton);
@@ -2988,12 +3293,16 @@ public class ChunkMapScreen extends Screen {
         cursorY += ACTION_BUTTON_HEIGHT + gap;
         }
 
-        boolean modeHeaderMatches = actionSearchMatches("Mode");
+        String modeTitle = "Mode";
+        boolean modeHeaderMatches = actionSearchMatches(modeTitle);
         String mobLabelRaw = data.allowMobSpawning() ? "Disable mob spawning" : "Enable mob spawning";
         boolean mobButtonMatches = actionSearchMatches(mobLabelRaw);
         String mobTargetLabelRaw = data.mobTarget() ? "Disable mob target" : "Enable mob target";
         boolean mobTargetMatches = data.allowMobSpawning() && actionSearchMatches(mobTargetLabelRaw);
-
+        String pauseMobsLabel = "Pause mobs";
+        String resumeMobsLabel = "Resume mobs";
+        boolean mobAiMatches = !data.allowMobSpawning()
+                && (actionSearchMatches(pauseMobsLabel) || actionSearchMatches(resumeMobsLabel) || actionSearchMatches("Mob AI"));
         int radiusY = 0;
         int halfWidth = (buttonWidth - 4) / 2;
         boolean isFakePlayer = data.allowMobSpawning();
@@ -3008,9 +3317,10 @@ public class ChunkMapScreen extends Screen {
         boolean radiusUpMatches = actionSearchMatches(radiusUpLabel);
         boolean showRadiusSection = radiusHeaderMatches || radiusDownMatches || radiusUpMatches;
 
-        boolean showModeHeader = modeHeaderMatches || mobButtonMatches || mobTargetMatches || showRadiusSection;
+        boolean showModeHeader = modeHeaderMatches || mobButtonMatches || mobTargetMatches || mobAiMatches
+                || showRadiusSection;
         if (showModeHeader) {
-            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Component.literal("Mode")));
+            actionHeaderLayouts.add(new ActionHeaderLayout(cursorY, headerHeight, Component.literal(modeTitle)));
             cursorY += headerHeight + gap;
         }
 
@@ -3031,6 +3341,7 @@ public class ChunkMapScreen extends Screen {
         } else {
             mobButton.setMessage(Component.literal("Enable mob spawning").withStyle(net.minecraft.ChatFormatting.GREEN));
         }
+        configurePermissionButton(mobButton, canModify || shared);
         actionButtons.add(mobButton);
         actionButtonYOffset.put(mobButton, cursorY);
         this.addRenderableWidget(mobButton);
@@ -3055,9 +3366,30 @@ public class ChunkMapScreen extends Screen {
             } else {
                 mobTargetButton.setMessage(Component.literal("Enable mob target").withStyle(net.minecraft.ChatFormatting.GREEN));
             }
+            configurePermissionButton(mobTargetButton, canModify || shared);
             actionButtons.add(mobTargetButton);
             actionButtonYOffset.put(mobTargetButton, cursorY);
             this.addRenderableWidget(mobTargetButton);
+            cursorY += ACTION_BUTTON_HEIGHT + gap;
+        }
+
+        if (mobAiMatches || (!data.allowMobSpawning() && modeHeaderMatches)) {
+            Button mobAiButton = Button.builder(
+                Component.literal(data.mobAi() ? pauseMobsLabel : resumeMobsLabel)
+                    .withStyle(data.mobAi() ? ChatFormatting.BLUE : ChatFormatting.GREEN),
+                btn -> ChunkloaderNetworking.sendAction(
+                    ChunkloaderActionPayload.Action.TOGGLE_MOB_AI,
+                    data.fakeplayerChunkX(),
+                    data.fakeplayerChunkZ(),
+                    data.dimensionKey(),
+                    0
+                ))
+                .bounds(buttonX, 0, buttonWidth, 20)
+                .build();
+            configurePermissionButton(mobAiButton, canModify || shared);
+            actionButtons.add(mobAiButton);
+            actionButtonYOffset.put(mobAiButton, cursorY);
+            this.addRenderableWidget(mobAiButton);
             cursorY += ACTION_BUTTON_HEIGHT + gap;
         }
 
@@ -3082,6 +3414,7 @@ public class ChunkMapScreen extends Screen {
             radiusDown.active = false;
             radiusDown.setMessage(Component.literal(radiusDownLabel).withStyle(net.minecraft.ChatFormatting.DARK_GRAY));
         }
+        configurePermissionButton(radiusDown, canModify || shared);
         actionButtons.add(radiusDown);
         actionButtonYOffset.put(radiusDown, cursorY);
         this.addRenderableWidget(radiusDown);
@@ -3105,6 +3438,8 @@ public class ChunkMapScreen extends Screen {
             radiusUp.active = false;
             radiusUp.setMessage(Component.literal(radiusUpLabel).withStyle(net.minecraft.ChatFormatting.DARK_GRAY));
         }
+        configurePermissionButton(radiusUp, canModify || shared);
+        increaseRadiusButton = radiusUp;
         actionButtons.add(radiusUp);
         actionButtonYOffset.put(radiusUp, cursorY);
         this.addRenderableWidget(radiusUp);
@@ -3144,6 +3479,7 @@ public class ChunkMapScreen extends Screen {
         } else {
             nameVisibleButton.setMessage(Component.literal("Show name").withStyle(net.minecraft.ChatFormatting.WHITE));
         }
+        configurePermissionButton(nameVisibleButton, canModify || shared);
         actionButtons.add(nameVisibleButton);
         actionButtonYOffset.put(nameVisibleButton, cursorY);
         this.addRenderableWidget(nameVisibleButton);
@@ -3259,6 +3595,7 @@ public class ChunkMapScreen extends Screen {
             .bounds(buttonX, renameY, buttonWidth, 20)
             .build();
         renameButton.setMessage(Component.literal("Rename").withStyle(net.minecraft.ChatFormatting.WHITE));
+        configurePermissionButton(renameButton, canModify || shared);
         actionButtons.add(renameButton);
         actionButtonYOffset.put(renameButton, cursorY);
         this.addRenderableWidget(renameButton);
@@ -3300,6 +3637,7 @@ public class ChunkMapScreen extends Screen {
         } else {
             skinButton.setMessage(Component.literal("Skin").withStyle(net.minecraft.ChatFormatting.WHITE));
         }
+        configurePermissionButton(skinButton, canModify || shared);
         actionButtons.add(skinButton);
         actionButtonYOffset.put(skinButton, cursorY);
         this.addRenderableWidget(skinButton);
@@ -3329,7 +3667,7 @@ public class ChunkMapScreen extends Screen {
                 openChildScreen(new ChunkloaderConfirmationScreen(
                     this,
                     Component.literal("Reset to Defaults?").withStyle(net.minecraft.ChatFormatting.RED, net.minecraft.ChatFormatting.BOLD),
-                    Component.literal("This will reset all settings to default values.\nThis action cannot be undone!"),
+                    Component.literal("This resets the player and your UI settings."),
                     () -> {
                         ChunkloaderNetworking.sendAction(
                 ChunkloaderActionPayload.Action.RESET_TO_DEFAULTS,
@@ -3338,9 +3676,7 @@ public class ChunkMapScreen extends Screen {
                 data.dimensionKey(),
                 0
             );
-                        if (clientConfig != null) {
-                            clientConfig.resetToDefaults();
-                        }
+                        resetMapOptions();
                     },
                     null
                 ));
@@ -3348,6 +3684,7 @@ public class ChunkMapScreen extends Screen {
             .bounds(buttonX, resetY, buttonWidth, 20)
             .build();
         resetButton.setMessage(Component.literal("Reset to defaults").withStyle(net.minecraft.ChatFormatting.WHITE));
+        configureModificationButton(resetButton);
         this.addRenderableWidget(resetButton);
 
         actionContentHeight = Math.max(0, cursorY - gap);

@@ -79,6 +79,9 @@ public class ChunkloaderMod implements ModInitializer {
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             if (handler.player != null) {
                 ChunkloaderNetworking.clearPlayerCache(handler.player);
+                if (chunkloaderManager != null) {
+                    chunkloaderManager.clearViewerVisualizations(handler.player.getUUID());
+                }
             }
         });
 

@@ -15,7 +15,8 @@ public final class FakePlayerEasterEggEmoteCache {
         if (playerUuid == null) {
             return;
         }
-        startByUuid.put(playerUuid, new EmoteStart(startGameTime, null));
+        startByUuid.compute(playerUuid, (uuid, start) ->
+                start != null && start.startWorldTime == startGameTime ? start : new EmoteStart(startGameTime, null));
     }
 
     public static void startEmoteNow(UUID playerUuid, long currentWorldTime) {
@@ -25,18 +26,6 @@ public final class FakePlayerEasterEggEmoteCache {
         startByUuid.putIfAbsent(playerUuid, new EmoteStart(currentWorldTime, 0.0f));
     }
 
-    public static Float getEmoteTick(UUID playerUuid, long currentWorldTime, float tickDelta) {
-        if (playerUuid == null) {
-            return null;
-        }
-        EmoteStart start = startByUuid.get(playerUuid);
-        if (start == null) {
-            return null;
-        }
-        return (float) (currentWorldTime - start.startWorldTime) + tickDelta;
-    }
-
-    @Deprecated
     public static Float getOrInitStartAge(UUID playerUuid, float currentAge, long currentWorldTime) {
         if (playerUuid == null) {
             return null;
@@ -48,7 +37,11 @@ public final class FakePlayerEasterEggEmoteCache {
         if (start.startAge != null) {
             return start.startAge;
         }
-        float computed = currentAge - (float) (currentWorldTime - start.startWorldTime);
+        long elapsed = currentWorldTime - start.startWorldTime;
+        if (elapsed < 0) {
+            return null;
+        }
+        float computed = currentAge - (float) elapsed;
         start.startAge = computed;
         return computed;
     }

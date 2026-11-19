@@ -37,10 +37,12 @@ public record ChunkMapData(
     List<ChunkloaderPosition> otherChunkloaders,
     String ownerName,
     boolean easterEgg,
-    boolean mobTarget
+    boolean mobTarget,
+    boolean mobAi,
+    int minimumSpawnDistance
 ) {
 
-    public void write(FriendlyByteBuf buf) {
+    public void write(FriendlyByteBuf buf, boolean includeSpawnDistance) {
         buf.writeUtf(displayName);
         buf.writeBoolean(enabled);
         buf.writeBoolean(allowMobSpawning);
@@ -78,9 +80,13 @@ public record ChunkMapData(
         buf.writeUtf(ownerName != null ? ownerName : "");
         buf.writeBoolean(easterEgg);
         buf.writeBoolean(mobTarget);
+        buf.writeBoolean(mobAi);
+        if (includeSpawnDistance) {
+            buf.writeVarInt(minimumSpawnDistance);
+        }
     }
 
-    public static ChunkMapData read(FriendlyByteBuf buf) {
+    public static ChunkMapData read(FriendlyByteBuf buf, boolean includeSpawnDistance) {
         String name = buf.readUtf(32767);
         boolean enabled = buf.readBoolean();
         boolean allowMobSpawning = buf.readBoolean();
@@ -120,6 +126,8 @@ public record ChunkMapData(
         String ownerName = buf.readUtf(32767);
         boolean easterEgg = buf.readBoolean();
         boolean mobTarget = buf.readBoolean();
+        boolean mobAi = buf.readBoolean();
+        int minimumSpawnDistance = includeSpawnDistance ? buf.readVarInt() : 0;
         return new ChunkMapData(
             name,
             enabled,
@@ -151,7 +159,9 @@ public record ChunkMapData(
             Collections.unmodifiableList(otherChunkloaders),
             ownerName.isEmpty() ? null : ownerName,
             easterEgg,
-            mobTarget
+            mobTarget,
+            mobAi,
+            minimumSpawnDistance
         );
     }
 }

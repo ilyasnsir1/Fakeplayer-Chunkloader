@@ -48,10 +48,12 @@ public class PlayerEntityMixin {
                     }
 
                     if (self.isShiftKeyDown()) {
-                        de.chunkloader.config.ChunkloaderTarget entryToDelete = manager.getEntryByMarkerUuid(target.getUUID());
-                        if (entryToDelete != null) {
-                            manager.removeChunkloader(entryToDelete.chunkX(), entryToDelete.chunkZ(), entryToDelete.dimension());
-                            serverPlayer.sendSystemMessage(Component.literal("Player deleted"));
+                        if (manager.confirmMarkerDelete(serverPlayer, target.getUUID(), false)) {
+                            de.chunkloader.config.ChunkloaderTarget entryToDelete = manager.getEntryByMarkerUuid(target.getUUID());
+                            if (entryToDelete != null) {
+                                manager.removeChunkloader(entryToDelete.chunkX(), entryToDelete.chunkZ(), entryToDelete.dimension());
+                                serverPlayer.sendSystemMessage(Component.literal("Player deleted"));
+                            }
                         }
                         cir.setReturnValue(InteractionResult.SUCCESS);
                         cir.cancel();
