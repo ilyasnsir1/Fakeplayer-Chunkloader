@@ -1,9 +1,13 @@
 package de.chunkloader.mixin;
 
+import com.llamalad7.mixinextras.injector.ModifyExpressionValue;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import de.chunkloader.ChunkloaderMod;
 import de.chunkloader.config.ChunkloaderTarget;
 import de.chunkloader.fakeplayer.ChunkloaderFakePlayer;
 import de.chunkloader.manager.ChunkloaderManager;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.server.world.ServerChunkManager;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -12,115 +16,58 @@ import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.ModifyArg;
-
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
 
 @Mixin(ServerChunkManager.class)
 public class ServerChunkCacheSpawnCountMixin {
+    @Shadow @Final private ServerWorld world;
 
-    @Shadow @Final ServerWorld world;
-
-    private static final int REAL_PLAYER_SPAWN_CHUNK_RADIUS = 8;
-
-    @ModifyArg(
-        method = "tickChunks(Lnet/minecraft/util/profiling/ProfilerFiller;JLjava/util/List;)V",
-        at = @At(
-            value = "INVOKE",
-            target = "Lnet/minecraft/world/spawner/NaturalSpawner;createState(ILjava/lang/Iterable;Lnet/minecraft/world/spawner/NaturalSpawner$ChunkGetter;Lnet/minecraft/world/level/LocalMobCapCalculator;)Lnet/minecraft/world/spawner/NaturalSpawner$SpawnState;"
-        ),
-        index = 0,
-        require = 0
-    )
-    private int chunkloader$addFakeplayerSpawnChunkCount(int originalCount) {
+    @ModifyExpressionValue(method = "tickChunks(Lnet/minecraft/util/profiler/Profiler;JLjava/util/List;)V",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/server/world/ChunkTicketManager;getTickedChunkCount()I"))
+    private int chunkloader$countFakeplayersForGlobalMobCaps(int realPlayerCount) {
         ChunkloaderManager manager = ChunkloaderMod.getChunkloaderManager();
         if (manager == null) {
-            return originalCount;
+            return realPlayerCount;
         }
 
-        String dimension = ChunkloaderManager.getDimensionString(world);
-        List<ChunkloaderTarget> entries = manager.getActiveChunkloaderEntries();
-        if (entries == null || entries.isEmpty()) {
-            return originalCount;
-        }
-
-        List<ServerPlayerEntity> players = world.getPlayers();
-        Set<Long> extra = new HashSet<>();
-
-        for (ChunkloaderTarget entry : entries) {
-            if (entry == null || !entry.enabled() || !entry.allowMobSpawning()) {
+        LongOpenHashSet extra = null;
+        int radius = 8;
+        for (ServerPlayerEntity player : world.getPlayers()) {
+            if (!(player instanceof ChunkloaderFakePlayer fakePlayer) || player.isSpectator()) {
                 continue;
             }
-            if (entry.dimension() == null || !entry.dimension().equals(dimension)) {
+            ChunkloaderTarget target = manager.getActiveFakeplayerSpawnEntry(fakePlayer);
+            if (target == null) {
                 continue;
             }
-            if (isMatchingFakeplayerPresent(players, entry.chunkX(), entry.chunkZ())) {
-                continue;
+            if (extra == null) {
+                extra = new LongOpenHashSet();
             }
-
-            int r = ChunkloaderManager.getEffectiveFakeplayerSpawnChunkRadius(entry);
-            if (r <= 0) {
-                continue;
-            }
-
-            int cx0 = entry.chunkX();
-            int cz0 = entry.chunkZ();
-            for (int dx = -r; dx <= r; dx++) {
-                for (int dz = -r; dz <= r; dz++) {
-                    int cx = cx0 + dx;
-                    int cz = cz0 + dz;
-                    if (!((ServerChunkManager)(Object)this).isChunkLoaded(cx, cz)) {
-                        continue;
-                    }
-                    if (isChunkNearRealPlayer(players, cx, cz)) {
-                        continue;
-                    }
-                    extra.add(ChunkPos.toLong(cx, cz));
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    extra.add(ChunkPos.toLong(target.chunkX() + dx, target.chunkZ() + dz));
                 }
             }
         }
-
-        if (extra.isEmpty()) {
-            return originalCount;
+        if (extra == null) {
+            return realPlayerCount;
         }
-        long sum = (long) originalCount + (long) extra.size();
-        return sum > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) sum;
+        var realChunks = ((ServerChunkManagerAccessor) this).chunkloader$getTicketManager().iterateChunkPosToTick();
+        while (realChunks.hasNext()) {
+            extra.remove(realChunks.nextLong());
+        }
+        return realPlayerCount + extra.size();
     }
 
-    private static boolean isMatchingFakeplayerPresent(List<ServerPlayerEntity> players, int chunkX, int chunkZ) {
-        if (players == null || players.isEmpty()) {
-            return false;
+    @WrapOperation(method = "tickChunks(Lnet/minecraft/util/profiler/Profiler;JLjava/util/List;)V",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/world/SpawnHelper;spawn(Lnet/minecraft/server/world/ServerWorld;Lnet/minecraft/world/chunk/WorldChunk;Lnet/minecraft/world/SpawnHelper$Info;Ljava/util/List;)V"))
+    private void chunkloader$spawnOnlyNearEligiblePlayers(ServerWorld world, net.minecraft.world.chunk.WorldChunk chunk,
+            net.minecraft.world.SpawnHelper.Info info, java.util.List<net.minecraft.entity.SpawnGroup> groups,
+            Operation<Void> original) {
+        var map = ((ServerChunkManagerAccessor) this).chunkloader$getChunkLoadingManager();
+        if (!map.getPlayersWatchingChunk(chunk.getPos()).isEmpty()) {
+            original.call(world, chunk, info, groups);
         }
-        for (ServerPlayerEntity p : players) {
-            if (!(p instanceof ChunkloaderFakePlayer)) {
-                continue;
-            }
-            ChunkPos pc = p.getChunkPos();
-            if (pc.x == chunkX && pc.z == chunkZ) {
-                return true;
-            }
-        }
-        return false;
     }
 
-    private static boolean isChunkNearRealPlayer(List<ServerPlayerEntity> players, int chunkX, int chunkZ) {
-        if (players == null || players.isEmpty()) {
-            return false;
-        }
-        for (ServerPlayerEntity p : players) {
-            if (p == null || p instanceof ChunkloaderFakePlayer) {
-                continue;
-            }
-            ChunkPos pc = p.getChunkPos();
-            int dx = Math.abs(pc.x - chunkX);
-            int dz = Math.abs(pc.z - chunkZ);
-            if (dx <= REAL_PLAYER_SPAWN_CHUNK_RADIUS && dz <= REAL_PLAYER_SPAWN_CHUNK_RADIUS) {
-                return true;
-            }
-        }
-        return false;
-    }
 }
-

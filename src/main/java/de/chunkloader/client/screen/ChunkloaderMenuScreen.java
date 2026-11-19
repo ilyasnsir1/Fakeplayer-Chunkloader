@@ -13,7 +13,7 @@ public class ChunkloaderMenuScreen extends Screen {
     private final Screen parent;
 
     public ChunkloaderMenuScreen(Screen parent) {
-        super(Text.literal("Mod Menu"));
+        super(Text.literal("Fakeplayer Chunkloader"));
         this.parent = parent;
     }
 
@@ -52,15 +52,7 @@ public class ChunkloaderMenuScreen extends Screen {
             .build()
         );
 
-        int backButtonWidgetWidth = 100;
-        int backButtonWidgetX = (this.width - backButtonWidgetWidth) / 2;
-        int backButtonWidgetY = this.height - 30;
-        this.addDrawableChild(ButtonWidget.builder(
-                Text.literal("Back"),
-                btn -> this.client.setScreen(parent))
-            .dimensions(backButtonWidgetX, backButtonWidgetY, backButtonWidgetWidth, buttonHeight)
-            .build()
-        );
+        ScreenNavigation.addBackAndCloseButtons(this, this::addDrawableChild);
     }
 
     @Override
@@ -75,6 +67,11 @@ public class ChunkloaderMenuScreen extends Screen {
 
     @Override
     public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
+    }
+
+    @Override
+    public void close() {
+        this.client.setScreen(parent);
     }
 
     @Override
