@@ -1,4 +1,3 @@
-# eclipse
 bin
 *.launch
 .settings
@@ -6,27 +5,22 @@ bin
 .classpath
 .project
 
-# idea
 out
 *.ipr
 *.iws
 *.iml
 .idea
 
-# gradle
 build
 .gradle
 
-# other
 eclipse
 runs
 
-# Java
 *.hprof
 *.class
 *.log
 
-# Temporary files
 *.tmp
 *.temp
 *.bak

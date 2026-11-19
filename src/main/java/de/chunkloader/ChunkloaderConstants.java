@@ -10,11 +10,16 @@ public final class ChunkloaderConstants {
 
     public static final int MIN_RADIUS = 0;
     public static final int MAX_RADIUS = 3;
+    public static final boolean DEFAULT_MOB_AI = true;
+
     public static final int DEFAULT_RADIUS = 2;
 
     public static final int MIN_BLOCK_Y = -64;
     public static final int MAX_BLOCK_Y = 320;
     public static final int DEFAULT_BLOCK_Y = 64;
+
+    public static final int STANDARD_SPAWN_DISTANCE = 24;
+    public static final int SHORT_SPAWN_DISTANCE = 8;
 
     public static final int MAX_CHUNKLOADERS = 20;
 

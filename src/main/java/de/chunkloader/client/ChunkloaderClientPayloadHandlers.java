@@ -1,13 +1,16 @@
 package de.chunkloader.client;
+import de.chunkloader.client.screen.ChunkMapHelpScreen;
 
 import de.chunkloader.network.payload.ChunkplayerStatusResponsePayload;
 import de.chunkloader.network.payload.CloseChunkMapPayload;
+import de.chunkloader.network.payload.OpenHelpPayload;
 import de.chunkloader.network.payload.DisabledChunkloadersListPayload;
 import de.chunkloader.network.payload.EasterEggEmotePayload;
 import de.chunkloader.network.payload.EasterEggSkinPayload;
 import de.chunkloader.network.payload.FakePlayerVisibilityPayload;
 import de.chunkloader.network.payload.InvalidateCachePayload;
 import de.chunkloader.network.payload.OpenChunkMapPayload;
+import de.chunkloader.network.payload.ChunkMapLoaderDetailsPayload;
 import de.chunkloader.network.payload.RenameChunkloaderResponsePayload;
 import de.chunkloader.network.payload.SimulationStatusResponsePayload;
 import de.chunkloader.network.payload.SyncCustomSkinPayload;
@@ -27,13 +30,38 @@ public final class ChunkloaderClientPayloadHandlers {
                     return;
                 }
                 var data = payload.data();
+                var currentScreen = client.screen;
                 de.chunkloader.client.screen.ChunkMapScreen existingScreen =
-                    de.chunkloader.client.screen.ChunkMapSessionScreens.findChunkMapScreen(client.screen);
+                    de.chunkloader.client.screen.ChunkMapSessionScreens.findChunkMapScreen(currentScreen);
                 if (existingScreen != null) {
-                    existingScreen.updateData(data);
+                    existingScreen.updateData(data, payload.canModify(), payload.shared());
                     return;
                 }
-                client.setScreen(new de.chunkloader.client.screen.ChunkMapScreen(data));
+                net.minecraft.client.gui.screens.Screen returnScreen =
+                    currentScreen instanceof de.chunkloader.client.screen.ActiveChunkloadersScreen ? currentScreen : null;
+                client.setScreen(new de.chunkloader.client.screen.ChunkMapScreen(data, returnScreen, payload.canModify(), payload.shared()));
+            });
+        });
+
+        registrar.optional().playToClient(ChunkMapLoaderDetailsPayload.TYPE, ChunkMapLoaderDetailsPayload.CODEC, (payload, ctx) -> {
+            ctx.enqueueWork(() -> {
+                Minecraft client = Minecraft.getInstance();
+                var screen = de.chunkloader.client.screen.ChunkMapSessionScreens.findChunkMapScreen(client.screen);
+                if (screen != null) {
+                    screen.updateLoaderDetails(payload);
+                }
+            });
+        });
+
+        registrar.optional().playToClient(OpenHelpPayload.TYPE, OpenHelpPayload.STREAM_CODEC, (payload, ctx) -> {
+            ctx.enqueueWork(() -> {
+                Minecraft client = Minecraft.getInstance();
+                if (client.player != null) {
+                    if (de.chunkloader.client.screen.ChunkMapSessionScreens.isInChunkMapSession(client.screen)) {
+                        de.chunkloader.client.screen.ChunkMapSessionScreens.closeToGame(client);
+                    }
+                    client.setScreen(new ChunkMapHelpScreen(null));
+                }
             });
         });
 
@@ -83,9 +111,14 @@ public final class ChunkloaderClientPayloadHandlers {
                 if (currentScreen instanceof de.chunkloader.client.screen.DisabledChunkloadersScreen existingScreen) {
                     existingScreen.updateDisabledChunkloaders(payload.disabledChunkloaders());
                 } else if (currentScreen == null
-                        || currentScreen instanceof de.chunkloader.client.screen.ChunkMapScreen) {
-                    var parent = currentScreen instanceof de.chunkloader.client.screen.ChunkMapScreen ? currentScreen
-                            : null;
+                        || currentScreen instanceof de.chunkloader.client.screen.ChunkMapScreen
+                        || currentScreen instanceof de.chunkloader.client.screen.ActiveChunkloadersScreen) {
+                    net.minecraft.client.gui.screens.Screen parent = null;
+                    if (currentScreen instanceof de.chunkloader.client.screen.ChunkMapScreen) {
+                        parent = currentScreen;
+                    } else if (currentScreen instanceof de.chunkloader.client.screen.ActiveChunkloadersScreen active) {
+                        parent = active.getParentScreen();
+                    }
                     client.setScreen(new de.chunkloader.client.screen.DisabledChunkloadersScreen(
                             payload.disabledChunkloaders(), parent));
                 }

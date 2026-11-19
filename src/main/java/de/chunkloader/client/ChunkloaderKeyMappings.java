@@ -15,6 +15,7 @@ public class ChunkloaderKeyMappings {
     public static KeyMapping simulationStatusHUDToggleKey;
     public static KeyMapping chunkplayerStatusHUDToggleKey;
     public static KeyMapping disabledChunkloadersKey;
+    public static KeyMapping activeChunkloadersKey;
 
     @SubscribeEvent
     public static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
@@ -41,6 +42,14 @@ public class ChunkloaderKeyMappings {
             "key.categories.misc"
         );
         event.register(disabledChunkloadersKey);
+
+        activeChunkloadersKey = new KeyMapping(
+            "key.chunkloader.active_chunkloaders",
+            InputConstants.Type.KEYSYM,
+            GLFW.GLFW_KEY_F9,
+            "key.categories.misc"
+        );
+        event.register(activeChunkloadersKey);
     }
 }
 
