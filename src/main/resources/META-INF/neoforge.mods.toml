@@ -1,11 +1,13 @@
-# NeoForge mod metadata
 license="${mod_license}"
 
 [[mods]]
 modId="${mod_id}"
 version="${mod_version}"
 displayName="${mod_name}"
+logoFile="assets/chunkloader/icon.png"
 authors="${mod_authors}"
+displayURL="https://github.com/ilyasnsir1/Fakeplayer-Chunkloader"
+issueTrackerURL="https://github.com/ilyasnsir1/Fakeplayer-Chunkloader/issues"
 description='''${mod_description}'''
 
 [[mixins]]

@@ -3,6 +3,7 @@ package de.chunkloader.fakeplayer;
 import com.mojang.authlib.GameProfile;
 import de.chunkloader.ChunkloaderForgeMod;
 import de.chunkloader.permissions.PermissionManager;
+import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
@@ -70,6 +71,10 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
             this.setNoGravity(true);
             this.setInvulnerable(true);
             this.setHealth(getMaxHealth());
+            var waypointRange = this.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.WAYPOINT_TRANSMIT_RANGE);
+            if (waypointRange != null) {
+                waypointRange.setBaseValue(0.0);
+            }
         } catch (Exception e) {
             ChunkloaderForgeMod.LOGGER.warn(
                     "Error during fake player setup for {}: {}. Continuing with limited functionality.",
@@ -81,7 +86,7 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
         this.visibleAsMarker = visible;
         applyMobTargetState();
         if (visible) {
-            
+
             this.setInvulnerable(false);
         }
     }
@@ -90,7 +95,6 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
         return visibleAsMarker;
     }
 
-    
     public void setMobTarget(boolean mobTarget) {
         this.mobTarget = mobTarget;
         applyMobTargetState();
@@ -101,17 +105,27 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
     }
 
     private void applyVisibilityState() {
-        
+
         boolean show = visibleAsMarker || mobTarget;
         this.setInvisible(!show);
     }
 
     private void applyMobTargetState() {
         applyVisibilityState();
-        
+
         this.getAbilities().invulnerable = !mobTarget;
         this.setInvulnerable(!mobTarget && !visibleAsMarker);
         this.onUpdateAbilities();
+    }
+
+    @Override
+    public boolean canBeAffected(MobEffectInstance effect) {
+        return false;
+    }
+
+    @Override
+    public boolean isAffectedByPotions() {
+        return false;
     }
 
     @Override
@@ -124,7 +138,7 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
 
     @Override
     public boolean isInvulnerable() {
-        
+
         if (mobTarget) {
             return false;
         }
@@ -148,6 +162,7 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
             return true;
         } catch (Exception e) {
             ChunkloaderForgeMod.LOGGER.error("Failed to spawn fake player {}: {}", getGameProfile().name(), e.getMessage(), e);
+            SyntheticPlayerContext.enterDespawn();
             try {
                 if (server.getPlayerList().getPlayers().contains(this)
                         || server.getPlayerList().getPlayer(this.getUUID()) == this) {
@@ -156,6 +171,8 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
             } catch (Exception cleanup) {
                 ChunkloaderForgeMod.LOGGER.warn("Failed to clean up partially spawned fake player {}: {}",
                         getGameProfile().name(), cleanup.getMessage());
+            } finally {
+                SyntheticPlayerContext.exitDespawn();
             }
             SyntheticPlayerContext.unmark(this.getUUID());
             registered = false;
@@ -170,10 +187,17 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
             SyntheticPlayerContext.unmark(this.getUUID());
             return;
         }
+        SyntheticPlayerContext.enterDespawn();
         try {
-            server.getPlayerList().remove(this);
-            this.netConnection.disconnect(Component.literal("removed"));
+            if (server != null && server.getPlayerList() != null) {
+                server.getPlayerList().remove(this);
+            }
+            if (this.netConnection != null) {
+                this.netConnection.disconnect(Component.literal("Fakeplayer despawned"));
+            }
+        } catch (Exception ignored) {
         } finally {
+            SyntheticPlayerContext.exitDespawn();
             SyntheticPlayerContext.unmark(this.getUUID());
             registered = false;
         }
@@ -238,24 +262,31 @@ public class ChunkloaderFakePlayer extends ServerPlayer {
         if (visibleAsMarker && ChunkloaderForgeMod.getChunkloaderManager() != null) {
             if (ChunkloaderForgeMod.getChunkloaderManager().isChunkloaderMarker(this.getUUID())) {
                 Entity attacker = source.getEntity();
-                if (attacker instanceof net.minecraft.world.entity.player.Player player) {
-                    if (player instanceof net.minecraft.server.level.ServerPlayer serverPlayer
-                            && !PermissionManager.canUse(serverPlayer)) {
-                        serverPlayer.sendSystemMessage(Component.translatable("message.chunkloader.no_permission_interact"));
+                if (attacker instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
+                    var manager = ChunkloaderForgeMod.getChunkloaderManager();
+                    if (!PermissionManager.canUse(serverPlayer)) {
+                        serverPlayer.sendSystemMessage(
+                                Component.translatable("message.chunkloader.no_permission_interact"));
                         return false;
                     }
-                    if (player.isShiftKeyDown()) {
-                        ChunkloaderForgeMod.getChunkloaderManager().removeChunkloaderByMarkerUuid(this.getUUID());
-                        if (player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
-                            serverPlayer.sendSystemMessage(Component.literal("Player deleted"));
+                    boolean deleting = serverPlayer.isShiftKeyDown();
+                    boolean allowed = deleting ? PermissionManager.canModifyEntry(serverPlayer, manager.getEntryByMarkerUuid(this.getUUID()))
+                            : PermissionManager.canOperateEntry(serverPlayer, manager.getEntryByMarkerUuid(this.getUUID()));
+                    if (!allowed) {
+                        serverPlayer.sendSystemMessage(Component.literal("You don't own this player."));
+                        return false;
+                    }
+                    if (deleting) {
+                        if (!manager.confirmMarkerDelete(serverPlayer, this.getUUID(), true)) {
+                            return false;
                         }
+                        manager.removeChunkloaderByMarkerUuid(this.getUUID());
+                        serverPlayer.sendSystemMessage(Component.literal("Player deleted"));
                     } else {
-                        ChunkloaderForgeMod.getChunkloaderManager().handleMarkerDestroyed(this.getUUID());
-                        if (player instanceof net.minecraft.server.level.ServerPlayer serverPlayer) {
-                            String keyName = de.chunkloader.util.KeybindHelper.getDisabledChunkloadersKeyName();
-                            serverPlayer.sendSystemMessage(
-                                    Component.literal("Player disabled (Press " + keyName + " to open disabled list)"));
-                        }
+                        manager.handleMarkerDestroyed(this.getUUID());
+                        String keyName = de.chunkloader.util.KeybindHelper.getDisabledChunkloadersKeyName();
+                        serverPlayer.sendSystemMessage(
+                                Component.literal("Player disabled (Press " + keyName + " to open disabled list)"));
                     }
                     this.remove(Entity.RemovalReason.KILLED);
                     return true;

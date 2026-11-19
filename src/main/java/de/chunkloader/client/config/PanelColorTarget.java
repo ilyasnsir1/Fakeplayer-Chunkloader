@@ -1,6 +1,5 @@
 package de.chunkloader.client.config;
 
-
 public enum PanelColorTarget {
     PANEL("Panel Background", 0xFF2C2C2C, 1),
     BORDER("Panel Border", 0xFF4A4A4A, 1),

@@ -151,14 +151,15 @@ public abstract class PlayerModelEasterEggEmoteMixin {
                 return;
             }
         }
-        float tickDelta = client.getDeltaTracker().getGameTimeDeltaPartialTick(false);
-        Float tick = FakePlayerEasterEggEmoteCache.getEmoteTick(
+        float currentAge = renderState.ageInTicks;
+        Float startAge = FakePlayerEasterEggEmoteCache.getOrInitStartAge(
                 player.getUUID(),
-                client.level.getGameTime(),
-                tickDelta);
-        if (tick == null) {
+                currentAge,
+                client.level.getGameTime());
+        if (startAge == null) {
             return;
         }
+        float tick = currentAge - startAge;
         if (tick < BEGIN_TICK) {
             return;
         }

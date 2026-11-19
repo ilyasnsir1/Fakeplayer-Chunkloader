@@ -26,19 +26,24 @@ public class ChunkloaderClient {
     private static int lastChunkX = Integer.MIN_VALUE;
     private static int lastChunkZ = Integer.MIN_VALUE;
 
-    private static double lastPlayerX = Double.NaN;
-    private static double lastPlayerY = Double.NaN;
-    private static double lastPlayerZ = Double.NaN;
-    private static long lastMovementTime = 0;
-    private static final long MOVEMENT_TIMEOUT_MS = 1000;
-    private static final double MOVEMENT_THRESHOLD = 0.01;
 
     private static long lastSimulationStatusRequest = 0;
     private static long lastChunkplayerStatusRequest = 0;
     private static final long MIN_REQUEST_INTERVAL_MS = 200;
 
+    static void resetHudState() {
+        SimulationStatusHUD.resetStatus();
+        ChunkplayerStatusHUD.resetStatus();
+        lastSimulationStatusRequest = 0;
+        lastChunkplayerStatusRequest = 0;
+        lastChunkX = Integer.MIN_VALUE;
+        lastChunkZ = Integer.MIN_VALUE;
+    }
+
     @SubscribeEvent
     public static void onClientSetup(FMLClientSetupEvent event) {
+        ChunkloaderNetworking.setSkinChangeResultClientHook(
+            de.chunkloader.client.screen.ChunkplayerSkinScreen::receiveSkinChangeResult);
         ChunkloaderNetworking.setClearCustomSkinClientHook(playerName -> {
             Minecraft client = Minecraft.getInstance();
             if (client != null) {
@@ -71,10 +76,12 @@ public class ChunkloaderClient {
     }
 
     private static void onLoggingIn(net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingIn event) {
+        ChunkloaderClient.resetHudState();
         CustomFakePlayerSkinCache.clearAllSkins();
     }
 
     private static void onLoggingOut(net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
+        ChunkloaderClient.resetHudState();
         FakePlayerNameCache.clear();
         FakePlayerVisibilityCache.clear();
         FakePlayerEasterEggSkinCache.clear();
@@ -114,9 +121,11 @@ public class ChunkloaderClient {
             if (client.gui.screen() == null) {
                 SimulationStatusHUD.toggle();
                 if (SimulationStatusHUD.isEnabled()) {
+                    lastSimulationStatusRequest = 0;
                     lastChunkX = client.player.chunkPosition().x();
                     lastChunkZ = client.player.chunkPosition().z();
                     if ((now - lastSimulationStatusRequest) >= MIN_REQUEST_INTERVAL_MS) {
+                        SimulationStatusHUD.setRequestPending(true);
                         ChunkloaderClientNetworking.requestSimulationStatus();
                         lastSimulationStatusRequest = now;
                     }
@@ -127,12 +136,22 @@ public class ChunkloaderClient {
         if (ChunkloaderKeyMappings.chunkplayerStatusHUDToggleKey != null && ChunkloaderKeyMappings.chunkplayerStatusHUDToggleKey.consumeClick()) {
             ChunkplayerStatusHUD.toggle();
             if (ChunkplayerStatusHUD.isEnabled() && client.player != null) {
+                lastChunkplayerStatusRequest = 0;
                 lastChunkX = client.player.chunkPosition().x();
                 lastChunkZ = client.player.chunkPosition().z();
                 if ((now - lastChunkplayerStatusRequest) >= MIN_REQUEST_INTERVAL_MS) {
+                    ChunkplayerStatusHUD.setRequestPending(true);
                     ChunkloaderClientNetworking.requestChunkplayerStatus();
                     lastChunkplayerStatusRequest = now;
                 }
+            }
+        }
+
+        if (ChunkloaderKeyMappings.activeChunkloadersKey != null && ChunkloaderKeyMappings.activeChunkloadersKey.consumeClick()) {
+            if (client.gui.screen() == null) {
+                de.chunkloader.client.network.ChunkloaderClientNetworking.requestActiveChunkloadersList();
+            } else if (client.gui.screen() instanceof de.chunkloader.client.screen.ActiveChunkloadersScreen) {
+                client.gui.setScreen(null);
             }
         }
 
@@ -251,50 +270,26 @@ public class ChunkloaderClient {
                     time -> lastChunkplayerStatusRequest = time);
                 }
 
-                double currentX = client.player.getX();
-                double currentY = client.player.getY();
-                double currentZ = client.player.getZ();
-
-                boolean isMoving = false;
-                if (!Double.isNaN(lastPlayerX)) {
-                    double dx = Math.abs(currentX - lastPlayerX);
-                    double dy = Math.abs(currentY - lastPlayerY);
-                    double dz = Math.abs(currentZ - lastPlayerZ);
-                    double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-
-                    if (distance > MOVEMENT_THRESHOLD) {
-                        isMoving = true;
-                        lastMovementTime = now;
-                    }
-                }
-
-                lastPlayerX = currentX;
-                lastPlayerY = currentY;
-                lastPlayerZ = currentZ;
-
-                boolean shouldUpdate = isMoving || (now - lastMovementTime) < MOVEMENT_TIMEOUT_MS;
-
-                if (shouldUpdate) {
-                    requestHUDStatusIfNeeded(
-                        SimulationStatusHUD.isEnabled(),
-                        SimulationStatusHUD.needsUpdate(),
-                        () -> {
-                            SimulationStatusHUD.setRequestPending(true);
-                            ChunkloaderClientNetworking.requestSimulationStatus();
-                        },
-                        lastSimulationStatusRequest,
-                        now,
-                    time -> lastSimulationStatusRequest = time);
-                    requestHUDStatusIfNeeded(
-                        ChunkplayerStatusHUD.isEnabled(),
-                        ChunkplayerStatusHUD.needsUpdate(),
-                        () -> {
-                            ChunkplayerStatusHUD.setRequestPending(true);
-                            ChunkloaderClientNetworking.requestChunkplayerStatus();
-                        },
-                        lastChunkplayerStatusRequest,
-                        now,
-                    time -> lastChunkplayerStatusRequest = time);
-                }
+                requestHUDStatusIfNeeded(
+                    SimulationStatusHUD.isEnabled(),
+                    SimulationStatusHUD.needsUpdate(),
+                    () -> {
+                        SimulationStatusHUD.setRequestPending(true);
+                        ChunkloaderClientNetworking.requestSimulationStatus();
+                    },
+                    lastSimulationStatusRequest,
+                    now,
+                time -> lastSimulationStatusRequest = time);
+                requestHUDStatusIfNeeded(
+                    ChunkplayerStatusHUD.isEnabled(),
+                    ChunkplayerStatusHUD.needsUpdate(),
+                    () -> {
+                        ChunkplayerStatusHUD.setRequestPending(true);
+                        ChunkloaderClientNetworking.requestChunkplayerStatus();
+                    },
+                    lastChunkplayerStatusRequest,
+                    now,
+                time -> lastChunkplayerStatusRequest = time);
+            
     }
 }
