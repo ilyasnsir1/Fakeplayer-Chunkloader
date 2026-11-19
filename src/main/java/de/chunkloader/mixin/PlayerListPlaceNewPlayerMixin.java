@@ -1,5 +1,8 @@
 package de.chunkloader.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.llamalad7.mixinextras.sugar.Local;
 import de.chunkloader.fakeplayer.ChunkloaderFakePlayer;
 import de.chunkloader.fakeplayer.SyntheticPlayerContext;
 import java.util.Optional;
@@ -10,6 +13,7 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.storage.ReadView;
 import net.minecraft.util.ErrorReporter;
+import net.minecraft.util.math.ChunkPos;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -74,6 +78,19 @@ public class PlayerListPlaceNewPlayerMixin {
         }
     }
 
+    @WrapOperation(
+        method = "onPlayerConnect",
+        at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/server/world/ServerWorld;method_72079(Lnet/minecraft/util/math/ChunkPos;I)V"),
+        require = 0
+    )
+    private void chunkloader$skipSyntheticJoinPreload(ServerWorld world, ChunkPos position, int radius,
+            Operation<Void> original, @Local(argsOnly = true) ServerPlayerEntity player) {
+        if (!(player instanceof ChunkloaderFakePlayer)) {
+            original.call(world, position, radius);
+        }
+    }
+
     @Redirect(
         method = "onPlayerConnect(Lnet/minecraft/network/ClientConnection;Lnet/minecraft/server/network/ServerPlayerEntity;Lnet/minecraft/server/network/ConnectedClientData;)V",
         at = @At(
@@ -86,5 +103,39 @@ public class PlayerListPlaceNewPlayerMixin {
             return;
         }
         player.setServerWorld(world);
+    }
+
+    @Redirect(
+        method = "onPlayerConnect(Lnet/minecraft/network/ClientConnection;Lnet/minecraft/server/network/ServerPlayerEntity;Lnet/minecraft/server/network/ConnectedClientData;)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/server/world/ServerWorld;onPlayerConnected(Lnet/minecraft/server/network/ServerPlayerEntity;)V"
+        )
+    )
+    private void chunkloader$connectFakePlayerToOwnWorld(ServerWorld world, ServerPlayerEntity player) {
+        if (player instanceof ChunkloaderFakePlayer) {
+            if (player.getWorld() instanceof ServerWorld actual) {
+                actual.onPlayerConnected(player);
+                return;
+            }
+        }
+        world.onPlayerConnected(player);
+    }
+
+    @Redirect(
+        method = "onPlayerConnect(Lnet/minecraft/network/ClientConnection;Lnet/minecraft/server/network/ServerPlayerEntity;Lnet/minecraft/server/network/ConnectedClientData;)V",
+        at = @At(
+            value = "INVOKE",
+            target = "Lnet/minecraft/server/PlayerManager;sendWorldInfo(Lnet/minecraft/server/network/ServerPlayerEntity;Lnet/minecraft/server/world/ServerWorld;)V"
+        )
+    )
+    private void chunkloader$sendFakePlayerWorldInfo(PlayerManager manager, ServerPlayerEntity player, ServerWorld world) {
+        if (player instanceof ChunkloaderFakePlayer) {
+            if (player.getWorld() instanceof ServerWorld actual) {
+                manager.sendWorldInfo(player, actual);
+                return;
+            }
+        }
+        manager.sendWorldInfo(player, world);
     }
 }

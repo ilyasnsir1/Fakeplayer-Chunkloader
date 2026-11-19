@@ -1,38 +1,51 @@
 {
-    "required":  true,
-    "minVersion":  "0.8",
-    "package":  "de.chunkloader.mixin",
-    "compatibilityLevel":  "JAVA_21",
-    "mixins":  [
-                   "EntityMixin",
-                   "MobTargetFakePlayerMixin",
-                   "EntityRemoveMixin",
-                   "PlayerAdvancementsMixin",
-                   "PlayerListEntryMixin",
-                   "SleepManagerMixin",
-                   "PlayerEntityMixin",
-                   "PlayerListPlaceNewPlayerMixin",
-                   "PlayerManagerMixin",
-                   "PlayerManagerTabListMixin",
-                   "ServerChunkManagerAccessor",
-                   "ServerChunkCacheSpawnCountMixin",
-                   "ServerChunkLoadingManagerMixin",
-                   "ServerCommonNetworkHandlerMixin",
-                   "ServerPlayerEntityMixin",
-                   "ServerWorldMixin",
-                   "ServerWorldRandomTickMixin",
-                   "ServerWorldSleepMixin",
-                   "ServerWorldTickChunkMixin"
-               ],
-    "client":  [
-                   "client.PlayerEntityClientMixin",
-                   "client.AbstractClientPlayerEntitySkinMixin",
-                   "client.PlayerListEntrySkinMixin",
-                   "client.InGameHudMixin",
-                   "client.PlayerEntityModelEasterEggEmoteMixin",
-                   "client.PlayerModelPartMixin"
-               ],
-    "injectors":  {
-                      "defaultRequire":  1
-                  }
+    "required": true,
+    "minVersion": "0.8",
+    "package": "de.chunkloader.mixin",
+    "compatibilityLevel": "JAVA_21",
+    "mixins": [
+        "ServerLevelPlayerTrackingMixin",
+        "EntityMixin",
+        "MobTargetFakePlayerMixin",
+        "EntityRemoveMixin",
+        "PlayerAdvancementsMixin",
+        "PlayerListEntryMixin",
+        "SleepManagerMixin",
+        "PatrolSpawnerMixin",
+        "SkeletonTrapGoalMixin",
+        "SculkShriekerBlockEntityMixin",
+        "SculkShriekerWarningManagerMixin",
+        "VillageSiegeMixin",
+        "PlayerEntityMixin",
+        "MinecraftServerStatusMixin",
+        "PlayerListPlaceNewPlayerMixin",
+        "PlayerManagerMixin",
+        "PlayerManagerRemoveMixin",
+        "PlayerManagerTabListMixin",
+        "ServerChunkManagerAccessor",
+        "ChunkTicketManagerAccessor",
+        "ServerChunkCacheSpawnCountMixin",
+        "TrialSpawnerPlayerDetectorMixin",
+        "NaturalSpawnerMixin",
+        "ServerChunkLoadingManagerMixin",
+        "ServerCommonNetworkHandlerMixin",
+        "ServerPlayerEntityMixin",
+        "ServerWorldMixin",
+
+        "ServerWorldSleepMixin",
+        "ServerWorldTickChunkMixin"
+    ],
+    "client": [
+        "client.PlayerEntityRendererNameMixin",
+        "client.TextFieldWidgetAccessor",
+        "client.PlayerEntityClientMixin",
+        "client.AbstractClientPlayerEntitySkinMixin",
+        "client.PlayerListEntrySkinMixin",
+        "client.InGameHudMixin",
+        "client.PlayerEntityModelEasterEggEmoteMixin",
+        "client.PlayerModelPartMixin"
+    ],
+    "injectors": {
+        "defaultRequire": 1
+    }
 }

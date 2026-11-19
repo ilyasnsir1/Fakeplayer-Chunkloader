@@ -1,10 +1,8 @@
-# Gradle
 .gradle/
 build/
 bin/
 !gradle/wrapper/gradle-wrapper.jar
 
-# IDE
 .idea/
 *.iml
 .vscode/
@@ -12,21 +10,17 @@ bin/
 *.swo
 *~
 
-# Minecraft
 run/
 logs/
 runClient.bat
 
-# OS
 .DS_Store
 Thumbs.db
 
-# Java
 *.hprof
 *.class
 *.log
 
-# Temporary files
 *.tmp
 *.temp
 *.bak

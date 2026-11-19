@@ -3,10 +3,12 @@ package de.chunkloader.mixin;
 import de.chunkloader.fakeplayer.ChunkloaderFakePlayer;
 import de.chunkloader.fakeplayer.SyntheticPlayerContext;
 import io.netty.channel.ChannelFutureListener;
+import net.minecraft.network.DisconnectionInfo;
 import net.minecraft.network.packet.Packet;
 import net.minecraft.server.network.ServerCommonNetworkHandler;
 import net.minecraft.server.network.ServerPlayNetworkHandler;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.text.Text;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -34,8 +36,32 @@ public class ServerCommonNetworkHandlerMixin {
         }
     }
 
-    private boolean shouldSuppress() {
+    @Inject(method = "disconnect(Lnet/minecraft/text/Text;)V", at = @At("HEAD"), cancellable = true)
+    private void chunkloader$blockFakePlayerDisconnect(Text reason, CallbackInfo ci) {
+        if (isProtectedFakePlayer() && !SyntheticPlayerContext.isDespawning()) {
+            ci.cancel();
+        }
+    }
 
+    @Inject(method = "disconnect(Lnet/minecraft/network/DisconnectionInfo;)V", at = @At("HEAD"), cancellable = true, require = 0)
+    private void chunkloader$blockFakePlayerDisconnectInfo(DisconnectionInfo info, CallbackInfo ci) {
+        if (isProtectedFakePlayer() && !SyntheticPlayerContext.isDespawning()) {
+            ci.cancel();
+        }
+    }
+
+    @Inject(method = "onDisconnected(Lnet/minecraft/network/DisconnectionInfo;)V", at = @At("HEAD"), cancellable = true)
+    private void chunkloader$blockFakePlayerOnDisconnected(DisconnectionInfo info, CallbackInfo ci) {
+        if (isProtectedFakePlayer() && !SyntheticPlayerContext.isDespawning()) {
+            ci.cancel();
+        }
+    }
+
+    private boolean shouldSuppress() {
+        return isProtectedFakePlayer();
+    }
+
+    private boolean isProtectedFakePlayer() {
         ServerCommonNetworkHandler self = (ServerCommonNetworkHandler) (Object) this;
         if (self instanceof ServerPlayNetworkHandler handler) {
             ServerPlayerEntity player = handler.player;
