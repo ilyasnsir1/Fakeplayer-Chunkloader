@@ -10,13 +10,17 @@ import org.eclipse.jdt.annotation.NonNull;
 
 import java.util.Objects;
 
-public record OpenChunkMapPayload(@NonNull ChunkMapData data) implements CustomPacketPayload {
+public record OpenChunkMapPayload(@NonNull ChunkMapData data, boolean canModify, boolean shared) implements CustomPacketPayload {
     public static final ResourceLocation ID = ResourceLocation.fromNamespaceAndPath(ChunkloaderForgeMod.MODID, "open_chunk_map");
     public static final Type<OpenChunkMapPayload> TYPE = new Type<>(ID);
 
     public static final StreamCodec<FriendlyByteBuf, OpenChunkMapPayload> STREAM_CODEC = StreamCodec.of(
-        (buf, payload) -> payload.data().write(buf),
-        buf -> new OpenChunkMapPayload(Objects.requireNonNull(ChunkMapData.read(buf), "data"))
+        (buf, payload) -> {
+            payload.data().write(buf);
+            buf.writeBoolean(payload.canModify());
+            buf.writeBoolean(payload.shared());
+        },
+        buf -> new OpenChunkMapPayload(Objects.requireNonNull(ChunkMapData.read(buf), "data"), buf.readBoolean(), buf.readBoolean())
     );
 
     @Override

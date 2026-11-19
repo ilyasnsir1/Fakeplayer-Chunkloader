@@ -1,48 +1,70 @@
 package de.chunkloader.client;
+import de.chunkloader.client.screen.ChunkMapHelpScreen;
 
-import de.chunkloader.ChunkloaderForgeMod;
 import de.chunkloader.network.payload.ChunkplayerStatusResponsePayload;
 import de.chunkloader.network.payload.CloseChunkMapPayload;
+import de.chunkloader.network.payload.OpenHelpPayload;
 import de.chunkloader.network.payload.DisabledChunkloadersListPayload;
 import de.chunkloader.network.payload.EasterEggEmotePayload;
 import de.chunkloader.network.payload.EasterEggSkinPayload;
 import de.chunkloader.network.payload.FakePlayerVisibilityPayload;
 import de.chunkloader.network.payload.OpenChunkMapPayload;
+import de.chunkloader.network.payload.ChunkMapLoaderDetailsPayload;
 import de.chunkloader.network.payload.SimulationStatusResponsePayload;
+import de.chunkloader.network.payload.SyncCustomSkinPayload;
 import de.chunkloader.network.payload.UpdateDisabledChunkloaderCoordsResponsePayload;
 import de.chunkloader.network.payload.RenameChunkloaderResponsePayload;
 import de.chunkloader.network.payload.InvalidateCachePayload;
-import de.chunkloader.network.payload.ClearCustomSkinPayload;
 import net.minecraft.client.Minecraft;
-import net.neoforged.api.distmarker.Dist;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.client.network.event.RegisterClientPayloadHandlersEvent;
+import net.neoforged.neoforge.network.registration.PayloadRegistrar;
 
-@EventBusSubscriber(modid = ChunkloaderForgeMod.MODID, value = Dist.CLIENT)
 public final class ChunkloaderClientPayloadHandlers {
     private ChunkloaderClientPayloadHandlers() {
     }
 
-    @SubscribeEvent
-    public static void registerClientPayloadHandlers(RegisterClientPayloadHandlersEvent event) {
-        event.register(OpenChunkMapPayload.TYPE, (payload, ctx) -> {
+    public static void register(PayloadRegistrar registrar) {
+        registrar.playToClient(OpenChunkMapPayload.TYPE, OpenChunkMapPayload.STREAM_CODEC, (payload, ctx) -> {
             ctx.enqueueWork(() -> {
                 Minecraft client = Minecraft.getInstance();
                 if (client.player == null)
                     return;
                 var data = payload.data();
+                var currentScreen = client.screen;
                 de.chunkloader.client.screen.ChunkMapScreen existingScreen =
-                    de.chunkloader.client.screen.ChunkMapSessionScreens.findChunkMapScreen(client.screen);
+                    de.chunkloader.client.screen.ChunkMapSessionScreens.findChunkMapScreen(currentScreen);
                 if (existingScreen != null) {
-                    existingScreen.updateData(data);
+                    existingScreen.updateData(data, payload.canModify(), payload.shared());
                     return;
                 }
-                client.setScreen(new de.chunkloader.client.screen.ChunkMapScreen(data));
+                net.minecraft.client.gui.screens.Screen returnScreen =
+                    currentScreen instanceof de.chunkloader.client.screen.ActiveChunkloadersScreen ? currentScreen : null;
+                client.setScreen(new de.chunkloader.client.screen.ChunkMapScreen(data, returnScreen, payload.canModify(), payload.shared()));
             });
         });
 
-        event.register(CloseChunkMapPayload.TYPE, (payload, ctx) -> {
+        registrar.optional().playToClient(ChunkMapLoaderDetailsPayload.TYPE, ChunkMapLoaderDetailsPayload.CODEC, (payload, ctx) -> {
+            ctx.enqueueWork(() -> {
+                Minecraft client = Minecraft.getInstance();
+                var screen = de.chunkloader.client.screen.ChunkMapSessionScreens.findChunkMapScreen(client.screen);
+                if (screen != null) {
+                    screen.updateLoaderDetails(payload);
+                }
+            });
+        });
+
+        registrar.optional().playToClient(OpenHelpPayload.TYPE, OpenHelpPayload.STREAM_CODEC, (payload, ctx) -> {
+            ctx.enqueueWork(() -> {
+                Minecraft client = Minecraft.getInstance();
+                if (client.player != null) {
+                    if (de.chunkloader.client.screen.ChunkMapSessionScreens.isInChunkMapSession(client.screen)) {
+                        de.chunkloader.client.screen.ChunkMapSessionScreens.closeToGame(client);
+                    }
+                    client.setScreen(new ChunkMapHelpScreen(null));
+                }
+            });
+        });
+
+        registrar.playToClient(CloseChunkMapPayload.TYPE, CloseChunkMapPayload.STREAM_CODEC, (payload, ctx) -> {
             ctx.enqueueWork(() -> {
                 Minecraft client = Minecraft.getInstance();
                 if (client.player == null)
@@ -51,19 +73,19 @@ public final class ChunkloaderClientPayloadHandlers {
             });
         });
 
-        event.register(FakePlayerVisibilityPayload.TYPE, (payload, ctx) -> {
+        registrar.playToClient(FakePlayerVisibilityPayload.TYPE, FakePlayerVisibilityPayload.STREAM_CODEC, (payload, ctx) -> {
             ctx.enqueueWork(() -> {
                 FakePlayerVisibilityCache.setVisibility(payload.fakePlayerName(), payload.visible());
             });
         });
 
-        event.register(EasterEggSkinPayload.TYPE, (payload, ctx) -> {
+        registrar.playToClient(EasterEggSkinPayload.TYPE, de.chunkloader.network.payload.EasterEggSkinPayload.STREAM_CODEC, (payload, ctx) -> {
             ctx.enqueueWork(() -> {
                 FakePlayerEasterEggSkinCache.setSkinIndex(payload.playerUuid(), payload.skinIndex());
             });
         });
 
-        event.register(EasterEggEmotePayload.TYPE, (payload, ctx) -> {
+        registrar.playToClient(EasterEggEmotePayload.TYPE, de.chunkloader.network.payload.EasterEggEmotePayload.STREAM_CODEC, (payload, ctx) -> {
             ctx.enqueueWork(() -> {
                 Minecraft client = Minecraft.getInstance();
                 if (ChunkloaderClient.shouldPlayEasterEggEmote(client, payload.playerUuid())) {
@@ -74,19 +96,37 @@ public final class ChunkloaderClientPayloadHandlers {
             });
         });
 
-        event.register(SimulationStatusResponsePayload.TYPE, (payload, ctx) -> {
+        registrar.playToClient(SimulationStatusResponsePayload.TYPE, SimulationStatusResponsePayload.STREAM_CODEC, (payload, ctx) -> {
             ctx.enqueueWork(() -> {
                 de.chunkloader.client.hud.SimulationStatusHUD.updateStatus(payload);
             });
         });
 
-        event.register(ChunkplayerStatusResponsePayload.TYPE, (payload, ctx) -> {
+        registrar.playToClient(ChunkplayerStatusResponsePayload.TYPE, ChunkplayerStatusResponsePayload.STREAM_CODEC, (payload, ctx) -> {
             ctx.enqueueWork(() -> {
                 de.chunkloader.client.hud.ChunkplayerStatusHUD.updateStatus(payload);
             });
         });
 
-        event.register(DisabledChunkloadersListPayload.TYPE, (payload, ctx) -> {
+        registrar.playToClient(de.chunkloader.network.payload.ActiveChunkloadersListPayload.TYPE, de.chunkloader.network.payload.ActiveChunkloadersListPayload.STREAM_CODEC, (payload, ctx) -> {
+            ctx.enqueueWork(() -> {
+                Minecraft client = Minecraft.getInstance();
+                if (client.player == null) return;
+                var currentScreen = client.screen;
+                if (currentScreen instanceof de.chunkloader.client.screen.ActiveChunkloadersScreen existing) existing.updateEntries(payload.entries());
+                else if (currentScreen == null || currentScreen instanceof de.chunkloader.client.screen.EditDisabledChunkloaderCoordsScreen || currentScreen instanceof de.chunkloader.client.screen.ChunkMapScreen || currentScreen instanceof de.chunkloader.client.screen.DisabledChunkloadersScreen) {
+                    net.minecraft.client.gui.screens.Screen parent = null;
+                    if (currentScreen instanceof de.chunkloader.client.screen.ChunkMapScreen) {
+                        parent = currentScreen;
+                    } else if (currentScreen instanceof de.chunkloader.client.screen.DisabledChunkloadersScreen disabled) {
+                        parent = disabled.getParentScreen();
+                    }
+                    client.setScreen(new de.chunkloader.client.screen.ActiveChunkloadersScreen(payload.entries(), parent));
+                }
+            });
+        });
+
+        registrar.playToClient(DisabledChunkloadersListPayload.TYPE, DisabledChunkloadersListPayload.STREAM_CODEC, (payload, ctx) -> {
             ctx.enqueueWork(() -> {
                 Minecraft client = Minecraft.getInstance();
                 if (client.player == null)
@@ -96,16 +136,21 @@ public final class ChunkloaderClientPayloadHandlers {
                 if (currentScreen instanceof de.chunkloader.client.screen.DisabledChunkloadersScreen existingScreen) {
                     existingScreen.updateDisabledChunkloaders(payload.disabledChunkloaders());
                 } else if (currentScreen == null
-                        || currentScreen instanceof de.chunkloader.client.screen.ChunkMapScreen) {
-                    var parent = currentScreen instanceof de.chunkloader.client.screen.ChunkMapScreen ? currentScreen
-                            : null;
+                        || currentScreen instanceof de.chunkloader.client.screen.ChunkMapScreen
+                        || currentScreen instanceof de.chunkloader.client.screen.ActiveChunkloadersScreen) {
+                    net.minecraft.client.gui.screens.Screen parent = null;
+                    if (currentScreen instanceof de.chunkloader.client.screen.ChunkMapScreen) {
+                        parent = currentScreen;
+                    } else if (currentScreen instanceof de.chunkloader.client.screen.ActiveChunkloadersScreen active) {
+                        parent = active.getParentScreen();
+                    }
                     client.setScreen(new de.chunkloader.client.screen.DisabledChunkloadersScreen(
                             payload.disabledChunkloaders(), parent));
                 }
             });
         });
 
-        event.register(UpdateDisabledChunkloaderCoordsResponsePayload.TYPE, (payload, ctx) -> {
+        registrar.playToClient(UpdateDisabledChunkloaderCoordsResponsePayload.TYPE, UpdateDisabledChunkloaderCoordsResponsePayload.STREAM_CODEC, (payload, ctx) -> {
             ctx.enqueueWork(() -> {
                 Minecraft client = Minecraft.getInstance();
                 if (client.player != null
@@ -115,7 +160,7 @@ public final class ChunkloaderClientPayloadHandlers {
             });
         });
 
-        event.register(RenameChunkloaderResponsePayload.TYPE, (payload, ctx) -> {
+        registrar.playToClient(RenameChunkloaderResponsePayload.TYPE, RenameChunkloaderResponsePayload.STREAM_CODEC, (payload, ctx) -> {
             ctx.enqueueWork(() -> {
                 Minecraft client = Minecraft.getInstance();
                 if (client.player != null
@@ -125,18 +170,14 @@ public final class ChunkloaderClientPayloadHandlers {
             });
         });
 
-        event.register(InvalidateCachePayload.TYPE, (payload, ctx) -> {
+        registrar.playToClient(InvalidateCachePayload.TYPE, InvalidateCachePayload.STREAM_CODEC, (payload, ctx) -> {
             ctx.enqueueWork(() -> {
                 de.chunkloader.client.hud.SimulationStatusHUD.forceUpdate();
                 de.chunkloader.client.hud.ChunkplayerStatusHUD.forceUpdate();
             });
         });
 
-        event.register(ClearCustomSkinPayload.TYPE, (payload, ctx) -> {
-            ctx.enqueueWork(() -> CustomFakePlayerSkinCache.clearPersistedSkin(payload.playerName()));
-        });
-
-        event.register(de.chunkloader.network.payload.SyncCustomSkinPayload.TYPE, (payload, ctx) -> {
+        registrar.playToClient(de.chunkloader.network.payload.SyncCustomSkinPayload.TYPE, SyncCustomSkinPayload.STREAM_CODEC, (payload, ctx) -> {
             ctx.enqueueWork(() -> {
                 try {
                     CustomFakePlayerSkinCache.applySyncedSkin(
