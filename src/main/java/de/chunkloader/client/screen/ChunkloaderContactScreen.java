@@ -79,7 +79,7 @@ public class ChunkloaderContactScreen extends Screen {
     protected void init() {
         super.init();
 
-        contentTop = 20;
+        contentTop = 50;
         contentBottom = this.height - 60;
 
         totalContentHeight = 0;
@@ -88,16 +88,16 @@ public class ChunkloaderContactScreen extends Screen {
         int buttonX = (this.width - buttonWidth) / 2;
         int buttonY = this.height - 30;
 
-        this.addRenderableWidget(Button.builder(
-                Component.literal("Back"),
-                btn -> this.minecraft.setScreen(parent))
-                .bounds(buttonX, buttonY, buttonWidth, 20)
-                .build());
+        ScreenNavigation.addBackAndCloseButtons(this, this::addRenderableWidget);
     }
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
         drawDimBackground(context);
+
+        Component title = Component.literal("Contact & Support").withStyle(ChatFormatting.BOLD);
+        int titleWidth = this.font.width(title);
+        context.text(this.font, title, (this.width - titleWidth) / 2, 20, 0xFFFFFFFF, false);
 
         context.enableScissor(0, contentTop, this.width, contentBottom);
         renderText(context, mouseX, mouseY);
@@ -217,11 +217,6 @@ public class ChunkloaderContactScreen extends Screen {
         int sectionSpacing = 20;
         int y = contentTop + 20 - scrollOffset;
 
-        Component title = Component.literal("Contact & Support").withStyle(ChatFormatting.BOLD);
-        int titleWidth = renderer.width(title);
-        context.text(renderer, title, (this.width - titleWidth) / 2, y, 0xFFFFFFFF, false);
-        y += 30;
-
         String[][] contactInfo = {
                 { "Community", "" },
                 { "Discord", "Join our Discord server for support, ideas, and issues" },
@@ -237,8 +232,7 @@ public class ChunkloaderContactScreen extends Screen {
                 { "Discord Support", "Get help in the Discord #support channel" },
                 { "Ko-fi", "https://ko-fi.com/ilyasnsir1" },
                 { "", "" },
-                { "Note", "" },
-                { "This mod is open source; contributions are currently not being sought" }
+                { "Note", "All rights reserved. Bug reports and ideas are welcome; code contributions are not being sought right now." }
         };
 
         boolean isFirstSection = true;
@@ -252,7 +246,7 @@ public class ChunkloaderContactScreen extends Screen {
                 continue;
             }
 
-            if (description.isEmpty()) {
+            if (description.isEmpty() || header.equals("Note")) {
                 if (!isFirstSection) {
                     int separatorY = lastSectionEndY + sectionSpacing / 2;
                     int separatorWidth = Math.min(200, this.width - 100);
@@ -265,6 +259,22 @@ public class ChunkloaderContactScreen extends Screen {
                 int headerWidth = renderer.width(sectionHeader);
                 context.text(renderer, sectionHeader, (this.width - headerWidth) / 2, y, 0xFFFFFFFF, false);
                 y += lineHeight + 4;
+                if (header.equals("Note") && !description.isEmpty()) {
+                    int maxWidth = Math.max(40, this.width - 50);
+                    Component noteText = Component.literal(description).withStyle(ChatFormatting.YELLOW);
+                    int noteWidth = renderer.width(noteText);
+                    if (noteWidth > maxWidth) {
+                        for (var wrappedLine : renderer.split(noteText, maxWidth)) {
+                            int wrappedWidth = renderer.width(wrappedLine);
+                            context.text(renderer, wrappedLine, (this.width - wrappedWidth) / 2, y, 0xFFFFFF55, false);
+                            y += lineHeight;
+                        }
+                    } else {
+                        context.text(renderer, noteText, (this.width - noteWidth) / 2, y, 0xFFFFFF55, false);
+                        y += lineHeight;
+                    }
+                    lastSectionEndY = y;
+                }
             } else {
                 int infoWidth = renderer.width(Component.literal(header));
                 context.text(renderer, Component.literal(header).withStyle(ChatFormatting.GREEN),
@@ -307,7 +317,22 @@ public class ChunkloaderContactScreen extends Screen {
                     int underlineY = descY + renderer.lineHeight;
                     context.fill(descX, underlineY, descX + descWidth, underlineY + 1, linkColor);
                 } else {
-                    context.text(renderer, Component.literal(description), descX, descY, 0xFFCCCCCC, false);
+                    int maxWidth = Math.max(40, this.width - 50);
+                    Component descriptionText = Component.literal(description);
+                    int descriptionWidth = renderer.width(descriptionText);
+                    if (descriptionWidth > maxWidth) {
+                        int index = 0;
+                        for (var wrappedLine : renderer.split(descriptionText, maxWidth)) {
+                            int wrappedWidth = renderer.width(wrappedLine);
+                            context.text(renderer, wrappedLine, (this.width - wrappedWidth) / 2, descY + index * lineHeight, 0xFFCCCCCC, false);
+                            index++;
+                        }
+                        if (index > 1) {
+                            y += (index - 1) * lineHeight;
+                        }
+                    } else {
+                        context.text(renderer, descriptionText, descX, descY, 0xFFCCCCCC, false);
+                    }
                 }
 
                 y += lineHeight + 4;
@@ -349,4 +374,9 @@ public class ChunkloaderContactScreen extends Screen {
         } catch (Exception ignored) {
         }
     }
+
+    public void onClose() {
+        this.minecraft.setScreen(parent);
+    }
+
 }

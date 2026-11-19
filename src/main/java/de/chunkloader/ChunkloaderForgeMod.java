@@ -195,10 +195,12 @@ public class ChunkloaderForgeMod {
             }
 
             if (serverPlayer.isShiftKeyDown()) {
-                var entryToDelete = chunkloaderManager.getEntryByMarkerUuid(markerUuid);
-                if (entryToDelete != null) {
-                    chunkloaderManager.removeChunkloader(entryToDelete.chunkX(), entryToDelete.chunkZ(), entryToDelete.dimension());
-                    serverPlayer.sendSystemMessage(Component.literal("Player deleted"));
+                if (chunkloaderManager.confirmMarkerDelete(serverPlayer, markerUuid, false)) {
+                    var entryToDelete = chunkloaderManager.getEntryByMarkerUuid(markerUuid);
+                    if (entryToDelete != null) {
+                        chunkloaderManager.removeChunkloader(entryToDelete.chunkX(), entryToDelete.chunkZ(), entryToDelete.dimension());
+                        serverPlayer.sendSystemMessage(Component.literal("Player deleted"));
+                    }
                 }
                 event.setCancellationResult(net.minecraft.world.InteractionResult.SUCCESS);
                 return;
@@ -211,22 +213,22 @@ public class ChunkloaderForgeMod {
     }
 
     @SubscribeEvent
-    public void onAttackEntity(AttackEntityEvent event) {
+    public boolean onAttackEntity(AttackEntityEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer serverPlayer)) {
-            return;
+            return false;
         }
 
         Entity target = event.getTarget();
         if (!(target instanceof ChunkloaderFakePlayer fakePlayer)) {
-            return;
+            return false;
         }
 
         if (chunkloaderManager == null) {
-            return;
+            return false;
         }
 
         if (!fakePlayer.isVisibleAsMarker()) {
-            return;
+            return false;
         }
 
         UUID markerUuid = target.getUUID();
@@ -234,7 +236,7 @@ public class ChunkloaderForgeMod {
             chunkloaderManager.ensureMarkerMapping(markerUuid, fakePlayer);
         }
         if (!chunkloaderManager.isChunkloaderMarker(markerUuid)) {
-            return;
+            return false;
         }
 
         try {
@@ -250,11 +252,20 @@ public class ChunkloaderForgeMod {
                     serverPlayer.sendSystemMessage(Component.literal("You don't have permission to interact with " + entityTypeName + "."));
                     lastPermissionMessageTime.put(playerUuid, currentTime);
                 }
-                return;
+                return true;
+            }
+
+            if (!PermissionManager.canModifyEntry(serverPlayer,
+                    chunkloaderManager.getEntryByMarkerUuid(markerUuid))) {
+                serverPlayer.sendSystemMessage(Component.literal("You don't own this player."));
+                return true;
             }
 
             if (serverPlayer.isShiftKeyDown()) {
-                chunkloaderManager.removeChunkloaderByMarkerUuid(markerUuid);
+                if (!chunkloaderManager.confirmMarkerDelete(serverPlayer, markerUuid, true)) {
+                    return true;
+                }
+                    chunkloaderManager.removeChunkloaderByMarkerUuid(markerUuid);
             } else {
                 chunkloaderManager.handleMarkerDestroyed(markerUuid);
             }
@@ -266,6 +277,7 @@ public class ChunkloaderForgeMod {
             fakePlayer.remove(Entity.RemovalReason.KILLED);
         } catch (Exception e) {
         }
+        return true;
     }
 
     @SubscribeEvent
@@ -291,15 +303,34 @@ public class ChunkloaderForgeMod {
             return;
         }
 
+        event.setAmount(0.0f);
+
         Entity attacker = event.getSource().getEntity();
         if (!(attacker instanceof Player player)) {
             event.setAmount(0.0f);
             return;
         }
 
+        if (!(attacker instanceof ServerPlayer attackerPlayer)) {
+            return;
+        }
+        if (!PermissionManager.canUse(attackerPlayer)) {
+            attackerPlayer.sendSystemMessage(Component.translatable("message.chunkloader.no_permission_interact"));
+            return;
+        }
+        if (!PermissionManager.canModifyEntry(attackerPlayer,
+                chunkloaderManager.getEntryByMarkerUuid(markerUuid))) {
+            attackerPlayer.sendSystemMessage(Component.literal("You don't own this player."));
+            return;
+        }
+
         try {
             if (player.isShiftKeyDown()) {
-                chunkloaderManager.removeChunkloaderByMarkerUuid(markerUuid);
+                if (!(player instanceof net.minecraft.server.level.ServerPlayer serverPlayer)
+                        || !chunkloaderManager.confirmMarkerDelete(serverPlayer, markerUuid, true)) {
+                    return;
+                }
+                    chunkloaderManager.removeChunkloaderByMarkerUuid(markerUuid);
             } else {
                 chunkloaderManager.handleMarkerDestroyed(markerUuid);
             }

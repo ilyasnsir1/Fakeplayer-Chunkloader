@@ -28,6 +28,7 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
                 buf.writeUtf(entry.dimension() != null ? entry.dimension() : "");
                 buf.writeBoolean(entry.isFakeplayer());
                 buf.writeInt(entry.easterEggSkinIndex());
+                buf.writeUtf(entry.sharedBy() != null ? entry.sharedBy() : "");
             },
             buf -> {
                 int chunkX = buf.readInt();
@@ -40,13 +41,15 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
                 String dimension = buf.readUtf();
                 boolean isFakeplayer = buf.readBoolean();
                 int easterEggSkinIndex = buf.readInt();
+                String sharedBy = buf.readUtf();
                 return new DisabledChunkloaderEntry(
                     chunkX, chunkZ, blockX, blockY, blockZ,
                     name.isEmpty() ? null : name,
                     allowMobSpawning,
                     dimension.isEmpty() ? null : dimension,
                     isFakeplayer,
-                    easterEggSkinIndex
+                    easterEggSkinIndex,
+                    sharedBy.isEmpty() ? null : sharedBy
                 );
             }
         );
@@ -84,7 +87,8 @@ public record DisabledChunkloadersListPayload(List<DisabledChunkloaderEntry> dis
         boolean allowMobSpawning,
         String dimension,
         boolean isFakeplayer,
-        int easterEggSkinIndex
+        int easterEggSkinIndex,
+        String sharedBy
     ) {
         public boolean hasWarning() {
             return false;

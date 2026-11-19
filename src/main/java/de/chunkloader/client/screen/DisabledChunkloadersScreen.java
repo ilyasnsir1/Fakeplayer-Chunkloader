@@ -1,5 +1,6 @@
 package de.chunkloader.client.screen;
 
+import de.chunkloader.client.ChunkloaderKeyMappings;
 import de.chunkloader.client.network.ChunkloaderClientNetworking;
 
 import de.chunkloader.network.payload.DisabledChunkloadersListPayload;
@@ -159,14 +160,14 @@ public class DisabledChunkloadersScreen extends Screen {
 
         int buttonWidth = 100;
         int buttonSpacing = 10;
-        int totalButtonsWidth = parentScreen != null ? buttonWidth * 2 + buttonSpacing : buttonWidth;
+        int totalButtonsWidth = parentScreen != null ? buttonWidth * 3 + buttonSpacing * 2 : buttonWidth * 2 + buttonSpacing;
         int buttonX = (this.width - totalButtonsWidth) / 2;
         int buttonY = this.height - 30;
 
         if (parentScreen != null) {
             this.addRenderableWidget(Button.builder(
                     Component.literal("Back"),
-                    btn -> this.minecraft.setScreen(parentScreen))
+                    btn -> this.onClose())
                 .bounds(buttonX, buttonY, buttonWidth, 20)
                 .build()
             );
@@ -174,11 +175,21 @@ public class DisabledChunkloadersScreen extends Screen {
         }
 
         this.addRenderableWidget(Button.builder(
-                Component.literal("Close"),
-                btn -> this.minecraft.setScreen(null))
+                Component.literal("Active"),
+                btn -> ChunkloaderClientNetworking.requestActiveChunkloadersList())
             .bounds(buttonX, buttonY, buttonWidth, 20)
             .build()
         );
+        buttonX += buttonWidth + buttonSpacing;
+
+        if (parentScreen == null) {
+            this.addRenderableWidget(Button.builder(
+                    Component.literal("Close"),
+                    btn -> this.onClose())
+                .bounds(buttonX, buttonY, buttonWidth, 20)
+                .build()
+            );
+        }
 
         int availableHeight = contentBottom - contentTop;
         int itemsThatFitFully = availableHeight / ITEM_HEIGHT;
@@ -232,7 +243,7 @@ public class DisabledChunkloadersScreen extends Screen {
             int restoreButtonX = deleteButtonX - restoreDeleteSpacing - restoreButtonWidth;
 
             this.addRenderableWidget(Button.builder(
-                    Component.literal("Edit"),
+                    Component.literal("Move"),
                     btn -> {
                         this.minecraft.setScreen(new EditDisabledChunkloaderCoordsScreen(this, entry));
                     })
@@ -250,7 +261,7 @@ public class DisabledChunkloadersScreen extends Screen {
                 .build();
             this.addRenderableWidget(restoreButton);
 
-            this.addRenderableWidget(Button.builder(
+            Button deleteButton = Button.builder(
                     Component.literal("Delete").withStyle(ChatFormatting.RED),
                     btn -> {
                         String name = entry.name() != null ? entry.name() : "Unnamed";
@@ -279,8 +290,9 @@ public class DisabledChunkloadersScreen extends Screen {
                         ));
                     })
                 .bounds(deleteButtonX, itemY + 10, deleteButtonWidth, 20)
-                .build()
-            );
+                .build();
+            deleteButton.active = entry.sharedBy() == null;
+            this.addRenderableWidget(deleteButton);
         }
     }
 
@@ -327,6 +339,9 @@ public class DisabledChunkloadersScreen extends Screen {
             }
 
             String name = entry.name() != null ? entry.name() : "Unnamed";
+            if (entry.sharedBy() != null) {
+                name += " (Shared by " + entry.sharedBy() + ")";
+            }
             ChatFormatting color;
             int colorValue;
             if (entry.easterEggSkinIndex() >= 0) {
@@ -342,7 +357,7 @@ public class DisabledChunkloadersScreen extends Screen {
                 }
             } else {
                 color = ChatFormatting.BLUE;
-                colorValue = 0xFF5596FF;
+                colorValue = 0xFF5555FF;
             }
             Component nameText = Component.literal(name).withStyle(color);
             context.text(renderer, nameText, 20, itemY + 5, colorValue, false);
@@ -488,6 +503,16 @@ public class DisabledChunkloadersScreen extends Screen {
     }
 
     @Override
+    public boolean keyPressed(net.minecraft.client.input.KeyEvent keyInput) {
+        if (ChunkloaderKeyMappings.disabledChunkloadersKey != null
+                && ChunkloaderKeyMappings.disabledChunkloadersKey.matches(keyInput)) {
+            this.minecraft.setScreen(null);
+            return true;
+        }
+        return super.keyPressed(keyInput);
+    }
+
+    @Override
     public void extractBackground(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
     }
 
@@ -495,4 +520,9 @@ public class DisabledChunkloadersScreen extends Screen {
     public boolean isPauseScreen() {
         return false;
     }
+
+    public void onClose() {
+        this.minecraft.setScreen(parentScreen);
+    }
+
 }

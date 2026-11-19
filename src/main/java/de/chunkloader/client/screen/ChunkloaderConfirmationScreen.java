@@ -23,7 +23,6 @@ public class ChunkloaderConfirmationScreen extends Screen {
         this.onConfirm = onConfirm;
         this.onCancel = onCancel;
     }
-
     public Screen getParentScreen() {
         return parent;
     }
@@ -53,12 +52,7 @@ public class ChunkloaderConfirmationScreen extends Screen {
 
         this.addRenderableWidget(Button.builder(
                 Component.literal("Cancel"),
-                btn -> {
-                    if (onCancel != null) {
-                        onCancel.run();
-                    }
-                    this.minecraft.setScreen(parent);
-                })
+                btn -> this.onClose())
             .bounds(buttonX + buttonWidth + buttonSpacing, buttonY, buttonWidth, 20)
             .build()
         );
@@ -93,6 +87,14 @@ public class ChunkloaderConfirmationScreen extends Screen {
 
     @Override
     public void extractBackground(GuiGraphicsExtractor context, int mouseX, int mouseY, float delta) {
+    }
+
+    @Override
+    public void onClose() {
+        if (onCancel != null) {
+            onCancel.run();
+        }
+        this.minecraft.setScreen(parent);
     }
 
     @Override

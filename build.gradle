@@ -120,8 +120,6 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
 
-// ForgeGradle 7.0.35 bug on Gradle 9.3: runsJson is convention-mapped from this task's own
-// outputDirectory, so reading it in @TaskAction fails. Break the cycle with locationOnly.
 tasks.configureEach { task ->
     if (task.name.startsWith('slimeLauncherMetadata')) {
         def outDir = task.outputDirectory
