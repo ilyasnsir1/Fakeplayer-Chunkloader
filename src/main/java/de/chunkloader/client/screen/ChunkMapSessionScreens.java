@@ -1,9 +1,9 @@
 package de.chunkloader.client.screen;
 
+import net.minecraftforge.api.distmarker.OnlyIn;
+import net.minecraftforge.api.distmarker.Dist;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
 
 @OnlyIn(Dist.CLIENT)
 public final class ChunkMapSessionScreens {
@@ -32,6 +32,18 @@ public final class ChunkMapSessionScreens {
         if (isInChunkMapSession(client.screen)) {
             client.setScreen(null);
         }
+    }
+
+    public static void closeToGame(Minecraft client) {
+        if (client == null) {
+            return;
+        }
+        Screen current = client.screen;
+        ChunkMapScreen map = findChunkMapScreen(current);
+        if (map != null && map != current) {
+            map.closeSession();
+        }
+        client.setScreen(null);
     }
 
     private static Screen getParentIfKnown(Screen screen) {
@@ -64,6 +76,9 @@ public final class ChunkMapSessionScreens {
         }
         if (screen instanceof ChunkloaderContactScreen contact) {
             return contact.getParentScreen();
+        }
+        if (screen instanceof ActiveChunkloadersScreen active) {
+            return active.getParentScreen();
         }
         if (screen instanceof DisabledChunkloadersScreen disabled) {
             return disabled.getParentScreen();

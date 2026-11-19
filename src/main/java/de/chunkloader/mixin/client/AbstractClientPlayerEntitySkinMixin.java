@@ -29,6 +29,15 @@ public abstract class AbstractClientPlayerEntitySkinMixin {
             return;
         }
 
+        Identifier easterEggSkin = FakePlayerEasterEggSkinCache.getSkinTexture(uuid);
+        if (easterEggSkin != null) {
+            PlayerSkin overridden = SkinOverrideHelper.applyBodyOverride(original, easterEggSkin);
+            if (overridden != null) {
+                cir.setReturnValue(overridden);
+                return;
+            }
+        }
+
         CustomFakePlayerSkinCache.CustomSkin customSkin = CustomFakePlayerSkinCache.getSkin(uuid);
         if (customSkin != null) {
             PlayerSkin overridden = SkinOverrideHelper.applyBodyOverride(
@@ -36,15 +45,6 @@ public abstract class AbstractClientPlayerEntitySkinMixin {
                 customSkin.assetId(),
                 customSkin.model()
             );
-            if (overridden != null) {
-                cir.setReturnValue(overridden);
-            }
-            return;
-        }
-
-        Identifier easterEggSkin = FakePlayerEasterEggSkinCache.getSkinTexture(uuid);
-        if (easterEggSkin != null) {
-            PlayerSkin overridden = SkinOverrideHelper.applyBodyOverride(original, easterEggSkin);
             if (overridden != null) {
                 cir.setReturnValue(overridden);
             }

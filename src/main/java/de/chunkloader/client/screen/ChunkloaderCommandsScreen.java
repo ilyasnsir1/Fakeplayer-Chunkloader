@@ -1,62 +1,141 @@
 package de.chunkloader.client.screen;
 
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.api.distmarker.OnlyIn;
+import com.mojang.blaze3d.platform.InputConstants;
+import java.util.ArrayList;
+import java.util.List;
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import net.minecraft.ChatFormatting;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
+import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.util.Mth;
 
 @OnlyIn(Dist.CLIENT)
 public class ChunkloaderCommandsScreen extends Screen {
+    private static final int LINE_HEIGHT = 12;
+    private static final int ENTRY_GAP = 10;
+    private static final int MIN_ENTRY_GAP = 5;
+    private static final int SCROLLBAR_WIDTH = 3;
+    private static final int TEXT_OVERHANG = 2;
 
-    private final Screen parent;
-    private int scrollOffset = 0;
-    private int contentTop;
-    private int contentBottom;
-    private int totalContentHeight;
-
-    private boolean scrollbarDragging = false;
-    private int scrollbarDragOffsetY = 0;
-
-    private static final class ScrollbarMetrics {
-        private final int x;
-        private final int width;
-        private final int trackTop;
-        private final int trackHeight;
-        private final int thumbY;
-        private final int thumbHeight;
-        private final int maxScroll;
-
-        private ScrollbarMetrics(int x, int width, int trackTop, int trackHeight, int thumbY, int thumbHeight, int maxScroll) {
-            this.x = x;
-            this.width = width;
-            this.trackTop = trackTop;
-            this.trackHeight = trackHeight;
-            this.thumbY = thumbY;
-            this.thumbHeight = thumbHeight;
-            this.maxScroll = maxScroll;
+    private record CommandEntry(String command, String description, String example) {
+        private CommandEntry(String command, String description) {
+            this(command, description, "");
         }
     }
 
-    private ScrollbarMetrics getScrollbarMetrics() {
-        int availableHeight = contentBottom - contentTop;
-        int totalHeightWithPadding = totalContentHeight + 40;
-        if (availableHeight <= 0 || totalHeightWithPadding <= availableHeight) {
-            return null;
+    private enum Topic {
+        BASICS("Basics", "Use /fp as a shortcut for /fakeplayer. Press Tab while typing the name of a Fakeplayer or Chunkplayer to see suggestions.",
+            new CommandEntry("/fp help", "Opens Chunk Map Help. You can use it before placing your first Fakeplayer."),
+            new CommandEntry("/fp add", "Creates a Fakeplayer where you're standing."),
+            new CommandEntry("/fp add <x> <y> <z> [dimension]", "Places a Fakeplayer at those coordinates. Leave out the dimension to use your current one.", "/fp add 100 64 -20 minecraft:the_nether"),
+            new CommandEntry("/fp list", "Lists active and disabled players you can manage, with their dimension and block coordinates."),
+            new CommandEntry("/fp info <name>", "Shows a player's status, mode, location, selected area and mob settings."),
+            new CommandEntry("/fp stats", "Shows player counts, selected chunk totals and server memory use.")),
+        MANAGE("Manage", "You can turn players you own or have access to through sharing on or off. Owners and admins can also delete them.",
+            new CommandEntry("/fp disable <name>", "Turns a player off and keeps its settings and position saved.", "/fp disable Fakeplayer1"),
+            new CommandEntry("/fp restore <name>", "Turns a disabled player back on."),
+            new CommandEntry("/fp move <name> <x> <y> <z> [dimension]", "Moves an active or disabled player. Leave out the dimension to keep it in the same one.", "/fp move Fakeplayer1 100 64 -20 minecraft:overworld"),
+            new CommandEntry("/fp remove <name>", "Permanently deletes a saved player, whether it's enabled or disabled.")),
+        SETTINGS("Settings", "These commands change one Fakeplayer or Chunkplayer. Use the name shown on its map.",
+            new CommandEntry("/fp setradius <name> <0-3>", "Sets the selected area. A value of 0 selects one chunk, 1 selects 3 by 3, 2 selects 5 by 5, and 3 selects 7 by 7.", "/fp setradius Fakeplayer1 2"),
+            new CommandEntry("/fp toggle <name>", "Switches between Fakeplayer and Chunkplayer mode."),
+            new CommandEntry("/fp setmobtarget <name> <true/false>", "Use true to let mobs target a Fakeplayer."),
+            new CommandEntry("/fp pausemobs <name>", "Pauses mobs in chunks kept active only by that Chunkplayer."),
+            new CommandEntry("/fp resumemobs <name>", "Lets mobs tick again in that Chunkplayer's area."),
+            new CommandEntry("/fp rename <name> <newName>", "Pick a free name with 1 to 16 letters or digits. Names of online players are reserved.", "/fp rename Fakeplayer1 CropFarm"),
+            new CommandEntry("/fp namevisible <name> <true/false>", "Use false to hide the name above a player, or true to show it.")),
+        VISUALS("Visuals", "Run these in-game for an active player you can use. Only you see the outlines.",
+            new CommandEntry("/fp visualize <name>", "Toggles a flat outline of the selected area."),
+            new CommandEntry("/fp visualize3d <name>", "Toggles the 3D outline of the selected area."),
+            new CommandEntry("/fp visualize3d <name> <minY> <maxY>", "Toggles the 3D outline with a custom height range. Use two Y values from -64 to 320, lower one first.", "/fp visualize3d Fakeplayer1 0 64")),
+        ACCESS("Access", "Owners and admins can manage shares. Admins can also grant mod access and assign owners.",
+            new CommandEntry("/fp share <name> <player>", "Lets someone edit your Fakeplayer or Chunkplayer and switch it on or off. They must be online and already have mod access.", "/fp share CropFarm Steve"),
+            new CommandEntry("/fp shares <name>", "Lists who has access through sharing."),
+            new CommandEntry("/fp unshare <name> <player>", "Removes a player's share. They can be offline."),
+            new CommandEntry("/fp permission grant <player>", "Gives an online player mod access so they can create and manage their own Fakeplayers and Chunkplayers.", "/fp permission grant Steve"),
+            new CommandEntry("/fp permission revoke <player>", "Clears the grants for an online player."),
+            new CommandEntry("/fp owner <name> <player>", "Gives ownership to an online player. Ownership is tied to their account.", "/fp owner CropFarm Steve")),
+        LIMITS("Limits", "Admins can limit how many Fakeplayers and Chunkplayers are active. After a player's name, press Tab to see the available options.",
+            new CommandEntry("/fp limits", "Shows the server's enabled count, server limit and default per-owner limit."),
+            new CommandEntry("/fp limits server <limit>", "Caps enabled Fakeplayers and Chunkplayers across the server. Use 0 for unlimited.", "/fp limits server 20"),
+            new CommandEntry("/fp limits default <limit>", "Sets the limit for owners without a personal override. Use 0 for unlimited.", "/fp limits default 4"),
+            new CommandEntry("/fp limits player <player> <limit>", "Sets a personal limit for an online player. Use 0 to block adding or reactivating their own players. Active players keep running.", "/fp limits player Steve 2"),
+            new CommandEntry("/fp limits player <player> status", "Shows how many active players they own and the limit that applies."),
+            new CommandEntry("/fp limits player <player> unlimited", "Gives this player an unlimited personal limit. The server-wide cap still applies."),
+            new CommandEntry("/fp limits player <player> reset", "Uses the default per-owner limit for this player again.")),
+        SERVER("Server", "These commands require admin access. For disableall and removeall, leave off confirm to preview how many players are affected.",
+            new CommandEntry("/fp disableall confirm", "Turns off every enabled player and keeps it saved."),
+            new CommandEntry("/fp restoreall", "Restores disabled players up to the configured limits."),
+            new CommandEntry("/fp removeall confirm", "Permanently deletes every saved player."),
+            new CommandEntry("/fp removeall enabled confirm", "Permanently deletes every enabled player."),
+            new CommandEntry("/fp removeall disabled confirm", "Permanently deletes every disabled player."),
+            new CommandEntry("/fp tablist <true/false>", "Shows or hides Fakeplayers and Chunkplayers in the Tab list."),
+            new CommandEntry("/fp reload", "Reloads the player configuration from disk.")),
+        KEYBINDS("Keybinds", "These are the default keys. Change them in Minecraft's Controls or the map's Keybinds screen.",
+            new CommandEntry("F6", "Toggles the Simulation Status HUD for Fakeplayer areas."),
+            new CommandEntry("F7", "Toggles the Chunkplayer Status HUD."),
+            new CommandEntry("F8", "Lists disabled players you can manage. Use Restore to turn one back on."),
+            new CommandEntry("F9", "Lists active players you can manage. Use Open map to view their area."));
+
+        private final String label;
+        private final String introduction;
+        private final CommandEntry[] entries;
+
+        Topic(String label, String introduction, CommandEntry... entries) {
+            this.label = label;
+            this.introduction = introduction;
+            this.entries = entries;
+        }
+    }
+
+    private record TextLine(FormattedCharSequence text, int y, int color) {}
+    private record Scrollbar(int x, int thumbY, int thumbHeight) {}
+
+    private final Screen parent;
+    private final List<TextLine> lines = new ArrayList<>();
+    private Topic selectedTopic = Topic.BASICS;
+    private boolean sideNavigation;
+    private int navigationDividerX;
+    private int contentLeft;
+    private int contentRight;
+    private int layoutTop;
+    private int contentTop;
+    private int contentBottom;
+    private int contentHeight;
+    private int scrollOffset;
+    private boolean scrollbarDragging;
+    private int scrollbarDragOffsetY;
+
+    private final class TopicLink extends Button {
+        private final Topic topic;
+
+        private TopicLink(Topic topic, int x, int y, int width, int height) {
+            super(x, y, width, height, Component.literal(topic.label),
+                    ignored -> selectTopic(topic), DEFAULT_NARRATION);
+            this.topic = topic;
         }
 
-        int scrollbarWidth = 3;
-        int scrollbarX = this.width - scrollbarWidth - 2;
-        int scrollbarHeight = (int) ((double) availableHeight / totalHeightWithPadding * availableHeight);
-        int maxScroll = totalHeightWithPadding - availableHeight;
-        if (scrollbarHeight <= 0 || maxScroll <= 0) {
-            return null;
+        @Override
+        protected void renderContents(GuiGraphics context, int mouseX, int mouseY, float delta) {
+            var renderer = ChunkloaderCommandsScreen.this.font;
+            boolean selected = topic == selectedTopic;
+            int color = selected ? 0xFFFFFF55 : isHoveredOrFocused() ? 0xFFFFFFFF : 0xFFCCCCCC;
+            int labelX = sideNavigation ? getX() + 12 : getX() + (getWidth() - renderer.width(getMessage())) / 2;
+            int labelY = getY() + (getHeight() - 8) / 2;
+            var label = getMessage().copy();
+            if (isFocused()) {
+                label.withStyle(ChatFormatting.UNDERLINE);
+            }
+            if (selected) {
+                context.drawString(renderer, ">", labelX - 10, labelY, color, false);
+            }
+            context.drawString(renderer, label, labelX, labelY, color, false);
         }
-
-        int scrollbarY = contentTop + (int) ((double) scrollOffset / maxScroll * (availableHeight - scrollbarHeight));
-        return new ScrollbarMetrics(scrollbarX, scrollbarWidth, contentTop, availableHeight, scrollbarY, scrollbarHeight, maxScroll);
     }
 
     public ChunkloaderCommandsScreen(Screen parent) {
@@ -71,249 +150,185 @@ public class ChunkloaderCommandsScreen extends Screen {
     @Override
     protected void init() {
         super.init();
+        var layout = ScreenNavigation.descriptionLayout(this);
+        layoutTop = layout.top();
+        sideNavigation = width >= 360 && layout.height() >= ScreenNavigation.MIN_DESCRIPTION_HEIGHT;
+        contentLeft = 20;
+        contentRight = width - 20;
+        contentBottom = layout.bottom() - SectionedText.BOTTOM_INSET;
 
-        contentTop = 20;
-        contentBottom = this.height - 60;
+        Topic[] topics = Topic.values();
+        if (sideNavigation) {
+            int navigationLeft = 20;
+            int navigationWidth = 80;
+            navigationDividerX = navigationLeft + navigationWidth + 8;
+            contentLeft = navigationDividerX + 16;
+            contentTop = layoutTop + SectionedText.TOP_WITH_SIDEBAR;
+            int firstLinkY = contentTop;
+            int spacing = Math.min(24, (contentBottom - firstLinkY) / topics.length);
+            for (int i = 0; i < topics.length; i++) {
+                addRenderableWidget(new TopicLink(topics[i], navigationLeft,
+                        firstLinkY + i * spacing, navigationWidth, Math.min(20, spacing)));
+            }
+        } else {
+            int columns = Math.min(4, Math.max(1, (width - 24) / 58));
+            int rows = (topics.length + columns - 1) / columns;
+            int rowHeight = 18;
+            int linkWidth = Math.min(80, (width - 24) / columns);
+            for (int i = 0; i < topics.length; i++) {
+                int row = i / columns;
+                int rowSize = Math.min(columns, topics.length - row * columns);
+                int startX = (width - rowSize * linkWidth) / 2;
+                addRenderableWidget(new TopicLink(topics[i], startX + (i % columns) * linkWidth,
+                        layoutTop + 34 + row * rowHeight, linkWidth, rowHeight));
+            }
+            contentTop = layoutTop + 46 + rows * rowHeight;
+        }
 
-        totalContentHeight = 500;
+        scrollbarDragging = false;
+        layoutText();
+        ScreenNavigation.addBackAndCloseButtons(this, this::addRenderableWidget, layout.bottom());
+    }
 
-        int buttonWidth = 100;
-        int buttonX = (this.width - buttonWidth) / 2;
-        int buttonY = this.height - 30;
+    private void selectTopic(Topic topic) {
+        if (selectedTopic != topic) {
+            selectedTopic = topic;
+            scrollOffset = 0;
+            scrollbarDragging = false;
+            layoutText();
+        }
+    }
 
-        this.addRenderableWidget(Button.builder(
-                Component.literal("Back"),
-                btn -> this.minecraft.setScreen(parent))
-            .bounds(buttonX, buttonY, buttonWidth, 20)
-            .build()
-        );
+    private void layoutText() {
+        layoutText(ENTRY_GAP);
+        int overflow = getMaxScroll();
+        int gaps = selectedTopic.entries.length;
+        if (overflow > 0 && gaps > 0 && overflow <= gaps * (ENTRY_GAP - MIN_ENTRY_GAP)) {
+            layoutText(ENTRY_GAP - Math.ceilDiv(overflow, gaps));
+        }
+    }
+
+    private void layoutText(int entryGap) {
+        lines.clear();
+        int y = addWrappedLines(Component.literal(selectedTopic.introduction), 0, 0xFFCCCCCC) + entryGap;
+        for (CommandEntry entry : selectedTopic.entries) {
+            y = addWrappedLines(Component.literal(entry.command()), y, 0xFF55FF55);
+            y = addWrappedLines(Component.literal(entry.description()), y, 0xFFCCCCCC);
+            if (!entry.example().isEmpty()) {
+                y = addWrappedLines(Component.literal(entry.example()).withStyle(ChatFormatting.ITALIC), y, 0xFF999999);
+            }
+            y += entryGap;
+        }
+        contentHeight = y - entryGap - LINE_HEIGHT + font.lineHeight;
+    }
+
+    private int addWrappedLines(Component text, int y, int color) {
+        int maxWidth = Math.max(1, contentRight - contentLeft - 10);
+        for (FormattedCharSequence line : font.split(text, maxWidth)) {
+            lines.add(new TextLine(line, y, color));
+            y += LINE_HEIGHT;
+        }
+        return y;
     }
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
-        graphics.enableScissor(0, contentTop, this.width, contentBottom);
-        renderText(graphics);
-        graphics.disableScissor();
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
+        context.fill(0, 0, width, height, 0xC0101010);
+        Component heading = getTitle().copy().withStyle(ChatFormatting.BOLD);
+        context.drawString(font, heading, (width - font.width(heading)) / 2, layoutTop + 20, 0xFFFFFFFF, false);
 
-        super.render(graphics, mouseX, mouseY, delta);
+        if (sideNavigation) {
+            context.fill(navigationDividerX, contentTop, navigationDividerX + 1, contentBottom, 0x44FFFFFF);
+        }
 
-        graphics.enableScissor(0, contentTop, this.width, contentBottom);
-                graphics.disableScissor();
+        if (contentBottom > contentTop) {
+            context.enableScissor(contentLeft - TEXT_OVERHANG, contentTop, contentRight, contentBottom);
+            int originY = contentTop - Math.min(scrollOffset, getMaxScroll());
+            for (TextLine line : lines) {
+                int y = originY + line.y();
+                if (y + font.lineHeight > contentTop && y < contentBottom) {
+                    context.drawString(font, line.text(), contentLeft, y, line.color(), false);
+                }
+            }
+            context.disableScissor();
 
-        drawScrollbar(graphics);
+            Scrollbar scrollbar = getScrollbar();
+            if (scrollbar != null) {
+                int right = scrollbar.x() + SCROLLBAR_WIDTH;
+                context.fill(scrollbar.x(), contentTop, right, contentBottom, 0x33000000);
+                context.fill(scrollbar.x(), scrollbar.thumbY(), right, scrollbar.thumbY() + scrollbar.thumbHeight(), 0xFFAAAAAA);
+            }
+        }
+        super.render(context, mouseX, mouseY, delta);
+    }
+
+    private int getMaxScroll() {
+        int availableHeight = contentBottom - contentTop;
+        return availableHeight > 0 ? Math.max(0, contentHeight - availableHeight) : 0;
+    }
+
+    private Scrollbar getScrollbar() {
+        int maxScroll = getMaxScroll();
+        int height = contentBottom - contentTop;
+        if (maxScroll == 0 || height < 2) {
+            return null;
+        }
+        int thumbHeight = Mth.clamp((int) ((double) height * height / contentHeight), Math.min(12, height - 1), height - 1);
+        int thumbY = contentTop + (int) Math.round((double) Math.min(scrollOffset, maxScroll) / maxScroll * (height - thumbHeight));
+        return new Scrollbar(contentRight + 6, thumbY, thumbHeight);
     }
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        int availableHeight = contentBottom - contentTop;
-        int maxScroll = Math.max(0, totalContentHeight + 40 - availableHeight);
-
-        scrollOffset = (int) Math.max(0, Math.min(maxScroll,
-            scrollOffset - (int)(verticalAmount * 20)));
-        return true;
+        int maxScroll = getMaxScroll();
+        if (maxScroll > 0 && mouseX >= contentLeft && mouseX < width && mouseY >= contentTop && mouseY < contentBottom) {
+            scrollOffset = Mth.clamp(Math.min(scrollOffset, maxScroll) - (int) (verticalAmount * 20), 0, maxScroll);
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
 
     @Override
-    public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent event, boolean doubleClick) {
-        if (super.mouseClicked(event, doubleClick)) {
-            return true;
-        }
-
-        if (event.button() == 0) {
-            double mouseX = event.x();
-            double mouseY = event.y();
-            ScrollbarMetrics metrics = getScrollbarMetrics();
-            if (metrics != null
-                && mouseX >= metrics.x && mouseX < metrics.x + metrics.width
-                && mouseY >= metrics.thumbY && mouseY < metrics.thumbY + metrics.thumbHeight) {
+    public boolean mouseClicked(MouseButtonEvent click, boolean doubleClick) {
+        if (click.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+            Scrollbar scrollbar = getScrollbar();
+            if (scrollbar != null && click.x() >= scrollbar.x() && click.x() < scrollbar.x() + SCROLLBAR_WIDTH
+                    && click.y() >= scrollbar.thumbY() && click.y() < scrollbar.thumbY() + scrollbar.thumbHeight()) {
                 scrollbarDragging = true;
-                scrollbarDragOffsetY = (int) (mouseY - metrics.thumbY);
+                scrollbarDragOffsetY = (int) (click.y() - scrollbar.thumbY());
                 return true;
             }
         }
-
-        return false;
+        return super.mouseClicked(click, doubleClick);
     }
 
     @Override
-    public boolean mouseDragged(net.minecraft.client.input.MouseButtonEvent event, double deltaX, double deltaY) {
-        if (super.mouseDragged(event, deltaX, deltaY)) {
-            return true;
-        }
-
+    public boolean mouseDragged(MouseButtonEvent click, double deltaX, double deltaY) {
         if (scrollbarDragging) {
-            double mouseY = event.y();
-            ScrollbarMetrics metrics = getScrollbarMetrics();
-            if (metrics == null) {
-                scrollbarDragging = false;
-                return false;
-            }
-
-            int trackRange = metrics.trackHeight - metrics.thumbHeight;
-            if (trackRange <= 0) {
+            Scrollbar scrollbar = getScrollbar();
+            if (scrollbar != null) {
+                int trackRange = contentBottom - contentTop - scrollbar.thumbHeight();
+                int thumbOffset = Mth.clamp((int) click.y() - scrollbarDragOffsetY - contentTop, 0, trackRange);
+                scrollOffset = (int) Math.round((double) thumbOffset / trackRange * getMaxScroll());
                 return true;
             }
-
-            int newThumbY = (int) mouseY - scrollbarDragOffsetY;
-            newThumbY = Math.max(metrics.trackTop, Math.min(metrics.trackTop + trackRange, newThumbY));
-
-            int newScroll = (int) Math.round(((double) (newThumbY - metrics.trackTop) / trackRange) * metrics.maxScroll);
-            scrollOffset = (int) Math.max(0, Math.min(metrics.maxScroll, newScroll));
-            return true;
+            scrollbarDragging = false;
         }
-
-        return false;
+        return super.mouseDragged(click, deltaX, deltaY);
     }
 
     @Override
-    public boolean mouseReleased(net.minecraft.client.input.MouseButtonEvent event) {
-        if (super.mouseReleased(event)) {
-            return true;
-        }
-
+    public boolean mouseReleased(MouseButtonEvent click) {
         if (scrollbarDragging) {
             scrollbarDragging = false;
             return true;
         }
-
-        return false;
-    }
-
-    private void drawScrollbar(GuiGraphics graphics) {
-        int availableHeight = contentBottom - contentTop;
-        int totalHeightWithPadding = totalContentHeight + 40;
-
-        if (totalHeightWithPadding <= availableHeight) {
-            return;
-        }
-
-        int scrollbarWidth = 3;
-        int scrollbarX = this.width - scrollbarWidth - 2;
-        int scrollbarHeight = (int)((double)availableHeight / totalHeightWithPadding * availableHeight);
-        int maxScroll = totalHeightWithPadding - availableHeight;
-        if (maxScroll > 0) {
-            int scrollbarY = contentTop + (int)((double)scrollOffset / maxScroll * (availableHeight - scrollbarHeight));
-            graphics.fill(scrollbarX, contentTop, scrollbarX + scrollbarWidth, contentBottom, 0x33000000);
-            graphics.fill(scrollbarX, scrollbarY, scrollbarX + scrollbarWidth, scrollbarY + scrollbarHeight, 0xFFAAAAAA);
-        }
-    }
-
-    private void renderText(GuiGraphics graphics) {
-        var font = this.font;
-        int lineHeight = 12;
-        int sectionSpacing = 20;
-        int y = contentTop + 20 - scrollOffset;
-
-        Component title = Component.literal("Commands").withStyle(ChatFormatting.BOLD);
-        int titleWidth = font.width(title);
-        graphics.drawString(font, title, (this.width - titleWidth) / 2, y, 0xFFFFFFFF, false);
-        y += 30;
-
-        String[][][] commands = {
-            {{"Basic Commands", ""}},
-            {{"/fakeplayer add", "Creates a player at your current position", "Example: /fakeplayer add"}},
-            {{"/fakeplayer remove <name>", "Removes a player by name", "Example: /fakeplayer remove Fakeplayer1"}},
-            {{"/fakeplayer list", "Lists all players", "Example: /fakeplayer list"}},
-            {{"/fakeplayer info <name>", "Shows detailed information about a player", "Example: /fakeplayer info Fakeplayer1"}},
-            {{"/fakeplayer reload", "Reloads the configuration file", "Example: /fakeplayer reload"}},
-            {{"", ""}},
-            {{"Enable/Disable Commands", ""}},
-            {{"/fakeplayer disable <name>", "Toggles a player enabled/disabled", "Example: /fakeplayer disable Fakeplayer1"}},
-            {{"/fakeplayer restore <name>", "Restores a disabled player", "Example: /fakeplayer restore Fakeplayer1"}},
-            {{"/fakeplayer restoreall", "Restores all disabled players", "Example: /fakeplayer restoreall"}},
-            {{"/fakeplayer disableall", "Disables all players", "Example: /fakeplayer disableall"}},
-            {{"/fakeplayer removeall disabled", "Removes all disabled players", "Example: /fakeplayer removeall disabled"}},
-            {{"", ""}},
-            {{"Configuration Commands", ""}},
-            {{"/fakeplayer rename <name> <newName>", "Renames a player (alphanumeric only). Cannot rename to real player names.", "Example: /fakeplayer rename Fakeplayer1 MyPlayer"}},
-            {{"/fakeplayer setradius <name> <0-3>", "Sets chunk loading radius (0=1x1, 1=3x3, 2=5x5, 3=7x7)", "Example: /fakeplayer setradius Fakeplayer1 2"}},
-            {{"/fakeplayer setmobspawning <name> <true/false>", "Sets mode: true=Fakeplayer (mobs spawn near it like a real player), false=Chunkplayer (chunks-only). Not global.", "Example: /fakeplayer setmobspawning Fakeplayer1 false"}},
-            {{"/fakeplayer setmobtarget <name> <true/false>", "Fakeplayer only: allow mobs to aggro/pathfind to this player (AFK farm target). Default off.", "Example: /fakeplayer setmobtarget Fakeplayer1 true"}},
-            {{"/fakeplayer toggle <name>", "Toggles mob spawning on/off for a fakeplayer/chunkplayer", "Example: /fakeplayer toggle Fakeplayer1"}},
-            {{"/fakeplayer namevisible <name> <true/false>", "Shows/hides the player name", "Example: /fakeplayer namevisible Fakeplayer1 false"}},
-            {{"/fakeplayer tablist <true/false>", "Shows/hides all players from the tab list", "Example: /fakeplayer tablist false"}},
-            {{"", ""}},
-            {{"Visualization Commands", ""}},
-            {{"/fakeplayer visualize <name>", "Toggles chunk border visualization", "Example: /fakeplayer visualize Fakeplayer1"}},
-            {{"/fakeplayer visualize3d <name>", "Toggles 3D chunk visualization", "Example: /fakeplayer visualize3d Fakeplayer1"}},
-            {{"/fakeplayer visualize3d <name> <minY> <maxY>", "Toggles 3D visualization with height range", "Example: /fakeplayer visualize3d Fakeplayer1 0 64"}},
-            {{"", ""}},
-            {{"Statistics Commands", ""}},
-            {{"/fakeplayer stats", "Shows statistics and performance data (total, active, inactive, loaded chunks, memory usage)", "Example: /fakeplayer stats"}},
-            {{"", ""}},
-            {{"Alias", ""}},
-            {{"/fp", "Short alias for /fakeplayer (all commands work)", "Example: /fp add"}},
-            {{"", ""}},
-            {{"Permission Commands", ""}},
-            {{"/fakeplayer permission grant <player>", "Grants full access to the player", "Example: /fakeplayer permission grant Steve"}},
-            {{"/fakeplayer permission revoke <player>", "Revokes access", "Example: /fakeplayer permission revoke Steve"}},
-            {{"", ""}},
-            {{"Client-Side Keybinds", ""}},
-            {{"F6", "Toggle Simulation Status HUD", "Shows live status if you're within simulation distance of a player"}},
-            {{"F7", "Toggle Chunk Loading Status HUD", "Shows live status if you're in a chunk loaded by a player"}},
-            {{"F8", "Open Disabled Players List", "Shows all disabled players for management"}},
-            {{"Note:", "Keybinds can be changed in Controls settings or via the Keybinds button in the chunk map", "HUDs update automatically every 2 seconds"}}
-        };
-
-        boolean isFirstSection = true;
-        int lastSectionEndY = y;
-        for (String[][] cmdGroup : commands) {
-            String[] cmd = cmdGroup[0];
-            if (cmd[0].isEmpty() && cmd[1].isEmpty()) {
-                y += sectionSpacing;
-                continue;
-            }
-
-            if (cmd[1].isEmpty()) {
-                if (!isFirstSection) {
-                    int separatorY = lastSectionEndY + sectionSpacing / 2;
-                    int separatorWidth = Math.min(200, this.width - 100);
-                    int separatorX = (this.width - separatorWidth) / 2;
-                    drawSeparator(graphics, separatorX, separatorY, separatorWidth);
-                }
-                isFirstSection = false;
-
-                Component header = Component.literal(cmd[0]).withStyle(ChatFormatting.BOLD, ChatFormatting.YELLOW);
-                int headerWidth = font.width(header);
-                graphics.drawString(font, header, (this.width - headerWidth) / 2, y, 0xFFFFFFFF, false);
-                y += lineHeight + 4;
-            } else {
-                int cmdWidth = font.width(Component.literal(cmd[0]));
-                graphics.drawString(font, Component.literal(cmd[0]).withStyle(ChatFormatting.GREEN),
-                    (this.width - cmdWidth) / 2, y, 0xFFFFFFFF, false);
-                y += lineHeight;
-
-                int descWidth = font.width(Component.literal(cmd[1]));
-                graphics.drawString(font, Component.literal(cmd[1]),
-                    (this.width - descWidth) / 2, y, 0xFFCCCCCC, false);
-                y += lineHeight;
-
-                if (cmd.length > 2 && !cmd[2].isEmpty()) {
-                    int exampleWidth = font.width(Component.literal(cmd[2]));
-                    graphics.drawString(font, Component.literal(cmd[2]).withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC),
-                        (this.width - exampleWidth) / 2, y, 0xFF999999, false);
-                    y += lineHeight;
-                }
-                y += 10;
-                lastSectionEndY = y;
-            }
-        }
-
-        totalContentHeight = y - contentTop - 20 + scrollOffset;
-    }
-
-    private void drawSeparator(GuiGraphics graphics, int x, int y, int width) {
-        graphics.fill(x, y, x + width, y + 1, 0x66FFFFFF);
-    }
-
-    private void drawDimBackground(GuiGraphics graphics) {
-        graphics.fill(0, 0, this.width, this.height, 0xC0101010);
+        return super.mouseReleased(click);
     }
 
     @Override
-    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float delta) {
-        super.renderBackground(graphics, mouseX, mouseY, delta);
-        drawDimBackground(graphics);
+    public void onClose() {
+        this.minecraft.setScreen(parent);
     }
 
     @Override
@@ -321,4 +336,3 @@ public class ChunkloaderCommandsScreen extends Screen {
         return false;
     }
 }
-
