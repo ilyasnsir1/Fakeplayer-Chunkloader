@@ -19,14 +19,12 @@ repositories {
 }
 
 loom {
-    // Access widener is empty - re-enable when needed
-    // accessWidenerPath = file("src/main/resources/chunkloader.accesswidener")
+
     enableModProvidedJavadoc = false
 }
 
 dependencies {
-    // Mojang mappings are the default in Loom 1.16+ (Yarn discontinued for 26.1+).
-    // Loom 1.16 exposes Fabric dependencies through Gradle's standard implementation configuration.
+
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
@@ -59,7 +57,7 @@ java {
     def javaVersion = JavaVersion.toVersion(targetJavaVersion)
     sourceCompatibility = javaVersion
     targetCompatibility = javaVersion
-    // Use the JDK that's running Gradle (Java 25+ required); avoids toolchain auto-provisioning.
+
     if (JavaVersion.current() < javaVersion) {
         toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
     }
