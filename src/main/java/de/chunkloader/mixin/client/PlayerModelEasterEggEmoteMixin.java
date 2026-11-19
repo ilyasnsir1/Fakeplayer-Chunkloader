@@ -161,7 +161,7 @@ public abstract class PlayerModelEasterEggEmoteMixin {
         if (client == null || client.level == null) {
             return;
         }
-        float currentAge = getFloatField(renderState, "age", "ageInTicks", 0.0f);
+        float currentAge = renderState.ageInTicks;
         Float startAge = FakePlayerEasterEggEmoteCache.getOrInitStartAge(
                 player.getUUID(),
                 currentAge,
@@ -530,32 +530,5 @@ public abstract class PlayerModelEasterEggEmoteMixin {
         } catch (Exception ignored) {
         }
         return fallback;
-    }
-
-    private static float getFloatField(Object target, String primary, String secondary, float fallback) {
-        Float value = getFloatField(target, primary, fallback);
-        if (value != null) {
-            return value;
-        }
-        value = getFloatField(target, secondary, fallback);
-        return value != null ? value : fallback;
-    }
-
-    private static Float getFloatField(Object target, String name, float fallback) {
-        if (target == null) {
-            return null;
-        }
-        try {
-            java.lang.reflect.Field field = target.getClass().getField(name);
-            return field.getFloat(target);
-        } catch (Exception ignored) {
-        }
-        try {
-            java.lang.reflect.Field field = target.getClass().getDeclaredField(name);
-            field.setAccessible(true);
-            return field.getFloat(target);
-        } catch (Exception ignored) {
-        }
-        return null;
     }
 }

@@ -9,6 +9,7 @@ import com.google.gson.JsonParser;
 import com.mojang.logging.LogUtils;
 import de.chunkloader.ChunkloaderConstants;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 import org.slf4j.Logger;
 
 import java.io.File;
@@ -26,12 +27,19 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class ChunkloaderConfig {
+    public static final int UNLIMITED_PLAYER_LIMIT = -1;
+
+    private static final String BLOCKED_PLAYER_LIMIT = "blocked";
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String BACKUPS_SUBFOLDER = "backups";
@@ -49,6 +57,10 @@ public class ChunkloaderConfig {
     private volatile long cachedVersion = -1;
 
     private boolean tabListVisibleAll = true;
+    private int serverLoaderLimit = ChunkloaderConstants.MAX_CHUNKLOADERS;
+    private int defaultPlayerLoaderLimit = 0;
+    private final Map<UUID, Integer> playerLoaderLimits = new HashMap<>();
+    private final MinecraftServer server;
     private final Path configPath;
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
     private long lastBackupTimeMs = 0L;
@@ -62,6 +74,7 @@ public class ChunkloaderConfig {
     }
 
     public ChunkloaderConfig(MinecraftServer server) {
+        this.server = server;
         this.configPath = ChunkloaderPaths.getChunkloaderDir(server).resolve(CONFIG_FILE);
     }
 
@@ -80,6 +93,7 @@ public class ChunkloaderConfig {
                     needsSave = true;
                 }
 
+                config.readLimits(json);
                 if (json.has("tabListVisibleAll")) {
                     config.tabListVisibleAll = json.get("tabListVisibleAll").getAsBoolean();
                 }
@@ -113,6 +127,7 @@ public class ChunkloaderConfig {
                                     : "minecraft:overworld";
                             String ownerName = chunkObj.has("ownerName") ? chunkObj.get("ownerName").getAsString()
                                     : null;
+                            UUID ownerUuid = readOwnerUuid(chunkObj);
                             Integer easterEggSkinIndex = EasterEggSkinGuard.readVerifiedIndex(
                                     chunkObj, dimension, chunkX, chunkZ);
                             float spawnYaw = chunkObj.has("spawnYaw") ? chunkObj.get("spawnYaw").getAsFloat() : 0.0f;
@@ -120,6 +135,7 @@ public class ChunkloaderConfig {
                             if (!allowMobSpawning) {
                                 mobTarget = false;
                             }
+                            boolean mobAi = chunkObj.has("mobAi") && chunkObj.get("mobAi").getAsBoolean();
 
                             chunkRadius = Math.max(ChunkloaderConstants.MIN_RADIUS,
                                     Math.min(ChunkloaderConstants.MAX_RADIUS, chunkRadius));
@@ -133,7 +149,7 @@ public class ChunkloaderConfig {
 
                             config.chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name,
                                     enabled, nameVisible, chunkRadius, allowMobSpawning, dimension, ownerName,
-                                    easterEggSkinIndex, spawnYaw, mobTarget));
+                                    easterEggSkinIndex, spawnYaw, mobTarget, mobAi, ownerUuid, readShares(chunkObj)));
                         } catch (Exception e) {
 
                         }
@@ -147,10 +163,15 @@ public class ChunkloaderConfig {
                     try {
                         try (FileReader restoredReader = new FileReader(configFile)) {
                             JsonObject restoredJson = JsonParser.parseReader(restoredReader).getAsJsonObject();
-                            config.chunkEntries.clear();
-                            if (restoredJson.has("tabListVisibleAll")) {
-                                config.tabListVisibleAll = restoredJson.get("tabListVisibleAll").getAsBoolean();
+                            int restoredVersion = getConfigVersion(restoredJson);
+                            if (restoredVersion != CONFIG_VERSION) {
+                                migrateConfig(restoredJson, restoredVersion);
+                                needsSave = true;
                             }
+                            config.readLimits(restoredJson);
+                            config.chunkEntries.clear();
+                            config.tabListVisibleAll = restoredJson.has("tabListVisibleAll")
+                                    ? restoredJson.get("tabListVisibleAll").getAsBoolean() : true;
                             if (restoredJson.has("chunkloaders")) {
                                 JsonArray chunkloaders = restoredJson.getAsJsonArray("chunkloaders");
                                 for (JsonElement element : chunkloaders) {
@@ -180,6 +201,7 @@ public class ChunkloaderConfig {
                                                 : "minecraft:overworld";
                                         String ownerName = chunkObj.has("ownerName") ? chunkObj.get("ownerName").getAsString()
                                                 : null;
+                                        UUID ownerUuid = readOwnerUuid(chunkObj);
                                         Integer easterEggSkinIndex = EasterEggSkinGuard.readVerifiedIndex(
                                     chunkObj, dimension, chunkX, chunkZ);
                             float spawnYaw = chunkObj.has("spawnYaw") ? chunkObj.get("spawnYaw").getAsFloat() : 0.0f;
@@ -187,6 +209,7 @@ public class ChunkloaderConfig {
                                         if (!allowMobSpawning) {
                                             mobTarget = false;
                                         }
+                                        boolean mobAi = chunkObj.has("mobAi") && chunkObj.get("mobAi").getAsBoolean();
 
                                         chunkRadius = Math.max(ChunkloaderConstants.MIN_RADIUS,
                                                 Math.min(ChunkloaderConstants.MAX_RADIUS, chunkRadius));
@@ -199,7 +222,7 @@ public class ChunkloaderConfig {
 
                                         config.chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name,
                                                 enabled, nameVisible, chunkRadius, allowMobSpawning, dimension, ownerName,
-                                                easterEggSkinIndex, spawnYaw, mobTarget));
+                                                easterEggSkinIndex, spawnYaw, mobTarget, mobAi, ownerUuid, readShares(chunkObj)));
                                     } catch (Exception entryEx) {
                                         LOGGER.warn("Failed to load restored chunkloader entry, skipping", entryEx);
                                     }
@@ -211,7 +234,7 @@ public class ChunkloaderConfig {
                         LOGGER.error("CRITICAL: Config backup restore succeeded but reload failed. Saving empty default config.", reloadEx);
                         config.chunkEntries.clear();
                         try {
-                            config.save();
+                            config.saveImmediate();
                         } catch (Exception saveEx) {
                             LOGGER.error("Failed to create default config", saveEx);
                         }
@@ -219,7 +242,7 @@ public class ChunkloaderConfig {
                 } else {
                     LOGGER.error("CRITICAL: Config load failed and no valid backup could be restored. Saving empty default config.");
                     try {
-                        config.save();
+                        config.saveImmediate();
                     } catch (Exception saveEx) {
                         LOGGER.error("Failed to create default config", saveEx);
                     }
@@ -227,7 +250,7 @@ public class ChunkloaderConfig {
             }
             if (needsSave) {
                 try {
-                    config.save();
+                    config.saveImmediate();
                     LOGGER.info("Config migrated to version {}", CONFIG_VERSION);
                 } catch (Exception e) {
                     LOGGER.warn("Failed to persist migrated config", e);
@@ -235,7 +258,7 @@ public class ChunkloaderConfig {
             }
         } else {
             try {
-                config.save();
+                config.saveImmediate();
             } catch (Exception e) {
                 LOGGER.error("Failed to create default config file", e);
             }
@@ -254,21 +277,33 @@ public class ChunkloaderConfig {
     }
 
     public void flushPendingSave() {
-        if (savePending) {
-            saveImmediate();
+        lock.writeLock().lock();
+        try {
+            if (savePending) {
+                saveImmediate();
+            }
+        } finally {
+            lock.writeLock().unlock();
         }
     }
 
     public void saveImmediate() {
-        synchronized (saveScheduleLock) {
-            if (pendingSaveTask != null) {
-                pendingSaveTask.cancel();
-                pendingSaveTask = null;
-            }
-            savePending = false;
-        }
+        saveImmediate(null);
+    }
+
+    private void saveImmediate(TimerTask scheduledTask) {
         lock.writeLock().lock();
         try {
+            synchronized (saveScheduleLock) {
+                if (scheduledTask != null && pendingSaveTask != scheduledTask) {
+                    return;
+                }
+                if (pendingSaveTask != null) {
+                    pendingSaveTask.cancel();
+                    pendingSaveTask = null;
+                }
+                savePending = false;
+            }
             Path parent = configPath.getParent();
             if (parent != null) {
                 try {
@@ -282,6 +317,17 @@ public class ChunkloaderConfig {
             JsonArray chunkloaders = new JsonArray();
             json.addProperty("configVersion", CONFIG_VERSION);
             json.addProperty("tabListVisibleAll", tabListVisibleAll);
+            json.addProperty("serverLoaderLimit", serverLoaderLimit);
+            json.addProperty("defaultPlayerLoaderLimit", defaultPlayerLoaderLimit);
+            JsonObject playerLimits = new JsonObject();
+            playerLoaderLimits.forEach((uuid, limit) -> {
+                if (limit == 0) {
+                    playerLimits.addProperty(uuid.toString(), BLOCKED_PLAYER_LIMIT);
+                } else {
+                    playerLimits.addProperty(uuid.toString(), limit == UNLIMITED_PLAYER_LIMIT ? 0 : limit);
+                }
+            });
+            json.add("playerLoaderLimits", playerLimits);
 
             for (ChunkloaderTarget entry : chunkEntries) {
                 JsonObject chunkObj = new JsonObject();
@@ -301,6 +347,14 @@ public class ChunkloaderConfig {
                 if (entry.ownerName() != null) {
                     chunkObj.addProperty("ownerName", entry.ownerName());
                 }
+                if (entry.ownerUuid() != null) {
+                    chunkObj.addProperty("ownerUuid", entry.ownerUuid().toString());
+                }
+                if (!entry.sharedWith().isEmpty()) {
+                    JsonObject shares = new JsonObject();
+                    entry.sharedWith().forEach((uuid, name) -> shares.addProperty(uuid.toString(), name));
+                    chunkObj.add("sharedWith", shares);
+                }
                                 if (entry.easterEggSkinIndex() != null) {
                     EasterEggSkinGuard.writeSignedIndex(
                             chunkObj,
@@ -314,6 +368,9 @@ public class ChunkloaderConfig {
                 }
                 if (entry.mobTarget()) {
                     chunkObj.addProperty("mobTarget", true);
+                }
+                if (entry.mobAi()) {
+                    chunkObj.addProperty("mobAi", true);
                 }
                 chunkloaders.add(chunkObj);
             }
@@ -341,6 +398,237 @@ public class ChunkloaderConfig {
             }
         } finally {
             lock.writeLock().unlock();
+        }
+    }
+
+    private void readLimits(JsonObject json) {
+        serverLoaderLimit = readLimit(json, "serverLoaderLimit", ChunkloaderConstants.MAX_CHUNKLOADERS);
+        defaultPlayerLoaderLimit = readLimit(json, "defaultPlayerLoaderLimit", 0);
+        playerLoaderLimits.clear();
+        if (json.has("playerLoaderLimits") && json.get("playerLoaderLimits").isJsonObject()) {
+            for (var entry : json.getAsJsonObject("playerLoaderLimits").entrySet()) {
+                try {
+                    UUID uuid = UUID.fromString(entry.getKey());
+                    playerLoaderLimits.put(uuid, readPlayerLimit(entry.getValue()));
+                } catch (RuntimeException invalid) {
+                    LOGGER.warn("Ignoring invalid player limit for {}", entry.getKey());
+                }
+            }
+        }
+    }
+
+    private static int readPlayerLimit(JsonElement value) {
+        if (value.isJsonPrimitive() && BLOCKED_PLAYER_LIMIT.equals(value.getAsString())) {
+            return 0;
+        }
+        int limit = value.getAsBigDecimal().intValueExact();
+        validateLimit(limit);
+        return limit == 0 ? UNLIMITED_PLAYER_LIMIT : limit;
+    }
+
+    private static int readLimit(JsonObject json, String name, int fallback) {
+        if (!json.has(name)) return fallback;
+        try {
+            int limit = json.get(name).getAsBigDecimal().intValueExact();
+            validateLimit(limit);
+            return limit;
+        } catch (RuntimeException invalid) {
+            LOGGER.warn("Invalid {}; using {}", name, fallback);
+            return fallback;
+        }
+    }
+
+    private static void validateLimit(int limit) {
+        if (limit < 0) throw new IllegalArgumentException("Limits must be zero or greater.");
+    }
+
+    public int getServerLoaderLimit() {
+        lock.readLock().lock();
+        try { return serverLoaderLimit; }
+        finally { lock.readLock().unlock(); }
+    }
+
+    public void setServerLoaderLimit(int limit) {
+        validateLimit(limit);
+        lock.writeLock().lock();
+        try { serverLoaderLimit = limit; save(); }
+        finally { lock.writeLock().unlock(); }
+    }
+
+    public int getDefaultPlayerLoaderLimit() {
+        lock.readLock().lock();
+        try { return defaultPlayerLoaderLimit; }
+        finally { lock.readLock().unlock(); }
+    }
+
+    public void setDefaultPlayerLoaderLimit(int limit) {
+        validateLimit(limit);
+        lock.writeLock().lock();
+        try { defaultPlayerLoaderLimit = limit; save(); }
+        finally { lock.writeLock().unlock(); }
+    }
+
+    public int getPlayerLoaderLimit(UUID uuid) {
+        lock.readLock().lock();
+        try { return effectivePlayerLimit(uuid); }
+        finally { lock.readLock().unlock(); }
+    }
+
+    private int effectivePlayerLimit(UUID uuid) {
+        int defaultLimit = defaultPlayerLoaderLimit == 0 ? UNLIMITED_PLAYER_LIMIT : defaultPlayerLoaderLimit;
+        return playerLoaderLimits.getOrDefault(uuid, defaultLimit);
+    }
+
+    public Integer getPlayerLoaderLimitOverride(UUID uuid) {
+        lock.readLock().lock();
+        try { return playerLoaderLimits.get(uuid); }
+        finally { lock.readLock().unlock(); }
+    }
+
+    public void setPlayerLoaderLimit(UUID uuid, int limit) {
+        Objects.requireNonNull(uuid, "Player UUID is required.");
+        if (limit != UNLIMITED_PLAYER_LIMIT) validateLimit(limit);
+        lock.writeLock().lock();
+        try { playerLoaderLimits.put(uuid, limit); save(); }
+        finally { lock.writeLock().unlock(); }
+    }
+
+    public void clearPlayerLoaderLimit(UUID uuid) {
+        Objects.requireNonNull(uuid, "Player UUID is required.");
+        lock.writeLock().lock();
+        try { playerLoaderLimits.remove(uuid); save(); }
+        finally { lock.writeLock().unlock(); }
+    }
+
+    public int getEnabledChunkloaderCount() {
+        lock.readLock().lock();
+        try { return enabledCount(null); }
+        finally { lock.readLock().unlock(); }
+    }
+
+    public int getEnabledChunkloaderCount(UUID ownerUuid, String ownerName) {
+        lock.readLock().lock();
+        try {
+            UUID limitOwner = resolveLimitOwnerUuid(ownerUuid, ownerName);
+            return ownerCount(limitOwner, resolveLimitOwnerName(limitOwner, ownerName), null);
+        }
+        finally { lock.readLock().unlock(); }
+    }
+
+    public String getActivationLimitMessage(UUID ownerUuid, String ownerName) {
+        lock.readLock().lock();
+        try { return activationLimitMessage(ownerUuid, ownerName, null, true); }
+        finally { lock.readLock().unlock(); }
+    }
+
+    public String getOwnerAssignmentLimitMessage(String name, UUID ownerUuid, String ownerName) {
+        lock.readLock().lock();
+        try {
+            ChunkloaderTarget entry = getEntryByName(name);
+            if (entry == null || !entry.enabled() || belongsToOwner(entry, ownerUuid, ownerName)) return null;
+            return activationLimitMessage(ownerUuid, ownerName, entry, false);
+        } finally { lock.readLock().unlock(); }
+    }
+
+    private UUID resolveLimitOwnerUuid(UUID ownerUuid, String ownerName) {
+        if (ownerUuid != null || ownerName == null || ownerName.isBlank() || server == null) return ownerUuid;
+        ServerPlayer online = server.getPlayerList().getPlayerByName(ownerName);
+        return online != null && !(online instanceof de.chunkloader.fakeplayer.ChunkloaderFakePlayer)
+                ? online.getUUID() : null;
+    }
+
+    private String resolveLimitOwnerName(UUID ownerUuid, String fallbackName) {
+        if (ownerUuid == null || server == null) return fallbackName;
+        ServerPlayer online = server.getPlayerList().getPlayer(ownerUuid);
+        return online != null && !(online instanceof de.chunkloader.fakeplayer.ChunkloaderFakePlayer)
+                ? online.getGameProfile().name() : fallbackName;
+    }
+
+    private static boolean belongsToOwner(ChunkloaderTarget entry, UUID ownerUuid, String ownerName) {
+        if (entry.ownerUuid() != null) return ownerUuid != null && entry.ownerUuid().equals(ownerUuid);
+        return ownerName != null && !ownerName.isBlank() && entry.ownerName() != null
+                && entry.ownerName().equalsIgnoreCase(ownerName);
+    }
+
+    private int enabledCount(ChunkloaderTarget exclude) {
+        int count = 0;
+        for (ChunkloaderTarget entry : chunkEntries) if (entry != exclude && entry.enabled()) count++;
+        return count;
+    }
+
+    private int ownerCount(UUID ownerUuid, String ownerName, ChunkloaderTarget exclude) {
+        int count = 0;
+        for (ChunkloaderTarget entry : chunkEntries) {
+            if (entry != exclude && entry.enabled() && belongsToOwner(entry, ownerUuid, ownerName)) count++;
+        }
+        return count;
+    }
+
+    private String activationLimitMessage(UUID ownerUuid, String ownerName, ChunkloaderTarget exclude, boolean checkServer) {
+        if (checkServer && serverLoaderLimit > 0 && enabledCount(exclude) >= serverLoaderLimit) {
+            return "Server limit reached: " + enabledCount(exclude) + " / " + serverLoaderLimit + " active.";
+        }
+        if (ownerUuid == null && (ownerName == null || ownerName.isBlank())) return null;
+        UUID limitOwner = resolveLimitOwnerUuid(ownerUuid, ownerName);
+        int playerLimit = effectivePlayerLimit(limitOwner);
+        if (playerLimit != UNLIMITED_PLAYER_LIMIT) {
+            int active = ownerCount(limitOwner, resolveLimitOwnerName(limitOwner, ownerName), exclude);
+            if (active >= playerLimit) {
+                return "Player limit reached: " + active + " / " + playerLimit + " active.";
+            }
+        }
+        return null;
+    }
+
+    public void copySettingsFrom(ChunkloaderConfig other) {
+        int serverLimit;
+        int defaultLimit;
+        boolean tabList;
+        Map<UUID, Integer> overrides;
+        other.lock.readLock().lock();
+        try {
+            serverLimit = other.serverLoaderLimit;
+            defaultLimit = other.defaultPlayerLoaderLimit;
+            tabList = other.tabListVisibleAll;
+            overrides = new HashMap<>(other.playerLoaderLimits);
+        } finally { other.lock.readLock().unlock(); }
+        lock.writeLock().lock();
+        try {
+            serverLoaderLimit = serverLimit;
+            defaultPlayerLoaderLimit = defaultLimit;
+            tabListVisibleAll = tabList;
+            playerLoaderLimits.clear();
+            playerLoaderLimits.putAll(overrides);
+            save();
+        } finally { lock.writeLock().unlock(); }
+    }
+
+    private static Map<UUID, String> readShares(JsonObject chunkObj) {
+        if (!(chunkObj.get("sharedWith") instanceof JsonObject shares)) {
+            return Map.of();
+        }
+        Map<UUID, String> result = new HashMap<>();
+        for (var share : shares.entrySet()) {
+            if (share.getValue().isJsonPrimitive() && share.getValue().getAsJsonPrimitive().isString()) {
+                try {
+                    result.put(UUID.fromString(share.getKey()), share.getValue().getAsString());
+                } catch (IllegalArgumentException e) {
+                    LOGGER.warn("Ignoring invalid shared player UUID '{}'", share.getKey());
+                }
+            }
+        }
+        return result;
+    }
+
+    private static UUID readOwnerUuid(JsonObject chunkObj) {
+        if (!chunkObj.has("ownerUuid") || chunkObj.get("ownerUuid").isJsonNull()) {
+            return null;
+        }
+        try {
+            return UUID.fromString(chunkObj.get("ownerUuid").getAsString());
+        } catch (RuntimeException invalidUuid) {
+            LOGGER.warn("Invalid ownerUuid; an administrator needs to assign an owner to this player.");
+            return new UUID(0L, 0L);
         }
     }
 
@@ -376,7 +664,7 @@ public class ChunkloaderConfig {
             pendingSaveTask = new TimerTask() {
                 @Override
                 public void run() {
-                    saveImmediate();
+                    saveImmediate(this);
                 }
             };
             saveTimer.schedule(pendingSaveTask, SAVE_DEBOUNCE_MS);
@@ -593,7 +881,7 @@ public class ChunkloaderConfig {
     }
 
     public int getMaxChunkloaders() {
-        return ChunkloaderConstants.MAX_CHUNKLOADERS;
+        return getServerLoaderLimit();
     }
 
     public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name) {
@@ -623,14 +911,17 @@ public class ChunkloaderConfig {
 
     public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name,
             String dimension, ChunkloaderTarget excludeEntry, Boolean forceEnabled, String ownerName, float spawnYaw) {
+        return addOrUpdateEntry(chunkX, chunkZ, blockX, blockY, blockZ, name, dimension, excludeEntry,
+                forceEnabled, ownerName, spawnYaw, null);
+    }
+
+    public boolean addOrUpdateEntry(int chunkX, int chunkZ, int blockX, int blockY, int blockZ, String name,
+            String dimension, ChunkloaderTarget excludeEntry, Boolean forceEnabled, String ownerName, float spawnYaw,
+            UUID ownerUuid) {
         lock.writeLock().lock();
         try {
             boolean entryExists = chunkEntries.stream().anyMatch(entry -> entry.chunkX() == chunkX
                     && entry.chunkZ() == chunkZ && entry.dimension().equals(dimension));
-            if (!entryExists && chunkEntries.size() >= ChunkloaderConstants.MAX_CHUNKLOADERS) {
-
-                return false;
-            }
 
             if (name != null && !entryExists) {
                 boolean nameExists = chunkEntries.stream()
@@ -664,12 +955,28 @@ public class ChunkloaderConfig {
             boolean allowMobSpawning = base != null ? base.allowMobSpawning() : true;
             int chunkRadius = base != null ? base.chunkRadius() : 0;
             String finalOwnerName = ownerName != null ? ownerName : (base != null ? base.ownerName() : null);
+            UUID finalOwnerUuid = ownerUuid != null ? ownerUuid : (base != null ? base.ownerUuid() : null);
+            if (enabled) {
+                String limitMessage;
+                if (existing == null || !existing.enabled()) {
+                    limitMessage = activationLimitMessage(finalOwnerUuid, finalOwnerName, existing, true);
+                } else if (!belongsToOwner(existing, finalOwnerUuid, finalOwnerName)) {
+                    limitMessage = activationLimitMessage(finalOwnerUuid, finalOwnerName, existing, false);
+                } else {
+                    limitMessage = null;
+                }
+                if (limitMessage != null) {
+                    LOGGER.warn("Cannot enable player: {}", limitMessage);
+                    return false;
+                }
+            }
+            float finalSpawnYaw = spawnYaw;
             Integer easterEggSkinIndex = base != null ? base.easterEggSkinIndex() : null;
             if (existing != null) {
                 chunkEntries.remove(existing);
             }
             chunkEntries.add(new ChunkloaderTarget(chunkX, chunkZ, blockX, blockY, blockZ, name, enabled, nameVisible,
-                    chunkRadius, allowMobSpawning, dimension, finalOwnerName, easterEggSkinIndex, spawnYaw, base != null ? base.mobTarget() : false));
+                    chunkRadius, allowMobSpawning, dimension, finalOwnerName, easterEggSkinIndex, finalSpawnYaw, base != null && base.mobTarget(), base != null ? base.mobAi() : ChunkloaderConstants.DEFAULT_MOB_AI, finalOwnerUuid, existing != null ? existing.sharedWith() : Map.of()));
             save();
             return true;
         } finally {
@@ -677,7 +984,61 @@ public class ChunkloaderConfig {
         }
     }
 
-    public void updateEntryEnabled(int chunkX, int chunkZ, String dimension, boolean enabled) {
+    public boolean setEntryOwner(String name, UUID ownerUuid, String ownerName) {
+        if (ownerUuid == null || ownerName == null || ownerName.isBlank()) {
+            return false;
+        }
+        lock.writeLock().lock();
+        try {
+            ChunkloaderTarget existing = getEntryByName(name);
+            if (existing == null) {
+                return false;
+            }
+            if (existing.enabled() && !belongsToOwner(existing, ownerUuid, ownerName)
+                    && activationLimitMessage(ownerUuid, ownerName, existing, false) != null) {
+                return false;
+            }
+            Map<UUID, String> shares = new HashMap<>(existing.sharedWith());
+            shares.remove(ownerUuid);
+            chunkEntries.remove(existing);
+            chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(),
+                    existing.blockX(), existing.blockY(), existing.blockZ(), existing.name(),
+                    existing.enabled(), existing.nameVisible(), existing.chunkRadius(),
+                    existing.allowMobSpawning(), existing.dimension(), ownerName,
+                    existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget(), existing.mobAi(), ownerUuid, shares));
+            save();
+            return true;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public boolean setEntrySharedPlayer(String name, UUID playerId, String playerName) {
+        lock.writeLock().lock();
+        try {
+            ChunkloaderTarget existing = getEntryByName(name);
+            if (existing == null) {
+                return false;
+            }
+            Map<UUID, String> shares = new HashMap<>(existing.sharedWith());
+            String previous = playerName != null ? shares.put(playerId, playerName) : shares.remove(playerId);
+            if (Objects.equals(previous, playerName)) {
+                return false;
+            }
+            chunkEntries.remove(existing);
+            chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(), existing.blockX(),
+                    existing.blockY(), existing.blockZ(), existing.name(), existing.enabled(),
+                    existing.nameVisible(), existing.chunkRadius(), existing.allowMobSpawning(),
+                    existing.dimension(), existing.ownerName(), existing.easterEggSkinIndex(), existing.spawnYaw(),
+                    existing.mobTarget(), existing.mobAi(), existing.ownerUuid(), shares));
+            save();
+            return true;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public boolean updateEntryEnabled(int chunkX, int chunkZ, String dimension, boolean enabled) {
         lock.writeLock().lock();
         try {
             ChunkloaderTarget existing = chunkEntries.stream()
@@ -685,14 +1046,20 @@ public class ChunkloaderConfig {
                     .findFirst()
                     .orElse(null);
             if (existing != null) {
+                if (enabled && !existing.enabled()
+                        && activationLimitMessage(existing.ownerUuid(), existing.ownerName(), existing, true) != null) {
+                    return false;
+                }
                 chunkEntries.remove(existing);
                 chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(),
                         existing.blockX(), existing.blockY(), existing.blockZ(),
                         existing.name(), enabled, existing.nameVisible(), existing.chunkRadius(),
                         existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
-                        existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget()));
+                        existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget(), existing.mobAi(), existing.ownerUuid(), existing.sharedWith()));
                 save();
+                return true;
             }
+            return false;
         } finally {
             lock.writeLock().unlock();
         }
@@ -711,7 +1078,7 @@ public class ChunkloaderConfig {
                         existing.blockX(), existing.blockY(), existing.blockZ(),
                         existing.name(), existing.enabled(), nameVisible, existing.chunkRadius(),
                         existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
-                        existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget()));
+                        existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget(), existing.mobAi(), existing.ownerUuid(), existing.sharedWith()));
                 save();
             }
         } finally {
@@ -760,7 +1127,7 @@ public class ChunkloaderConfig {
                     existing.blockX(), existing.blockY(), existing.blockZ(),
                     trimmedName, existing.enabled(), existing.nameVisible(), existing.chunkRadius(),
                     existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
-                    existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget()));
+                    existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget(), existing.mobAi(), existing.ownerUuid(), existing.sharedWith()));
             save();
             return true;
         } finally {
@@ -783,7 +1150,7 @@ public class ChunkloaderConfig {
                         existing.blockX(), existing.blockY(), existing.blockZ(),
                         existing.name(), existing.enabled(), existing.nameVisible(), chunkRadius,
                         existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
-                        existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget()));
+                        existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget(), existing.mobAi(), existing.ownerUuid(), existing.sharedWith()));
                 save();
             }
         } finally {
@@ -792,6 +1159,11 @@ public class ChunkloaderConfig {
     }
 
     public void updateEntryAllowMobSpawning(int chunkX, int chunkZ, String dimension, boolean allowMobSpawning) {
+        updateEntryAllowMobSpawning(chunkX, chunkZ, dimension, allowMobSpawning, true);
+    }
+
+    public void updateEntryAllowMobSpawning(int chunkX, int chunkZ, String dimension, boolean allowMobSpawning,
+            boolean renameForMode) {
         lock.writeLock().lock();
         try {
             ChunkloaderTarget existing = chunkEntries.stream()
@@ -802,7 +1174,7 @@ public class ChunkloaderConfig {
                 int newRadius = existing.chunkRadius();
 
                 String newName = existing.name();
-                if (newName != null) {
+                if (renameForMode && newName != null) {
                     String oldPrefix = existing.allowMobSpawning() ? "Fakeplayer" : "Chunkplayer";
                     String newPrefix = allowMobSpawning ? "Fakeplayer" : "Chunkplayer";
 
@@ -827,14 +1199,13 @@ public class ChunkloaderConfig {
                         existing.blockX(), existing.blockY(), existing.blockZ(),
                         newName, existing.enabled(), existing.nameVisible(), newRadius, allowMobSpawning,
                         existing.dimension(), existing.ownerName(),
-                        existing.easterEggSkinIndex(), existing.spawnYaw(), allowMobSpawning && existing.mobTarget()));
+                        existing.easterEggSkinIndex(), existing.spawnYaw(), allowMobSpawning && existing.mobTarget(), existing.mobAi(), existing.ownerUuid(), existing.sharedWith()));
                 save();
             }
         } finally {
             lock.writeLock().unlock();
         }
     }
-
 
     public void updateEntryMobTarget(int chunkX, int chunkZ, String dimension, boolean mobTarget) {
         lock.writeLock().lock();
@@ -850,7 +1221,29 @@ public class ChunkloaderConfig {
                         existing.blockX(), existing.blockY(), existing.blockZ(),
                         existing.name(), existing.enabled(), existing.nameVisible(), existing.chunkRadius(),
                         existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
-                        existing.easterEggSkinIndex(), existing.spawnYaw(), effective));
+                        existing.easterEggSkinIndex(), existing.spawnYaw(), effective, existing.mobAi(), existing.ownerUuid(), existing.sharedWith()));
+                save();
+            }
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public void updateEntryMobAi(int chunkX, int chunkZ, String dimension, boolean mobAi) {
+        lock.writeLock().lock();
+        try {
+            ChunkloaderTarget existing = chunkEntries.stream()
+                    .filter(entry -> entry.chunkX() == chunkX && entry.chunkZ() == chunkZ && Objects.equals(entry.dimension(), dimension))
+                    .findFirst()
+                    .orElse(null);
+            if (existing != null) {
+
+                chunkEntries.remove(existing);
+                chunkEntries.add(new ChunkloaderTarget(existing.chunkX(), existing.chunkZ(),
+                        existing.blockX(), existing.blockY(), existing.blockZ(),
+                        existing.name(), existing.enabled(), existing.nameVisible(), existing.chunkRadius(),
+                        existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
+                        existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget(), mobAi, existing.ownerUuid(), existing.sharedWith()));
                 save();
             }
         } finally {
@@ -871,7 +1264,7 @@ public class ChunkloaderConfig {
                         existing.blockX(), existing.blockY(), existing.blockZ(),
                         existing.name(), existing.enabled(), existing.nameVisible(), existing.chunkRadius(),
                         existing.allowMobSpawning(), existing.dimension(), existing.ownerName(),
-                        easterEggSkinIndex, existing.spawnYaw(), existing.mobTarget()));
+                        easterEggSkinIndex, existing.spawnYaw(), existing.mobTarget(), existing.mobAi(), existing.ownerUuid(), existing.sharedWith()));
                 save();
             }
         } finally {
@@ -917,7 +1310,16 @@ public class ChunkloaderConfig {
         return generateNextNameForPrefix(prefix, null);
     }
 
+    public String generateNextName(boolean isFakePlayer, ChunkloaderTarget excludeEntry, Predicate<String> nameTaken) {
+        String prefix = isFakePlayer ? "Fakeplayer" : "Chunkplayer";
+        return generateNextNameForPrefix(prefix, excludeEntry, nameTaken);
+    }
+
     private String generateNextNameForPrefix(String prefix, ChunkloaderTarget excludeEntry) {
+        return generateNextNameForPrefix(prefix, excludeEntry, name -> false);
+    }
+
+    private String generateNextNameForPrefix(String prefix, ChunkloaderTarget excludeEntry, Predicate<String> nameTaken) {
         Set<Integer> usedNumbers = new HashSet<>();
         for (ChunkloaderTarget entry : chunkEntries) {
             if (entry == excludeEntry) {
@@ -938,7 +1340,7 @@ public class ChunkloaderConfig {
         }
 
         int nextNum = 1;
-        while (usedNumbers.contains(nextNum)) {
+        while (usedNumbers.contains(nextNum) || nameTaken.test(prefix + nextNum)) {
             nextNum++;
         }
         return prefix + nextNum;
@@ -946,6 +1348,34 @@ public class ChunkloaderConfig {
 
     public String generateNextName() {
         return generateNextName(true);
+    }
+
+    public boolean moveEntry(int oldChunkX, int oldChunkZ, String dimension, int newChunkX, int newChunkZ,
+            int newBlockX, int newBlockY, int newBlockZ) {
+        return moveEntry(oldChunkX, oldChunkZ, dimension, newChunkX, newChunkZ, newBlockX, newBlockY, newBlockZ, dimension);
+    }
+
+    public boolean moveEntry(int oldChunkX, int oldChunkZ, String dimension, int newChunkX, int newChunkZ,
+            int newBlockX, int newBlockY, int newBlockZ, String newDimension) {
+        lock.writeLock().lock();
+        try {
+            ChunkloaderTarget existing = getEntry(oldChunkX, oldChunkZ, dimension);
+            if (existing == null) {
+                return false;
+            }
+            String targetDimension = newDimension == null || newDimension.isBlank() ? existing.dimension() : newDimension;
+            newBlockY = Math.max(ChunkloaderConstants.MIN_BLOCK_Y, Math.min(ChunkloaderConstants.MAX_BLOCK_Y, newBlockY));
+            chunkEntries.remove(existing);
+            chunkEntries.add(new ChunkloaderTarget(
+                    newChunkX, newChunkZ, newBlockX, newBlockY, newBlockZ,
+                    existing.name(), existing.enabled(), existing.nameVisible(), existing.chunkRadius(),
+                    existing.allowMobSpawning(), targetDimension, existing.ownerName(),
+                    existing.easterEggSkinIndex(), existing.spawnYaw(), existing.mobTarget(), existing.mobAi(), existing.ownerUuid(), existing.sharedWith()));
+            save();
+            return true;
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     public boolean removeEntry(int chunkX, int chunkZ, String dimension) {

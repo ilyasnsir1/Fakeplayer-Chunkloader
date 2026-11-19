@@ -11,11 +11,12 @@ import net.minecraftforge.api.distmarker.OnlyIn;
 @OnlyIn(Dist.CLIENT)
 public class SimulationStatusHUD {
 
-    private static boolean enabled = false;
-    private static SimulationStatusResponsePayload lastStatus = null;
-    private static long lastUpdateTime = 0;
-    private static boolean requestPending = false;
-    private static long requestPendingTime = 0;
+    private static volatile boolean enabled = false;
+    private static volatile long activationOrder;
+    private static volatile SimulationStatusResponsePayload lastStatus = null;
+    private static volatile long lastUpdateTime = 0;
+    private static volatile boolean requestPending = false;
+    private static volatile long requestPendingTime = 0;
     private static final long REQUEST_TIMEOUT_MS = 2000;
     private static final long UPDATE_INTERVAL_MS_CLOSE = 250;
     private static final long UPDATE_INTERVAL_MS_FAR = 1000;
@@ -31,14 +32,29 @@ public class SimulationStatusHUD {
     }
 
     public static void toggle() {
-        enabled = !enabled;
+        setEnabled(!enabled);
     }
 
     public static void setEnabled(boolean value) {
-        enabled = value;
-        if (!value) {
-            lastStatus = null;
+        if (enabled == value) {
+            return;
         }
+        resetStatus();
+        if (value) {
+            activationOrder = StatusHudLayout.nextActivationOrder();
+        }
+        enabled = value;
+    }
+
+    public static long getActivationOrder() {
+        return activationOrder;
+    }
+
+    public static void resetStatus() {
+        lastStatus = null;
+        lastUpdateTime = 0;
+        requestPending = false;
+        requestPendingTime = 0;
     }
 
     public static boolean isEnabled() {
@@ -46,6 +62,9 @@ public class SimulationStatusHUD {
     }
 
     public static void updateStatus(SimulationStatusResponsePayload status) {
+        if (!enabled) {
+            return;
+        }
         lastStatus = status;
         lastUpdateTime = System.currentTimeMillis();
         requestPending = false;
@@ -67,35 +86,22 @@ public class SimulationStatusHUD {
     }
 
     public static void render(GuiGraphics graphics, int screenWidth, int screenHeight) {
-        if (!enabled) {
+        render(graphics, screenWidth, screenHeight, StatusHudLayout.simulationOffset());
+    }
+
+    public static void render(GuiGraphics graphics, int screenWidth, int screenHeight, int offsetY) {
+        SimulationStatusResponsePayload status = lastStatus;
+        if (!enabled || status == null) {
             return;
         }
 
-        final SimulationStatusResponsePayload status = lastStatus;
-        boolean hasData = status != null;
-
         int padding = 5;
         int x = padding;
-        int y = padding;
+        int y = padding + offsetY;
 
         int boxWidth = 200;
         int lineHeight = 12;
-        int contentHeight = lineHeight;
-
-        if (hasData) {
-            if (lastStatus.inSimulatedChunk()) {
-                contentHeight += lineHeight;
-                contentHeight += lineHeight;
-                contentHeight += lineHeight;
-                if (lastStatus.distance() >= 0) {
-                    contentHeight += lineHeight;
-                }
-            }
-        } else {
-            contentHeight += lineHeight;
-        }
-
-        int boxHeight = contentHeight + padding * 2;
+        int boxHeight = getHeight();
 
         graphics.fill(x, y, x + boxWidth, y + boxHeight, 0x80000000);
 
@@ -104,7 +110,7 @@ public class SimulationStatusHUD {
         graphics.fill(x, y, x + 1, y + boxHeight, 0xFF000000);
         graphics.fill(x + boxWidth - 1, y, x + boxWidth, y + boxHeight, 0xFF000000);
 
-        int borderColor = hasData && status.inSimulatedChunk() ? 0xFF00FF00 : 0xFFFF0000;
+        int borderColor = status.inSimulatedChunk() ? 0xFF00FF00 : 0xFFFF0000;
         graphics.fill(x + 1, y + 1, x + boxWidth - 1, y + 2, borderColor);
         graphics.fill(x + 1, y + boxHeight - 2, x + boxWidth - 1, y + boxHeight - 1, borderColor);
         graphics.fill(x + 1, y + 1, x + 2, y + boxHeight - 1, borderColor);
@@ -119,19 +125,7 @@ public class SimulationStatusHUD {
 
         var font = Minecraft.getInstance().font;
 
-        if (status == null) {
-            Component statusText = Component.literal("● Simulation Distance").withStyle(ChatFormatting.YELLOW, ChatFormatting.BOLD);
-            graphics.drawString(font, statusText, textX, textY, 0xFFFFFFFF, false);
-            textY += lineHeight;
-
-            Component waitingText = Component.literal("Waiting for data...").withStyle(ChatFormatting.GRAY);
-            graphics.drawString(font, waitingText, textX, textY, 0xFFCCCCCC, false);
-
-            if (shouldBlink) {
-                int indicatorX = textX + font.width(statusText) + 3;
-                graphics.fill(indicatorX, textY - lineHeight + 4, indicatorX + 3, textY - lineHeight + 7, 0xFFFFFF00);
-            }
-        } else if (status.inSimulatedChunk()) {
+        if (status.inSimulatedChunk()) {
             Component statusText = Component.literal("● Simulation: ACTIVE").withStyle(ChatFormatting.GREEN, ChatFormatting.BOLD);
             graphics.drawString(font, statusText, textX, textY, 0xFFFFFFFF, false);
 
@@ -160,7 +154,7 @@ public class SimulationStatusHUD {
             textY += lineHeight;
 
             Component sdLabel = Component.literal("SD: ").withStyle(ChatFormatting.GRAY);
-            Component sdValue = Component.literal(status.simulationDistance() + " chunks").withStyle(ChatFormatting.WHITE);
+            Component sdValue = Component.literal(StatusHudLayout.describeDistance(status.simulationDistance())).withStyle(ChatFormatting.WHITE);
             int sdLabelWidth = font.width(sdLabel);
             graphics.drawString(font, sdLabel, textX, textY, 0xFFCCCCCC, false);
             graphics.drawString(font, sdValue, textX + sdLabelWidth, textY, 0xFFFFFFFF, false);
@@ -185,7 +179,7 @@ public class SimulationStatusHUD {
     }
 
     public static boolean needsUpdate() {
-        if (!enabled) {
+        if (!enabled || isRequestPending()) {
             return false;
         }
         long now = System.currentTimeMillis();
@@ -204,26 +198,27 @@ public class SimulationStatusHUD {
     }
 
     public static int getHeight() {
-        if (!enabled) {
+        SimulationStatusResponsePayload status = lastStatus;
+        if (!enabled || status == null) {
             return 0;
         }
-        int padding = 5;
-        int lineHeight = 12;
-        int contentHeight = lineHeight;
-        SimulationStatusResponsePayload status = lastStatus;
-        if (status != null) {
-            if (status.inSimulatedChunk()) {
-                contentHeight += lineHeight * 4;
+        int lines = 1;
+        if (status.inSimulatedChunk()) {
+            lines += 2;
+            if (status.fakeplayerName() != null && !status.fakeplayerName().isEmpty()) {
+                lines++;
             }
-        } else {
-            contentHeight += lineHeight;
+            if (status.distance() >= 0) {
+                lines++;
+            }
         }
-        return contentHeight + padding * 2;
+        return lines * 12 + 10;
     }
 
     public static void forceUpdate() {
         if (enabled) {
             lastUpdateTime = 0;
+            requestPending = false;
         }
     }
 }
