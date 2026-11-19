@@ -2,6 +2,7 @@ package de.chunkloader.mixin.client;
 
 import de.chunkloader.client.hud.ChunkplayerStatusHUD;
 import de.chunkloader.client.hud.SimulationStatusHUD;
+import de.chunkloader.client.hud.StatusHudLayout;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -22,7 +23,7 @@ public class GuiMixin {
             return;
         }
 
-        int offsetY = 0;
+        int chunkplayerOffsetY = StatusHudLayout.chunkplayerOffset();
 
         if (SimulationStatusHUD.isEnabled()) {
             SimulationStatusHUD.extractRenderState(
@@ -31,7 +32,6 @@ public class GuiMixin {
                 client.getWindow().getGuiScaledWidth(),
                 client.getWindow().getGuiScaledHeight()
             );
-            offsetY = SimulationStatusHUD.getHeight() + 5;
         }
 
         if (ChunkplayerStatusHUD.isEnabled()) {
@@ -40,7 +40,7 @@ public class GuiMixin {
                 client.font,
                 client.getWindow().getGuiScaledWidth(),
                 client.getWindow().getGuiScaledHeight(),
-                offsetY
+                chunkplayerOffsetY
             );
         }
     }
