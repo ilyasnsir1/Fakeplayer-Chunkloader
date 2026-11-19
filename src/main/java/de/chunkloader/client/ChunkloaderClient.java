@@ -6,8 +6,10 @@ import de.chunkloader.client.hud.ChunkplayerStatusHUD;
 import de.chunkloader.client.hud.SimulationStatusHUD;
 import de.chunkloader.client.screen.ChunkMapScreen;
 import de.chunkloader.client.screen.ChunkMapSessionScreens;
+import de.chunkloader.client.screen.ActiveChunkloadersScreen;
 import de.chunkloader.client.screen.DisabledChunkloadersScreen;
 import de.chunkloader.client.screen.EditDisabledChunkloaderCoordsScreen;
+import de.chunkloader.client.screen.ChunkMapHelpScreen;
 import de.chunkloader.util.KeybindHelper;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
@@ -30,6 +32,7 @@ public class ChunkloaderClient implements ClientModInitializer {
     public static KeyMapping simulationStatusHUDToggleKey;
     public static KeyMapping chunkplayerStatusHUDToggleKey;
     public static KeyMapping disabledChunkloadersKey;
+    public static KeyMapping activeChunkloadersKey;
 
     private static int lastChunkX = Integer.MIN_VALUE;
     private static int lastChunkZ = Integer.MIN_VALUE;
@@ -37,6 +40,15 @@ public class ChunkloaderClient implements ClientModInitializer {
     private static long lastSimulationStatusRequest = 0;
     private static long lastChunkplayerStatusRequest = 0;
     private static final long MIN_REQUEST_INTERVAL_MS = 200;
+
+    static void resetHudState() {
+        SimulationStatusHUD.resetStatus();
+        ChunkplayerStatusHUD.resetStatus();
+        lastSimulationStatusRequest = 0;
+        lastChunkplayerStatusRequest = 0;
+        lastChunkX = Integer.MIN_VALUE;
+        lastChunkZ = Integer.MIN_VALUE;
+    }
 
     private static void requestHUDStatusIfNeeded(boolean isEnabled, boolean needsUpdate, Runnable requestAction,
             long lastRequestTime, long currentTime, java.util.function.LongConsumer setLastRequestTime) {
@@ -49,6 +61,8 @@ public class ChunkloaderClient implements ClientModInitializer {
     @Override
     @SuppressWarnings("all")
     public void onInitializeClient() {
+        ChunkloaderNetworking.setSkinChangeResultClientHook(
+            de.chunkloader.client.screen.ChunkplayerSkinScreen::receiveSkinChangeResult);
         ChunkloaderNetworking.setClearCustomSkinClientHook(playerName -> {
             Minecraft client = Minecraft.getInstance();
             if (client != null) {
@@ -96,7 +110,14 @@ public class ChunkloaderClient implements ClientModInitializer {
                 GLFW.GLFW_KEY_F8,
                 Category.MISC));
 
+        activeChunkloadersKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.chunkloader.active_chunkloaders",
+                InputConstants.Type.KEYSYM,
+                GLFW.GLFW_KEY_F9,
+                Category.MISC));
+
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            resetHudState();
             FakePlayerNameCache.clear();
             FakePlayerVisibilityCache.clear();
             FakePlayerEasterEggSkinCache.clear();
@@ -104,9 +125,10 @@ public class ChunkloaderClient implements ClientModInitializer {
             CustomFakePlayerSkinCache.clearAllSkins();
         });
 
-        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) ->
-            CustomFakePlayerSkinCache.clearAllSkins()
-        );
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
+            resetHudState();
+            CustomFakePlayerSkinCache.clearAllSkins();
+        });
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             CustomFakePlayerSkinCache.refreshBindings();
@@ -131,9 +153,11 @@ public class ChunkloaderClient implements ClientModInitializer {
                     if (client.gui.screen() == null) {
                         SimulationStatusHUD.toggle();
                         if (SimulationStatusHUD.isEnabled()) {
+                            lastSimulationStatusRequest = 0;
                             lastChunkX = client.player.chunkPosition().x();
                             lastChunkZ = client.player.chunkPosition().z();
                             if ((now - lastSimulationStatusRequest) >= MIN_REQUEST_INTERVAL_MS) {
+                                SimulationStatusHUD.setRequestPending(true);
                                 ChunkloaderNetworking.requestSimulationStatus();
                                 lastSimulationStatusRequest = now;
                             }
@@ -144,12 +168,22 @@ public class ChunkloaderClient implements ClientModInitializer {
                 if (chunkplayerStatusHUDToggleKey.consumeClick()) {
                     ChunkplayerStatusHUD.toggle();
                     if (ChunkplayerStatusHUD.isEnabled() && client.player != null) {
+                        lastChunkplayerStatusRequest = 0;
                         lastChunkX = client.player.chunkPosition().x();
                         lastChunkZ = client.player.chunkPosition().z();
                         if ((now - lastChunkplayerStatusRequest) >= MIN_REQUEST_INTERVAL_MS) {
+                            ChunkplayerStatusHUD.setRequestPending(true);
                             ChunkloaderNetworking.requestChunkplayerStatus();
                             lastChunkplayerStatusRequest = now;
                         }
+                    }
+                }
+
+                if (activeChunkloadersKey != null && activeChunkloadersKey.consumeClick()) {
+                    if (client.gui.screen() == null) {
+                        ChunkloaderNetworking.requestActiveChunkloadersList();
+                    } else if (client.gui.screen() instanceof ActiveChunkloadersScreen) {
+                        client.gui.setScreen(null);
                     }
                 }
 
@@ -234,18 +268,43 @@ public class ChunkloaderClient implements ClientModInitializer {
             });
         });
 
-        ClientPlayNetworking.registerGlobalReceiver(OpenChunkMapPayload.TYPE, (payload, context) -> {
+        ClientPlayNetworking.PlayPayloadHandler<OpenChunkMapPayload> openChunkMapHandler = (payload, context) -> {
             context.client().execute(() -> {
                 if (context.client().player == null) {
                     return;
                 }
                 var data = payload.data();
-                ChunkMapScreen existingScreen = ChunkMapSessionScreens.findChunkMapScreen(context.client().gui.screen());
+                var currentScreen = context.client().gui.screen();
+                ChunkMapScreen existingScreen = ChunkMapSessionScreens.findChunkMapScreen(currentScreen);
                 if (existingScreen != null) {
-                    existingScreen.updateData(data);
+                    existingScreen.updateData(data, payload.canModify(), payload.shared());
                     return;
                 }
-                context.client().gui.setScreen(new ChunkMapScreen(data));
+                Screen returnScreen = currentScreen instanceof ActiveChunkloadersScreen ? currentScreen : null;
+                context.client().gui.setScreen(new ChunkMapScreen(data, returnScreen, payload.canModify(), payload.shared()));
+            });
+        };
+        ClientPlayNetworking.registerGlobalReceiver(OpenChunkMapPayload.TYPE, openChunkMapHandler);
+        ClientPlayNetworking.registerGlobalReceiver(OpenChunkMapPayload.WITH_ACCESS, openChunkMapHandler);
+
+        ClientPlayNetworking.registerGlobalReceiver(ChunkMapLoaderDetailsPayload.TYPE, (payload, context) -> {
+            context.client().execute(() -> {
+                ChunkMapScreen screen = ChunkMapSessionScreens.findChunkMapScreen(context.client().gui.screen());
+                if (screen != null) {
+                    screen.updateLoaderDetails(payload);
+                }
+            });
+        });
+
+        ClientPlayNetworking.registerGlobalReceiver(OpenHelpPayload.TYPE, (payload, context) -> {
+            var client = context.client();
+            client.execute(() -> {
+                if (client.player != null) {
+                    if (ChunkMapSessionScreens.isInChunkMapSession(client.gui.screen())) {
+                        ChunkMapSessionScreens.closeToGame(client);
+                    }
+                    client.gui.setScreen(new ChunkMapHelpScreen(null));
+                }
             });
         });
 
@@ -273,7 +332,29 @@ public class ChunkloaderClient implements ClientModInitializer {
             });
         });
 
-        ClientPlayNetworking.registerGlobalReceiver(DisabledChunkloadersListPayload.TYPE, (payload, context) -> {
+        ClientPlayNetworking.PlayPayloadHandler<ActiveChunkloadersListPayload> activeChunkloadersListHandler = (payload, context) -> {
+            context.client().execute(() -> {
+                if (context.client().player == null) {
+                    return;
+                }
+                Screen currentScreen = context.client().gui.screen();
+                if (currentScreen instanceof ActiveChunkloadersScreen existing) {
+                    existing.updateEntries(payload.entries());
+                } else if (currentScreen == null || currentScreen instanceof EditDisabledChunkloaderCoordsScreen || currentScreen instanceof ChunkMapScreen || currentScreen instanceof DisabledChunkloadersScreen) {
+                    Screen parent = null;
+                    if (currentScreen instanceof ChunkMapScreen) {
+                        parent = currentScreen;
+                    } else if (currentScreen instanceof DisabledChunkloadersScreen disabled) {
+                        parent = disabled.getParentScreen();
+                    }
+                    context.client().gui.setScreen(new ActiveChunkloadersScreen(payload.entries(), parent));
+                }
+            });
+        };
+        ClientPlayNetworking.registerGlobalReceiver(ActiveChunkloadersListPayload.TYPE, activeChunkloadersListHandler);
+        ClientPlayNetworking.registerGlobalReceiver(ActiveChunkloadersListPayload.WITH_SHARES, activeChunkloadersListHandler);
+
+        ClientPlayNetworking.PlayPayloadHandler<DisabledChunkloadersListPayload> disabledChunkloadersListHandler = (payload, context) -> {
             context.client().execute(() -> {
                 if (context.client().player == null) {
                     return;
@@ -282,12 +363,19 @@ public class ChunkloaderClient implements ClientModInitializer {
                 Screen currentScreen = context.client().gui.screen();
                 if (currentScreen instanceof DisabledChunkloadersScreen existingScreen) {
                     existingScreen.updateDisabledChunkloaders(payload.disabledChunkloaders());
-                } else if (currentScreen == null || currentScreen instanceof ChunkMapScreen) {
-                    Screen parent = currentScreen instanceof ChunkMapScreen ? currentScreen : null;
+                } else if (currentScreen == null || currentScreen instanceof ChunkMapScreen || currentScreen instanceof ActiveChunkloadersScreen) {
+                    Screen parent = null;
+                    if (currentScreen instanceof ChunkMapScreen) {
+                        parent = currentScreen;
+                    } else if (currentScreen instanceof ActiveChunkloadersScreen active) {
+                        parent = active.getParentScreen();
+                    }
                     context.client().gui.setScreen(new DisabledChunkloadersScreen(payload.disabledChunkloaders(), parent));
                 }
             });
-        });
+        };
+        ClientPlayNetworking.registerGlobalReceiver(DisabledChunkloadersListPayload.TYPE, disabledChunkloadersListHandler);
+        ClientPlayNetworking.registerGlobalReceiver(DisabledChunkloadersListPayload.WITH_SHARES, disabledChunkloadersListHandler);
 
         ClientPlayNetworking.registerGlobalReceiver(UpdateDisabledChunkloaderCoordsResponsePayload.TYPE,
                 (payload, context) -> {
@@ -313,6 +401,10 @@ public class ChunkloaderClient implements ClientModInitializer {
                 SimulationStatusHUD.forceUpdate();
                 ChunkplayerStatusHUD.forceUpdate();
             });
+        });
+
+        ClientPlayNetworking.registerGlobalReceiver(de.chunkloader.network.payload.SkinChangeResultPayload.TYPE, (value, context) -> {
+            context.client().execute(() -> ChunkloaderNetworking.handleSkinChangeResultClient(value));
         });
 
         ClientPlayNetworking.registerGlobalReceiver(ClearCustomSkinPayload.TYPE, (payload, context) -> {
