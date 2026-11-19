@@ -1,8 +1,8 @@
 plugins {
-    id 'idea'
     id 'java-library'
     id 'maven-publish'
-    id 'net.neoforged.gradle.userdev' version '7.1.38'
+    id 'net.neoforged.moddev' version '2.0.147'
+    id 'idea'
 }
 
 tasks.named('wrapper', Wrapper).configure {
@@ -18,48 +18,62 @@ base {
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 
-repositories {
-    mavenCentral()
-}
-
-runs {
-    configureEach {
-        systemProperty 'forge.logging.markers', 'REGISTRIES'
-        systemProperty 'forge.logging.console.level', 'debug'
-        workingDirectory project.layout.projectDirectory.dir('run').dir(name)
-        modSource project.sourceSets.main
-        argument "-mixin.config=${mod_id}.mixins.json"
-    }
-
-    client {
-        systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
-    }
-
-    server {
-        systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
-        argument '--nogui'
-    }
-
-    gameTestServer {
-        systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
-    }
-
-    clientData {
-        arguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
-    }
-}
-
 sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+neoForge {
+    version = project.neo_version
+
+    runs {
+        client {
+            client()
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+
+        server {
+            server()
+            programArgument '--nogui'
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+
+        gameTestServer {
+            type = "gameTestServer"
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+        }
+
+        data {
+            clientData()
+            programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+        }
+
+        configureEach {
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
+            logLevel = org.slf4j.event.Level.DEBUG
+        }
+    }
+
+    mods {
+        "${mod_id}" {
+            sourceSet(sourceSets.main)
+        }
+    }
+}
 
 configurations {
     runtimeClasspath.extendsFrom localRuntime
 }
 
 dependencies {
-    implementation "net.neoforged:neoforge:${neo_version}"
     implementation 'com.google.code.gson:gson:2.10.1'
-    implementation 'io.github.llamalad7:mixinextras-neoforge:0.5.0'
+
+    implementation 'org.lwjgl:lwjgl-tinyfd:3.4.3'
+    runtimeOnly 'org.lwjgl:lwjgl-tinyfd:3.4.3:natives-windows'
+    runtimeOnly 'org.lwjgl:lwjgl-tinyfd:3.4.3:natives-windows-arm64'
+    runtimeOnly 'org.lwjgl:lwjgl-tinyfd:3.4.3:natives-linux'
+    runtimeOnly 'org.lwjgl:lwjgl-tinyfd:3.4.3:natives-macos'
+    runtimeOnly 'org.lwjgl:lwjgl-tinyfd:3.4.3:natives-macos-arm64'
 }
+
+apply from: file('bundle-tinyfd.gradle')
 
 tasks.withType(ProcessResources).configureEach {
     var replaceProperties = [

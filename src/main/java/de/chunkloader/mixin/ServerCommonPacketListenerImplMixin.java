@@ -3,6 +3,8 @@ package de.chunkloader.mixin;
 import de.chunkloader.fakeplayer.ChunkloaderFakePlayer;
 import de.chunkloader.fakeplayer.SyntheticPlayerContext;
 import io.netty.channel.ChannelFutureListener;
+import net.minecraft.network.PacketSendListener;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.ServerCommonPacketListenerImpl;
@@ -23,19 +25,48 @@ public abstract class ServerCommonPacketListenerImplMixin {
     }
 
     @Inject(
-        method = "send(Lnet/minecraft/network/protocol/Packet;Lio/netty/channel/ChannelFutureListener;)V",
+        method = "send(Lnet/minecraft/network/protocol/Packet;Lnet/minecraft/network/PacketSendListener;)V",
         at = @At("HEAD"),
         cancellable = true,
         require = 0
     )
-    private void chunkloader$suppressFakePlayerPacketsWithListener(Packet<?> packet, ChannelFutureListener listener, CallbackInfo ci) {
+    private void chunkloader$suppressFakePlayerPacketsWithListener(Packet<?> packet, PacketSendListener listener, CallbackInfo ci) {
         if (shouldSuppress()) {
             ci.cancel();
         }
     }
 
-    private boolean shouldSuppress() {
+    @Inject(
+        method = "send(Lnet/minecraft/network/protocol/Packet;Lio/netty/channel/ChannelFutureListener;)V",
+        at = @At("HEAD"),
+        cancellable = true,
+        require = 0
+    )
+    private void chunkloader$suppressFakePlayerPacketsWithChannelListener(Packet<?> packet, ChannelFutureListener listener, CallbackInfo ci) {
+        if (shouldSuppress()) {
+            ci.cancel();
+        }
+    }
 
+    @Inject(method = "disconnect(Lnet/minecraft/network/chat/Component;)V", at = @At("HEAD"), cancellable = true)
+    private void chunkloader$blockFakePlayerDisconnect(Component reason, CallbackInfo ci) {
+        if (isProtectedFakePlayer() && !SyntheticPlayerContext.isDespawning()) {
+            ci.cancel();
+        }
+    }
+
+    @Inject(method = "onDisconnect(Lnet/minecraft/network/chat/Component;)V", at = @At("HEAD"), cancellable = true, require = 0)
+    private void chunkloader$blockFakePlayerOnDisconnect(Component reason, CallbackInfo ci) {
+        if (isProtectedFakePlayer() && !SyntheticPlayerContext.isDespawning()) {
+            ci.cancel();
+        }
+    }
+
+    private boolean shouldSuppress() {
+        return isProtectedFakePlayer();
+    }
+
+    private boolean isProtectedFakePlayer() {
         ServerCommonPacketListenerImpl self = (ServerCommonPacketListenerImpl) (Object) this;
         if (self instanceof ServerGamePacketListenerImpl gameHandler) {
             ServerPlayer player = gameHandler.player;

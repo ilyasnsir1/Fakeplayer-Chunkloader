@@ -86,7 +86,7 @@ public final class SkinLayerMask {
         if (root == null) {
             return;
         }
-        
+
         var lookup = root.createPartLookup();
         setPartVisible(lookup.apply("hat"), isShown(sanitized, PlayerModelPart.HAT));
         setPartVisible(lookup.apply("jacket"), isShown(sanitized, PlayerModelPart.JACKET));
